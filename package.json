@@ -1,0 +1,20 @@
+{
+  "name": "cc-trans",
+  "version": "0.1.0",
+  "description": "Anthropic API 反向代理:远端 Claude Code 把 base url 指向本机,本机注入真实模型配置并转发(工作目录/环境留在远端)",
+  "type": "module",
+  "bin": {
+    "cc-trans": "src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "gen-token": "node src/server.js gen-token",
+    "test": "node test/smoke.mjs",
+    "test:client": "node test/client.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

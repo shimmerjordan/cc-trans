@@ -1,0 +1,29 @@
+{
+  "host": "0.0.0.0",
+  "port": 8787,
+
+  "_comment_auth": "上游鉴权方式:'oauth'=转发本机 Claude Code 的订阅(Pro/Max/Team)登录态(读 ~/.claude/.credentials.json,自动刷新);'apiKey'=用下面的静态密钥。不填则:有静态密钥走 apiKey,否则默认 oauth。",
+  "upstreamAuth": "oauth",
+
+  "_comment_upstream": "上游地址。官方填 https://api.anthropic.com;走中转/自建网关就改成对应地址。",
+  "upstreamBaseUrl": "https://api.anthropic.com",
+
+  "_comment_oauth": "oauth 模式下订阅凭证文件路径,默认 ~/.claude/.credentials.json,一般不用改。",
+  "oauthCredentialsPath": "",
+
+  "_comment_apikey": "apiKey 模式才需要:二选一填。",
+  "upstreamApiKey": "",
+  "upstreamAuthToken": "",
+
+  "_comment_clients": "分发给远端电脑的访问令牌,远端填到 ANTHROPIC_AUTH_TOKEN。用 `npm run gen-token` 生成。可给每个设备一个,name 仅用于日志。",
+  "clientTokens": [
+    { "token": "cct-换成-gen-token-生成的值", "name": "laptop" },
+    { "token": "cct-另一台设备的令牌", "name": "desktop" }
+  ],
+
+  "_comment_modelMap": "可选:把客户端请求的模型名重映射到上游真实模型。留空对象则原样转发。",
+  "modelMap": {},
+
+  "_comment_logBody": "调试用,打印请求体(可能含敏感内容),默认 false。",
+  "logBody": false
+}

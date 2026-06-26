@@ -1,0 +1,28 @@
+[Unit]
+Description=cc-trans — Anthropic API 反向代理(把本机订阅转发给远端 Claude Code)
+Documentation=https://github.com/  (本仓库 README)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xyz
+WorkingDirectory=/home/xyz/Projects/priv/cc-trans
+# 注意:nvm 安装的 node 路径带版本号,升级 node 后需更新此行(或重跑 install-service.sh 自动探测)
+ExecStart=/home/xyz/.nvm/versions/node/v24.15.0/bin/node /home/xyz/Projects/priv/cc-trans/src/server.js
+Restart=always
+RestartSec=3
+# 优雅停止:server.js 收到 SIGTERM 会 server.close() 后退出
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# 日志统一进 journald,用 `journalctl -u cc-trans` 查看
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cc-trans
+# 轻量加固(代理只需读 ~/.claude 与本仓库,写凭证文件)
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
