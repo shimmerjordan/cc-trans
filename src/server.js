@@ -168,6 +168,14 @@ const STRIP_REQUEST_HEADERS = new Set([
   'x-api-key',
 ]);
 
+// 浏览器/探针自动发起的资源请求:无需令牌,直接 204,不记日志/指标
+const BROWSER_NOISE = new Set([
+  '/favicon.ico',
+  '/robots.txt',
+  '/apple-touch-icon.png',
+  '/apple-touch-icon-precomposed.png',
+]);
+
 // 不回传给客户端的响应头(fetch 已解压,长度/编码会失真)
 const STRIP_RESPONSE_HEADERS = new Set([
   'content-encoding',
@@ -324,6 +332,12 @@ async function handleProxy(req, res, started) {
   // 管理台:自成一套鉴权,先于代理逻辑处理
   if (admin && req.url.startsWith(ADMIN_PREFIX)) {
     return admin.handle(req, res);
+  }
+
+  // 浏览器自动请求的资源(favicon 等):无需令牌,直接 204,不污染日志/指标
+  if (req.method === 'GET' && BROWSER_NOISE.has(req.url.split('?')[0])) {
+    res.writeHead(204);
+    return res.end();
   }
 
   // 健康检查 / 根路径:无需鉴权
