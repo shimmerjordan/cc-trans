@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cc-trans 管理台</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --ink: #1c2230; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #4f46e5; --ok: #059669; --warn: #d97706; --err: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: #12172a; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header .title { font-weight: 700; font-size: 16px; letter-spacing: .3px; }
+  header .pills { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+  .pill { background: rgba(255,255,255,.1); border-radius: 999px; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+  .pill b { color: #fff; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 7px 14px; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { color: var(--err); border-color: #f0c6c6; }
+  button:hover { filter: brightness(.97); }
+  main { max-width: 1080px; margin: 20px auto; padding: 0 16px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tabs button { border: 0; background: none; border-radius: 0; padding: 10px 16px; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  section.block { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+  section.block > h2 { font-size: 14px; margin: 0 0 14px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+  section.block > h2::before { content: ""; width: 4px; height: 15px; background: var(--accent); border-radius: 2px; }
+
+  .dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; }
+  .dl dt { color: var(--muted); }
+  .dl dd { margin: 0; word-break: break-all; }
+  .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; }
+
+  .metrics { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 4px; }
+  .metric .n { font-size: 26px; font-weight: 700; }
+  .metric .l { font-size: 12px; color: var(--muted); }
+  .metric .n.err { color: var(--err); }
+
+  .charts { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; margin-top: 16px; }
+  @media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+  .chart h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .legend { list-style: none; padding: 0; margin: 10px 0 0; font-size: 12.5px; }
+  .legend li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .legend .val { margin-left: auto; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { background: #fafbfc; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td.mono { font-size: 12px; }
+  .st { font-weight: 700; } .st-2 { color: var(--ok); } .st-4 { color: var(--warn); } .st-5, .st-0 { color: var(--err); }
+  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .toolbar .grow { flex: 1; }
+  .muted { color: var(--muted); }
+  input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .login { max-width: 360px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
+  .login h1 { font-size: 18px; margin: 0 0 4px; text-align: center; }
+  .login p { color: var(--muted); margin: 0 0 18px; font-size: 13px; text-align: center; }
+  .login input { width: 100%; margin-bottom: 12px; }
+  .login button { width: 100%; }
+  .err-msg { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 8px; text-align: center; }
+  .ok-msg { color: var(--ok); font-size: 13px; min-height: 18px; }
+  dialog { border: 1px solid var(--line); border-radius: 14px; padding: 22px; max-width: 460px; }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  .token-box { background: #f6f7f9; border: 1px dashed var(--line); border-radius: 8px; padding: 12px; word-break: break-all; margin: 10px 0; }
+  .row-flash { animation: flash 1s ease; }
+  @keyframes flash { from { background: #fef9c3; } to { background: transparent; } }
+  .form-row { display: grid; grid-template-columns: max-content 1fr; gap: 12px; align-items: center; max-width: 460px; margin-bottom: 12px; }
+  .form-row label { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="loginView" class="login" hidden>
+  <h1>cc-trans 管理台</h1>
+  <p>请登录</p>
+  <input id="user" type="text" placeholder="用户名" autocomplete="username" />
+  <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
+  <button class="primary" onclick="doLogin()">登录</button>
+  <div id="loginErr" class="err-msg"></div>
+</div>
+
+<div id="appView" hidden>
+  <header>
+    <span class="title">cc-trans 管理台</span>
+    <span class="pills" id="pills"></span>
+    <button id="logoutBtn" onclick="logout()">退出</button>
+  </header>
+  <main>
+    <div class="tabs">
+      <button data-tab="overview" class="active" onclick="switchTab('overview')">概览</button>
+      <button data-tab="clients" onclick="switchTab('clients')">客户端</button>
+      <button data-tab="logs" onclick="switchTab('logs')">实时日志</button>
+      <button data-tab="settings" onclick="switchTab('settings')">设置</button>
+    </div>
+
+    <section id="tab-overview">
+      <section class="block">
+        <h2>服务信息</h2>
+        <dl class="dl" id="svcInfo"></dl>
+      </section>
+      <section class="block">
+        <h2>流量统计</h2>
+        <div class="metrics" id="trafficNums"></div>
+        <div class="charts">
+          <div class="chart"><h3>最近 30 分钟 · 每分钟请求数</h3><div id="lineChart"></div></div>
+          <div class="chart"><h3>请求按客户端分布</h3><div id="donutChart"></div></div>
+        </div>
+        <p class="muted" style="font-size:12px;margin:14px 0 0">指标为进程内存态,重启清零;完整历史见 <span class="mono">journalctl -u cc-trans</span>。</p>
+      </section>
+    </section>
+
+    <section id="tab-clients" hidden>
+      <div class="toolbar">
+        <span class="grow muted" id="clientHint"></span>
+        <button class="primary" id="genBtn" onclick="openGen()">+ 生成客户端令牌</button>
+      </div>
+      <table>
+        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>缓存读</th><th>最近活跃</th><th></th></tr></thead>
+        <tbody id="clientRows"></tbody>
+      </table>
+      <div id="othersWrap" hidden>
+        <p class="muted" style="margin-top:18px;font-size:12px">其它来源(未授权尝试等):</p>
+        <table><thead><tr><th>来源</th><th>请求数</th><th>最近状态</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
+      </div>
+    </section>
+
+    <section id="tab-logs" hidden>
+      <div class="toolbar">
+        <span class="muted" id="logStatus">连接中…</span>
+        <span class="grow"></span>
+        <button onclick="clearLogs()">清屏</button>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>模型</th><th>用量</th><th>客户端</th></tr></thead>
+        <tbody id="logRows"></tbody>
+      </table>
+    </section>
+
+    <section id="tab-settings" hidden>
+      <section class="block">
+        <h2>修改管理台密码</h2>
+        <div class="form-row"><label>当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
+        <div class="form-row"><label>新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 6 位" /></div>
+        <div class="form-row"><label>确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
+        <div class="form-row"><label></label><div><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+      </section>
+    </section>
+  </main>
+</div>
+
+<dialog id="genDlg">
+  <h3 style="margin-top:0">生成客户端令牌</h3>
+  <div id="genForm">
+    <p class="muted" style="margin:0 0 10px">给设备起个名字(仅用于日志/统计区分):</p>
+    <input id="genName" type="text" placeholder="例如 laptop / server-2" style="width:100%" />
+    <div style="margin-top:16px;text-align:right"><button onclick="genDlg.close()">取消</button> <button class="primary" onclick="doGen()">生成</button></div>
+  </div>
+  <div id="genResult" hidden>
+    <p class="muted" style="margin:0">新令牌(<b>只显示这一次</b>,复制到远端 <span class="mono">ANTHROPIC_AUTH_TOKEN</span>):</p>
+    <div class="token-box mono" id="newToken"></div>
+    <div style="text-align:right"><button onclick="copyToken()">复制</button> <button class="primary" onclick="closeGen()">完成</button></div>
+  </div>
+</dialog>
+
+<script>
+const PREFIX = location.pathname.replace(/\/+$/, '') || '/admin';
+const API = PREFIX + '/api';
+const COLORS = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#0891b2', '#7c3aed', '#db2777', '#65a30d'];
+let SESSION = sessionStorage.getItem('cc-trans-admin') || '';
+let statusTimer = null, es = null, curTab = 'overview';
+
+const el = (id) => document.getElementById(id);
+const show = (id, on) => { el(id).hidden = !on; };
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}), authorization: 'Bearer ' + SESSION } });
+  if (r.status === 401) { toLogin(); throw new Error('unauthorized'); }
+  return r;
+}
+
+function toLogin() {
+  SESSION = ''; sessionStorage.removeItem('cc-trans-admin'); stopLive();
+  show('appView', false); show('loginView', true); el('pw').focus();
+}
+async function doLogin() {
+  el('loginErr').textContent = '';
+  const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
+  if (!r.ok) { el('loginErr').textContent = '登录失败:账号或密码错误'; return; }
+  SESSION = (await r.json()).session; sessionStorage.setItem('cc-trans-admin', SESSION);
+  el('pw').value = ''; enterApp();
+}
+function logout() { toLogin(); }
+el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+function enterApp() {
+  show('loginView', false); show('appView', true);
+  refreshOverview(); refreshClients();
+  clearInterval(statusTimer);
+  statusTimer = setInterval(() => { if (curTab === 'overview') refreshOverview(); if (curTab === 'clients') refreshClients(); }, 5000);
+  startLogs();
+}
+function switchTab(t) {
+  curTab = t;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+  ['overview', 'clients', 'logs', 'settings'].forEach((x) => show('tab-' + x, x === t));
+  if (t === 'overview') refreshOverview();
+  if (t === 'clients') refreshClients();
+}
+
+function fmtUptime(ms) { const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`; }
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }); }
+function ago(ts) { if (!ts) return '—'; const s = Math.floor((Date.now() - ts) / 1000); return s < 60 ? s + '秒前' : s < 3600 ? Math.floor(s / 60) + '分前' : s < 86400 ? Math.floor(s / 3600) + '时前' : Math.floor(s / 86400) + '天前'; }
+function stClass(s) { return 'st st-' + Math.floor((s || 0) / 100); }
+
+async function refreshOverview() {
+  try {
+    const [s, cl, lg] = await Promise.all([
+      (await api('/status')).json(),
+      (await api('/clients')).json(),
+      (await api('/logs?limit=500')).json(),
+    ]);
+    // 顶部 pill
+    const oauthPill = s.upstreamAuth === 'oauth' ? `订阅 <b>${s.subscriptionType || '?'}</b>` + (s.oauthExpiresInMin != null ? ` · ${s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + '分后到期' : '将刷新'}` : '') : `上游 <b>${s.upstreamAuth}</b>`;
+    el('pills').innerHTML = [`<span class="pill">${oauthPill}</span>`, `<span class="pill">运行 <b>${fmtUptime(s.uptimeMs)}</b></span>`, `<span class="pill">请求 <b>${s.totalRequests}</b></span>`].join('');
+    // 服务信息
+    const rows = [
+      ['上游模式', s.upstreamAuth === 'oauth' ? '订阅 OAuth' : s.upstreamAuth],
+      ['订阅类型', s.subscriptionType || '—'],
+      ['token 到期', s.oauthExpiresInMin != null ? (s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + ' 分钟后(自动刷新)' : '即将/已过期,将自动刷新') : '—'],
+      ['上游地址', `<span class="mono">${esc(s.upstreamBaseUrl)}</span>`],
+      ['监听地址', `<span class="mono">${esc(s.host + ':' + s.port)}</span>`],
+      ['配置文件', `<span class="mono">${esc(s.configFile || '—')}</span>`],
+      ['运行时长', fmtUptime(s.uptimeMs) + ` <span class="muted">(启动于 ${new Date(s.startedAt).toLocaleString('zh-CN')})</span>`],
+    ];
+    el('svcInfo').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    // 流量数字
+    const succ = s.totalRequests ? Math.round((s.totalRequests - s.totalErrors) / s.totalRequests * 100) : 100;
+    el('trafficNums').innerHTML = [
+      `<div class="metric"><div class="n">${s.totalRequests}</div><div class="l">总请求</div></div>`,
+      `<div class="metric"><div class="n ${s.totalErrors ? 'err' : ''}">${s.totalErrors}</div><div class="l">错误</div></div>`,
+      `<div class="metric"><div class="n">${succ}%</div><div class="l">成功率</div></div>`,
+    ].join('');
+    // 折线图:最近30分钟每分钟请求数
+    drawLine(el('lineChart'), buckets(lg.logs || [], 30));
+    // 环形图:请求按客户端
+    const dist = (cl.tokens || []).map((t) => ({ label: t.name, value: (t.stats && t.stats.requests) || 0 }))
+      .concat((cl.others || []).map((o) => ({ label: o.name, value: o.requests || 0 })))
+      .filter((x) => x.value > 0).sort((a, b) => b.value - a.value);
+    drawDonut(el('donutChart'), dist);
+  } catch (e) {}
+}
+
+function buckets(logs, minutes) {
+  const now = Date.now(), start = now - minutes * 60000;
+  const arr = Array.from({ length: minutes }, (_, i) => ({ t: start + i * 60000, v: 0 }));
+  logs.forEach((e) => { if (e.ts >= start) { const i = Math.min(minutes - 1, Math.floor((e.ts - start) / 60000)); arr[i].v++; } });
+  return arr;
+}
+
+function drawLine(box, data) {
+  const W = 540, H = 190, pl = 34, pr = 10, pt = 12, pb = 24;
+  const max = Math.max(1, ...data.map((d) => d.v));
+  const n = data.length;
+  const X = (i) => pl + (n <= 1 ? 0 : i * (W - pl - pr) / (n - 1));
+  const Y = (v) => H - pb - v / max * (H - pt - pb);
+  const line = data.map((d, i) => `${X(i).toFixed(1)},${Y(d.v).toFixed(1)}`).join(' ');
+  const area = `${X(0).toFixed(1)},${(H - pb).toFixed(1)} ${line} ${X(n - 1).toFixed(1)},${(H - pb).toFixed(1)}`;
+  const total = data.reduce((s, d) => s + d.v, 0);
+  if (!total) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">最近 30 分钟暂无请求</div>'; return; }
+  const gy = [0, 0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}" stroke="#eef0f3"/><text x="${pl - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`; }).join('');
+  const gx = [0, Math.floor(n / 2), n - 1].map((i) => `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${i === n - 1 ? '现在' : '-' + (n - 1 - i) + 'm'}</text>`).join('');
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f46e5" stop-opacity=".25"/><stop offset="1" stop-color="#4f46e5" stop-opacity="0"/></linearGradient></defs>${gy}${gx}<polygon points="${area}" fill="url(#lg)"/><polyline points="${line}" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linejoin="round"/></svg>`;
+}
+
+function drawDonut(box, segs) {
+  const total = segs.reduce((s, x) => s + x.value, 0);
+  if (!total) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">暂无请求</div>'; return; }
+  const cx = 80, cy = 80, R = 58, sw = 24, C = 2 * Math.PI * R;
+  let off = 0;
+  const rings = segs.map((s, i) => { const len = s.value / total * C; const c = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${COLORS[i % COLORS.length]}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`; off += len; return c; }).join('');
+  const legend = segs.map((s, i) => `<li><span class="sw" style="background:${COLORS[i % COLORS.length]}"></span>${esc(s.label)}<span class="val">${s.value} · ${Math.round(s.value / total * 100)}%</span></li>`).join('');
+  box.innerHTML = `<svg viewBox="0 0 160 160" style="max-width:180px;margin:0 auto">${rings}<text x="80" y="76" text-anchor="middle" font-size="22" font-weight="700" fill="#1c2230">${total}</text><text x="80" y="94" text-anchor="middle" font-size="11" fill="#9ca3af">总请求</text></svg><ul class="legend">${legend}</ul>`;
+}
+
+async function refreshClients() {
+  try {
+    const d = await (await api('/clients')).json();
+    el('genBtn').disabled = !d.canManage;
+    el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
+    el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
+      <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td>${s.requests || 0}</td>
+      <td class="${s.errors ? 'st-5' : ''}">${s.errors || 0}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
+      <td>${s.cacheReadTokens || 0}</td><td>${ago(s.lastSeen)}</td>
+      <td style="text-align:right">${d.canManage ? `<button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">暂无客户端令牌</td></tr>';
+    const others = d.others || [];
+    show('othersWrap', others.length > 0);
+    el('otherRows').innerHTML = others.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.requests}</td><td class="${stClass(c.lastStatus)}">${c.lastStatus}</td><td>${ago(c.lastSeen)}</td></tr>`).join('');
+  } catch (e) {}
+}
+
+const genDlg = el('genDlg');
+function openGen() { show('genForm', true); show('genResult', false); el('genName').value = ''; genDlg.showModal(); el('genName').focus(); }
+async function doGen() {
+  const r = await api('/tokens', { method: 'POST', body: JSON.stringify({ name: el('genName').value.trim() || 'client' }) });
+  const d = await r.json();
+  if (!r.ok) { alert(d.error || '生成失败'); return; }
+  el('newToken').textContent = d.token; show('genForm', false); show('genResult', true);
+}
+function copyToken() { navigator.clipboard.writeText(el('newToken').textContent).catch(() => {}); }
+function closeGen() { genDlg.close(); refreshClients(); }
+async function revoke(id, name, mask) {
+  if (!confirm(`确定吊销 "${name}" (${mask}) 吗?该设备将立即无法使用。`)) return;
+  const r = await api('/tokens/revoke', { method: 'POST', body: JSON.stringify({ id }) });
+  const d = await r.json();
+  if (r.ok && d.ok) refreshClients(); else alert('吊销失败:' + (d.error || '未找到'));
+}
+
+async function changePw() {
+  el('pwMsg').textContent = ''; el('pwMsg').className = 'ok-msg';
+  const oldPassword = el('oldPw').value, newPassword = el('newPw').value;
+  if (newPassword !== el('newPw2').value) { el('pwMsg').className = 'err-msg'; el('pwMsg').textContent = '两次新密码不一致'; return; }
+  const r = await api('/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) });
+  const d = await r.json();
+  if (r.ok && d.ok) { el('pwMsg').textContent = '✅ 密码已修改'; el('oldPw').value = el('newPw').value = el('newPw2').value = ''; }
+  else { el('pwMsg').className = 'err-msg'; el('pwMsg').textContent = '失败:' + (d.error || '未知'); }
+}
+
+function startLogs() {
+  api('/logs?limit=200').then((r) => r.json()).then((d) => { el('logRows').innerHTML = ''; (d.logs || []).forEach((e) => addLogRow(e, false)); openStream(); }).catch(() => {});
+}
+function openStream() {
+  stopLive();
+  es = new EventSource(API + '/logs/stream?s=' + encodeURIComponent(SESSION));
+  es.onopen = () => { el('logStatus').textContent = '● 实时'; el('logStatus').style.color = 'var(--ok)'; };
+  es.onerror = () => { el('logStatus').textContent = '○ 断开,重连中'; el('logStatus').style.color = 'var(--warn)'; };
+  es.onmessage = (ev) => { try { addLogRow(JSON.parse(ev.data), true); } catch {} };
+}
+function stopLive() { if (es) { es.close(); es = null; } }
+function clearLogs() { el('logRows').innerHTML = ''; }
+function addLogRow(e, live) {
+  const tb = el('logRows'), tr = document.createElement('tr');
+  if (live) tr.className = 'row-flash';
+  const u = e.usage || {};
+  const usageStr = [u.input != null ? 'in ' + u.input : '', u.output != null ? 'out ' + u.output : '', u.cacheRead ? 'cR ' + u.cacheRead : ''].filter(Boolean).join(' ');
+  tr.innerHTML = `<td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono" title="${esc(e.path)}">${esc((e.path || '').slice(0, 40))}</td><td class="${stClass(e.status)}">${e.status}</td><td>${e.ms}ms</td><td class="mono">${esc(e.model || '')}</td><td class="mono">${usageStr}</td><td>${esc(e.client || '')}</td>`;
+  tb.insertBefore(tr, tb.firstChild);
+  while (tb.children.length > 300) tb.removeChild(tb.lastChild);
+}
+
+async function boot() {
+  try { const m = await (await fetch(API + '/meta')).json(); if (m.user && !el('user').value) el('user').value = m.user; } catch {}
+  if (SESSION) enterApp(); else toLogin();
+}
+boot();
+</script>
+</body>
+</html>

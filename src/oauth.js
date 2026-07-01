@@ -113,5 +113,19 @@ export function createOAuthProvider(credPath, logger = () => {}) {
     return refreshed.claudeAiOauth.accessToken;
   }
 
-  return { getAccessToken, file, beta: OAUTH_BETA_FLAG };
+  // 只读探查当前凭证状态(不刷新),供管理台展示
+  function peek() {
+    try {
+      const j = read();
+      return {
+        expiresAt: j.claudeAiOauth.expiresAt || 0,
+        subscriptionType: j.claudeAiOauth.subscriptionType,
+        hasRefresh: !!j.claudeAiOauth.refreshToken,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  return { getAccessToken, peek, file, beta: OAUTH_BETA_FLAG };
 }

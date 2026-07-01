@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import os from 'node:os';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { loadConfig, cleanToken } from './config.js';
 import { createOAuthProvider } from './oauth.js';
+import { createMetrics } from './metrics.js';
+import { createAdmin } from './admin.js';
+
+function generateClientToken() {
+  return 'cct-' + crypto.randomBytes(24).toString('base64url');
+}
 
 // ── 子命令: 生成客户端令牌 ───────────────────────────────────────────
 if (process.argv[2] === 'gen-token') {
-  const tok = 'cct-' + crypto.randomBytes(24).toString('base64url');
-  process.stdout.write(tok + '\n');
+  process.stdout.write(generateClientToken() + '\n');
   process.exit(0);
 }
 
@@ -54,11 +60,97 @@ try {
   process.exit(1);
 }
 
-// token -> name 映射,用于鉴权与日志标识
-const tokenMap = new Map(config.clientTokens.map((t) => [t.token, t.name]));
+// token -> name 映射,用于鉴权与日志标识;clientTokens 为可变的令牌清单(管理台增删)
+let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.name }));
+const tokenMap = new Map(clientTokens.map((t) => [t.token, t.name]));
 
 // 订阅 OAuth provider(仅 oauth 模式启用)
 const oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+
+// 指标采集(内存态)
+const metrics = createMetrics();
+
+// 原子地把若干字段写回 config.json(保留其它字段/注释)
+function patchConfigFile(patch) {
+  const file = config.__file;
+  if (!file) throw new Error('无 config.json,无法持久化');
+  const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+  Object.assign(j, patch);
+  const tmp = `${file}.cc-trans.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+function persistClientTokens() {
+  patchConfigFile({ clientTokens: clientTokens.map((t) => ({ token: t.token, name: t.name })) });
+}
+
+// 定长防时序比较
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+// 供管理台增删令牌的接口
+const tokenAdmin = {
+  canManage: () => !!config.__file,
+  list: () => clientTokens.map((t) => ({ token: t.token, name: t.name })),
+  add: (name) => {
+    const entry = { token: generateClientToken(), name: (name || 'client').trim() || 'client' };
+    clientTokens.push(entry);
+    tokenMap.set(entry.token, entry.name);
+    persistClientTokens();
+    return entry;
+  },
+  revoke: (token) => {
+    const idx = clientTokens.findIndex((t) => t.token === token);
+    if (idx === -1) return false;
+    clientTokens.splice(idx, 1);
+    tokenMap.delete(token);
+    persistClientTokens();
+    return true;
+  },
+};
+
+// 管理台:adminEnabled 或设了 adminPassword 即启用;账号密码登录
+const ADMIN_PREFIX = '/admin';
+const adminOn = config.adminEnabled || !!config.adminPassword;
+const adminUser = config.adminUser || 'admin';
+let adminPassword = config.adminPassword;
+let initialPasswordNotice = null;
+
+if (adminOn && !adminPassword) {
+  // 首次部署:生成随机初始密码,写回 config.json,并在控制台醒目打印一次
+  adminPassword = 'adm-' + crypto.randomBytes(9).toString('base64url');
+  initialPasswordNotice = adminPassword;
+  try {
+    if (config.__file) patchConfigFile({ adminPassword });
+  } catch (err) {
+    initialPasswordNotice = adminPassword + ' (⚠️ 未能写回 config.json,重启会重新生成: ' + err.message + ')';
+  }
+}
+
+const adminCredentials = {
+  user: adminUser,
+  verify: (u, p) => u === adminUser && !!adminPassword && safeEqual(p, adminPassword),
+  changePassword: (oldPw, newPw) => {
+    if (!safeEqual(oldPw, adminPassword)) return { ok: false, error: '当前密码不正确' };
+    if (!newPw || String(newPw).length < 6) return { ok: false, error: '新密码至少 6 位' };
+    adminPassword = String(newPw);
+    try {
+      if (config.__file) patchConfigFile({ adminPassword });
+    } catch (err) {
+      return { ok: false, error: '写回 config.json 失败: ' + err.message };
+    }
+    log(`管理台密码已修改`);
+    return { ok: true };
+  },
+};
+
+const admin = adminOn
+  ? createAdmin({ prefix: ADMIN_PREFIX, credentials: adminCredentials, config, oauth, metrics, tokenAdmin, maskToken, log })
+  : null;
 
 // 不向上游转发的请求头(逐跳头 + 客户端凭证,凭证由本机替换)
 const STRIP_REQUEST_HEADERS = new Set([
@@ -205,6 +297,9 @@ function makeUsageSniffer() {
       if (cacheWrite) parts.push(`cacheW=${cacheWrite}`);
       return parts.join(' ');
     },
+    usage() {
+      return { input, output, cacheRead, cacheWrite };
+    },
   };
 }
 
@@ -212,14 +307,32 @@ function ts() {
   return new Date().toISOString();
 }
 
+function recordMetric(req, started, status, clientName, usage, model) {
+  metrics.record({
+    ts: started,
+    method: req.method,
+    path: req.url,
+    status,
+    ms: Date.now() - started,
+    model,
+    usage: usage || {},
+    client: clientName,
+  });
+}
+
 async function handleProxy(req, res, started) {
+  // 管理台:自成一套鉴权,先于代理逻辑处理
+  if (admin && req.url.startsWith(ADMIN_PREFIX)) {
+    return admin.handle(req, res);
+  }
+
   // 健康检查 / 根路径:无需鉴权
   if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
     return sendJson(res, 200, {
       ok: true,
       service: 'cc-trans',
       upstream: config.upstreamBaseUrl,
-      clients: config.clientTokens.length,
+      clients: clientTokens.length,
     });
   }
 
@@ -230,6 +343,7 @@ async function handleProxy(req, res, started) {
       ? '请求未携带令牌(authorization/x-api-key 都没有)'
       : `令牌不在白名单 收到=${maskToken(token)} 来自=${via} 已配置=[${[...tokenMap.keys()].map(maskToken).join(', ')}]`;
     log(`${req.method} ${req.url} 401 鉴权失败:${reason}`);
+    recordMetric(req, started, 401, token ? '(令牌不匹配)' : '(未携带令牌)');
     return sendError(res, 401, 'authentication_error', `cc-trans: 无效的客户端访问令牌(${!token ? '未携带令牌' : '令牌不匹配'})`);
   }
   const clientName = tokenMap.get(token);
@@ -243,6 +357,7 @@ async function handleProxy(req, res, started) {
     await applyUpstreamAuth(headers);
   } catch (err) {
     log(`${req.method} ${req.url} 502 上游凭证错误: ${err.message} [${clientName}]`);
+    recordMetric(req, started, 502, clientName, {}, model);
     return sendError(res, 502, 'api_error', `cc-trans 上游凭证不可用: ${err.message}`);
   }
 
@@ -255,6 +370,7 @@ async function handleProxy(req, res, started) {
     });
   } catch (err) {
     log(`${req.method} ${req.url} 502 上游不可达: ${err.message} [${clientName}]`);
+    recordMetric(req, started, 502, clientName, {}, model);
     return sendError(res, 502, 'api_error', `cc-trans 无法连接上游: ${err.message}`);
   }
 
@@ -267,7 +383,10 @@ async function handleProxy(req, res, started) {
   res.writeHead(upstreamRes.status, resHeaders);
 
   const sniffer = makeUsageSniffer();
+  let recorded = false;
   const finish = () => {
+    if (recorded) return;
+    recorded = true;
     const ms = Date.now() - started;
     const usage = sniffer.summary();
     log(
@@ -276,6 +395,7 @@ async function handleProxy(req, res, started) {
         (usage ? ` ${usage}` : '') +
         ` [${clientName}]`,
     );
+    recordMetric(req, started, upstreamRes.status, clientName, sniffer.usage(), model);
   };
 
   if (!upstreamRes.body) {
@@ -350,7 +470,14 @@ function printBanner() {
   log(`  监听:      ${config.host}:${config.port}`);
   log(`  上游:      ${config.upstreamBaseUrl} (凭证类型: ${cred})`);
   if (oauth) log(`  订阅凭证:  ${oauth.file}`);
-  log(`  客户端令牌: ${config.clientTokens.map((t) => `${t.name}(${maskToken(t.token)})`).join(', ')}`);
+  log(`  客户端令牌: ${clientTokens.map((t) => `${t.name}(${maskToken(t.token)})`).join(', ') || '(无)'}`);
+  if (admin) {
+    const ips = lanIps();
+    const host = ips[0] || 'localhost';
+    log(`  管理台:    http://${host}:${config.port}${ADMIN_PREFIX}  (账号 ${adminUser} 登录)`);
+  } else {
+    log(`  管理台:    未启用(在 config.json 设 adminEnabled:true 即可开启)`);
+  }
   if (config.__file) log(`  配置文件:  ${config.__file}`);
   if (Object.keys(config.modelMap).length) {
     log(`  模型映射:  ${JSON.stringify(config.modelMap)}`);
@@ -360,6 +487,15 @@ function printBanner() {
     log(`  远端可用:  ${ips.map((ip) => `http://${ip}:${config.port}`).join('  ')}`);
   }
   log(`  远端配置:  ANTHROPIC_BASE_URL=http://<本机IP>:${config.port}  ANTHROPIC_AUTH_TOKEN=<你的客户端令牌>`);
+  if (initialPasswordNotice) {
+    log('');
+    log('  ┌──────────────────────────────────────────────────────────┐');
+    log(`  │  管理台初始账号: ${adminUser}`);
+    log(`  │  管理台初始密码: ${initialPasswordNotice}`);
+    log('  │  (登录后可在「设置」里修改;此密码已写入 config.json)');
+    log('  └──────────────────────────────────────────────────────────┘');
+    log('');
+  }
 }
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

@@ -24,6 +24,11 @@
   "_comment_modelMap": "可选:把客户端请求的模型名重映射到上游真实模型。留空对象则原样转发。",
   "modelMap": {},
 
+  "_comment_admin": "Web 管理台(客户端监控/令牌生成/实时日志)。adminEnabled=true 开启,访问 http://<本机IP>:端口/admin。账号密码登录:adminPassword 留空则首次启动自动生成随机密码并打印到控制台,登录后可在网页里改。",
+  "adminEnabled": false,
+  "adminUser": "admin",
+  "adminPassword": "",
+
   "_comment_logBody": "调试用,打印请求体(可能含敏感内容),默认 false。",
   "logBody": false
 }

@@ -16,6 +16,9 @@ const DEFAULTS = {
   clientTokens: [],
   modelMap: {},
   logBody: false,
+  adminEnabled: false,
+  adminUser: 'admin',
+  adminPassword: '',
 };
 
 function readConfigFile() {
@@ -96,6 +99,9 @@ export function loadConfig() {
     ),
     modelMap: file.modelMap || DEFAULTS.modelMap,
     logBody: parseBool(process.env.CC_TRANS_LOG_BODY) ?? file.logBody ?? DEFAULTS.logBody,
+    adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
+    adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,
+    adminPassword: process.env.CC_TRANS_ADMIN_PASSWORD || file.adminPassword || DEFAULTS.adminPassword,
     __file: file.__file,
   };
 
