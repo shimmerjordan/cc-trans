@@ -340,8 +340,13 @@ async function handleProxy(req, res, started) {
     return res.end();
   }
 
-  // 健康检查 / 根路径:无需鉴权
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+  // 健康检查 / 根路径:GET 与 HEAD 都无需鉴权(HEAD 只回头,常见于本地/浏览器探活)
+  const pathOnly = req.url.split('?')[0];
+  if ((req.method === 'GET' || req.method === 'HEAD') && (pathOnly === '/' || pathOnly === '/health')) {
+    if (req.method === 'HEAD') {
+      res.writeHead(200);
+      return res.end();
+    }
     return sendJson(res, 200, {
       ok: true,
       service: 'cc-trans',
