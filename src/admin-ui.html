@@ -49,6 +49,15 @@
   .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
   .legend .val { margin-left: auto; color: var(--muted); }
 
+  .ubar { margin-bottom: 14px; }
+  .ubar:last-child { margin-bottom: 2px; }
+  .ubar .row1 { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; margin-bottom: 5px; }
+  .ubar .row1 .rst { color: var(--muted); white-space: nowrap; }
+  .ubar .track { height: 8px; border-radius: 4px; background: #eef0f3; overflow: hidden; }
+  .ubar .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  .ubar .fill.warn { background: var(--warn); }
+  .ubar .fill.err { background: var(--err); }
+
   table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
   th { background: #fafbfc; color: var(--muted); font-weight: 600; }
@@ -105,6 +114,11 @@
         <h2>服务信息</h2>
         <dl class="dl" id="svcInfo"></dl>
       </section>
+      <section class="block" id="usageBlock">
+        <h2>订阅用量</h2>
+        <div id="usageBars" class="muted">加载中…</div>
+        <p class="muted" id="usageNote" style="font-size:12px;margin:10px 0 0"></p>
+      </section>
       <section class="block">
         <h2>流量统计</h2>
         <div class="metrics" id="trafficNums"></div>
@@ -112,7 +126,8 @@
           <div class="chart"><h3>最近 30 分钟 · 每分钟请求数</h3><div id="lineChart"></div></div>
           <div class="chart"><h3>请求按客户端分布</h3><div id="donutChart"></div></div>
         </div>
-        <p class="muted" style="font-size:12px;margin:14px 0 0">指标为进程内存态,重启清零;完整历史见 <span class="mono">journalctl -u cc-trans</span>。</p>
+        <div class="chart" style="margin-top:16px"><h3>最近 14 天 · 每日请求数</h3><div id="dailyChart"></div></div>
+        <p class="muted" id="statNote" style="font-size:12px;margin:14px 0 0"></p>
       </section>
     </section>
 
@@ -220,16 +235,27 @@ function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12:
 function ago(ts) { if (!ts) return '—'; const s = Math.floor((Date.now() - ts) / 1000); return s < 60 ? s + '秒前' : s < 3600 ? Math.floor(s / 60) + '分前' : s < 86400 ? Math.floor(s / 3600) + '时前' : Math.floor(s / 86400) + '天前'; }
 function stClass(s) { return 'st st-' + Math.floor((s || 0) / 100); }
 
+function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : n < 1e9 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e9).toFixed(2) + 'B'; }
+function localDay(ts) { const d = new Date(ts); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+
 async function refreshOverview() {
   try {
-    const [s, cl, lg] = await Promise.all([
+    const [s, cl, lg, us] = await Promise.all([
       (await api('/status')).json(),
       (await api('/clients')).json(),
       (await api('/logs?limit=500')).json(),
+      api('/usage').then((r) => r.json()).catch(() => null),
     ]);
+    const t = s.totals || { inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const today = (s.daily || []).find((d) => d.date === localDay(Date.now())) || { requests: 0 };
     // 顶部 pill
     const oauthPill = s.upstreamAuth === 'oauth' ? `订阅 <b>${s.subscriptionType || '?'}</b>` + (s.oauthExpiresInMin != null ? ` · ${s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + '分后到期' : '将刷新'}` : '') : `上游 <b>${s.upstreamAuth}</b>`;
-    el('pills').innerHTML = [`<span class="pill">${oauthPill}</span>`, `<span class="pill">运行 <b>${fmtUptime(s.uptimeMs)}</b></span>`, `<span class="pill">请求 <b>${s.totalRequests}</b></span>`].join('');
+    el('pills').innerHTML = [
+      `<span class="pill">${oauthPill}</span>`,
+      `<span class="pill">运行 <b>${fmtUptime(s.uptimeMs)}</b></span>`,
+      `<span class="pill">今日 <b>${today.requests}</b></span>`,
+      `<span class="pill">累计 <b>${fmtNum(s.totalRequests)}</b></span>`,
+    ].join('');
     // 服务信息
     const rows = [
       ['上游模式', s.upstreamAuth === 'oauth' ? '订阅 OAuth' : s.upstreamAuth],
@@ -241,21 +267,98 @@ async function refreshOverview() {
       ['运行时长', fmtUptime(s.uptimeMs) + ` <span class="muted">(启动于 ${new Date(s.startedAt).toLocaleString('zh-CN')})</span>`],
     ];
     el('svcInfo').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    // 订阅用量
+    renderUsage(s, us);
     // 流量数字
     const succ = s.totalRequests ? Math.round((s.totalRequests - s.totalErrors) / s.totalRequests * 100) : 100;
     el('trafficNums').innerHTML = [
-      `<div class="metric"><div class="n">${s.totalRequests}</div><div class="l">总请求</div></div>`,
-      `<div class="metric"><div class="n ${s.totalErrors ? 'err' : ''}">${s.totalErrors}</div><div class="l">错误</div></div>`,
+      `<div class="metric"><div class="n">${fmtNum(s.totalRequests)}</div><div class="l">总请求(累计)</div></div>`,
+      `<div class="metric"><div class="n">${today.requests}</div><div class="l">今日请求</div></div>`,
+      `<div class="metric"><div class="n ${s.totalErrors ? 'err' : ''}">${fmtNum(s.totalErrors)}</div><div class="l">错误</div></div>`,
       `<div class="metric"><div class="n">${succ}%</div><div class="l">成功率</div></div>`,
+      `<div class="metric"><div class="n" title="${t.inTokens}">${fmtNum(t.inTokens)}</div><div class="l">输入 token</div></div>`,
+      `<div class="metric"><div class="n" title="${t.outTokens}">${fmtNum(t.outTokens)}</div><div class="l">输出 token</div></div>`,
+      `<div class="metric"><div class="n" title="${t.cacheReadTokens}">${fmtNum(t.cacheReadTokens)}</div><div class="l">缓存读</div></div>`,
+      `<div class="metric"><div class="n" title="${t.cacheWriteTokens}">${fmtNum(t.cacheWriteTokens)}</div><div class="l">缓存写</div></div>`,
     ].join('');
     // 折线图:最近30分钟每分钟请求数
     drawLine(el('lineChart'), buckets(lg.logs || [], 30));
     // 环形图:请求按客户端
-    const dist = (cl.tokens || []).map((t) => ({ label: t.name, value: (t.stats && t.stats.requests) || 0 }))
+    const dist = (cl.tokens || []).map((t2) => ({ label: t2.name, value: (t2.stats && t2.stats.requests) || 0 }))
       .concat((cl.others || []).map((o) => ({ label: o.name, value: o.requests || 0 })))
       .filter((x) => x.value > 0).sort((a, b) => b.value - a.value);
     drawDonut(el('donutChart'), dist);
+    // 柱状图:最近14天每日请求
+    drawBars(el('dailyChart'), lastDays(s.daily || [], 14));
+    el('statNote').innerHTML = `累计统计自 ${new Date(s.since || s.startedAt).toLocaleDateString('zh-CN')},已持久化(重启不清零);最近请求明细与折线图为内存态。完整历史见 <span class="mono">journalctl -u cc-trans</span>。`;
   } catch (e) {}
+}
+
+const USAGE_LABELS = { five_hour: '5 小时窗口', seven_day: '7 天窗口(全模型)', seven_day_opus: '7 天窗口 · Opus', seven_day_oauth_apps: '7 天窗口 · OAuth Apps', '5h': '5 小时窗口', '7d': '7 天窗口' };
+function usageBar(label, pct, resetDate) {
+  const cls = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : '';
+  const rst = resetDate && !isNaN(resetDate.getTime()) ? resetDate.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' 重置' : '';
+  return `<div class="ubar"><div class="row1"><span><b>${esc(label)}</b> · 已用 ${pct}% / 剩余 ${100 - pct}%</span><span class="rst">${rst}</span></div><div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div></div>`;
+}
+function renderUsage(s, us) {
+  const box = el('usageBars'), note = el('usageNote');
+  const bars = [];
+  let noteHtml = '';
+  if (us && us.available && (us.windows || []).length) {
+    us.windows.forEach((w) => {
+      const pct = Math.max(0, Math.min(100, Math.round(w.utilization)));
+      bars.push(usageBar(USAGE_LABELS[w.key] || w.key, pct, w.resetsAt ? new Date(w.resetsAt) : null));
+    });
+    noteHtml = '数据来自订阅用量接口(与 Claude Code /usage 同源),约 1 分钟刷新一次。';
+  } else if (s.rateLimit && s.rateLimit.headers) {
+    // 回落:从最近一次转发响应的 anthropic-ratelimit-unified-* 头推算
+    const wins = {};
+    for (const [k, v] of Object.entries(s.rateLimit.headers)) {
+      const m = k.match(/^anthropic-ratelimit-unified-(.+)-(limit|remaining|reset)$/);
+      if (m) (wins[m[1]] = wins[m[1]] || {})[m[2]] = v;
+    }
+    for (const [w, d] of Object.entries(wins)) {
+      const limit = Number(d.limit), remaining = Number(d.remaining);
+      if (!isFinite(limit) || limit <= 0 || !isFinite(remaining)) continue;
+      const pct = Math.max(0, Math.min(100, Math.round((limit - remaining) / limit * 100)));
+      const reset = d.reset ? new Date(isNaN(Number(d.reset)) ? d.reset : Number(d.reset) * 1000) : null;
+      bars.push(usageBar(USAGE_LABELS[w] || w, pct, reset));
+    }
+    const st = s.rateLimit.headers['anthropic-ratelimit-unified-status'];
+    noteHtml = `数据来自最近一次转发的上游限额头(${ago(s.rateLimit.ts)})` + (st ? ` · 上游状态: <b>${esc(st)}</b>` : '');
+  }
+  if (!bars.length) {
+    box.innerHTML = `<span class="muted">${s.upstreamAuth === 'oauth' ? '暂无数据' + (us && us.reason ? '(' + esc(us.reason) + ')' : '') + ',有请求转发后会自动从上游响应头获取。' : '非订阅 OAuth 模式,无订阅用量。'}</span>`;
+    note.textContent = '';
+    return;
+  }
+  box.innerHTML = bars.join('');
+  note.innerHTML = noteHtml;
+}
+
+function lastDays(daily, n) {
+  const map = new Map(daily.map((d) => [d.date, d]));
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const key = localDay(Date.now() - i * 86400000);
+    out.push(map.get(key) || { date: key, requests: 0, errors: 0, inTokens: 0, outTokens: 0 });
+  }
+  return out;
+}
+
+function drawBars(box, days) {
+  if (!days.some((d) => d.requests > 0)) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">最近 14 天暂无请求</div>'; return; }
+  const W = 1040, H = 180, pl = 40, pr = 8, pt = 18, pb = 22;
+  const max = Math.max(1, ...days.map((d) => d.requests));
+  const n = days.length, bw = (W - pl - pr) / n;
+  const Y = (v) => H - pb - v / max * (H - pt - pb);
+  const gy = [0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}" stroke="#eef0f3"/><text x="${pl - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`; }).join('');
+  const bars = days.map((d, i) => {
+    const x = pl + i * bw + bw * 0.15, w = bw * 0.7, y = Y(d.requests), h = Math.max(H - pb - y, d.requests ? 2 : 0);
+    const lbl = d.requests ? `<text x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="#6b7280">${d.requests}</text>` : '';
+    return `<g><title>${d.date} · ${d.requests} 请求 / ${d.errors || 0} 错误 · in ${fmtNum(d.inTokens)} out ${fmtNum(d.outTokens)}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="#4f46e5"/>${lbl}<text x="${(x + w / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${d.date.slice(5)}</text></g>`;
+  }).join('');
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${gy}${bars}</svg>`;
 }
 
 function buckets(logs, minutes) {

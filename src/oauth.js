@@ -57,15 +57,27 @@ export function createOAuthProvider(credPath, logger = () => {}) {
     if (!refreshToken) {
       throw new Error('凭证无 refreshToken,无法自动刷新,请在服务器上重新 `claude` 登录');
     }
-    const res = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: CLIENT_ID,
-      }),
-    });
+    // 网络层瞬时失败重试(刷新失败会让客户端直接吃 502)
+    let res = null;
+    let lastErr = null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        res = await fetch(TOKEN_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: refreshToken,
+            client_id: CLIENT_ID,
+          }),
+        });
+        break;
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 300 * (i + 1)));
+      }
+    }
+    if (!res) throw new Error(`刷新订阅 token 网络失败: ${lastErr.message}`);
     const text = await res.text();
     if (!res.ok) {
       throw new Error(`刷新订阅 token 失败 HTTP ${res.status}: ${text.slice(0, 200)}`);

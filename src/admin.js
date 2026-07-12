@@ -87,9 +87,41 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       canManageTokens: tokenAdmin.canManage(),
       startedAt: snap.startedAt,
       uptimeMs: snap.uptimeMs,
+      since: snap.since,
       totalRequests: snap.totalRequests,
       totalErrors: snap.totalErrors,
+      totals: snap.totals,
+      daily: snap.daily,
+      rateLimit: snap.rateLimit,
     };
+  }
+
+  // 订阅用量(与 Claude Code /usage 同源的 OAuth 接口),60s 缓存,失败时前端回落到限额头
+  let usageCache = { ts: 0, data: null };
+  async function fetchSubscriptionUsage() {
+    if (!oauth) return { available: false, reason: '非订阅 OAuth 模式' };
+    if (usageCache.data && Date.now() - usageCache.ts < 60_000) return usageCache.data;
+    try {
+      const token = await oauth.getAccessToken();
+      const r = await fetch(config.upstreamBaseUrl + '/api/oauth/usage', {
+        headers: { authorization: `Bearer ${token}`, 'anthropic-beta': oauth.beta },
+      });
+      const text = await r.text();
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 120)}`);
+      const j = JSON.parse(text);
+      // 归一化:凡是带 utilization 的窗口都收进来(five_hour / seven_day / seven_day_opus …)
+      const windows = [];
+      for (const [k, v] of Object.entries(j)) {
+        if (v && typeof v === 'object' && typeof v.utilization === 'number') {
+          windows.push({ key: k, utilization: v.utilization, resetsAt: v.resets_at || null });
+        }
+      }
+      const data = { available: true, fetchedAt: Date.now(), windows, raw: j };
+      usageCache = { ts: Date.now(), data };
+      return data;
+    } catch (err) {
+      return { available: false, reason: err.message };
+    }
   }
 
   async function handle(req, res) {
@@ -128,6 +160,10 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
 
     if (sub === '/api/status' && req.method === 'GET') {
       return sendJson(res, 200, statusPayload());
+    }
+
+    if (sub === '/api/usage' && req.method === 'GET') {
+      return sendJson(res, 200, await fetchSubscriptionUsage());
     }
 
     if (sub === '/api/password' && req.method === 'POST') {
@@ -181,6 +217,7 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
         'cache-control': 'no-cache',
         connection: 'keep-alive',
       });
+      res.on('error', () => {});
       res.write(': connected\n\n');
       const keepAlive = setInterval(() => res.write(': ping\n\n'), 25000);
       const unsub = metrics.subscribe((entry) => {

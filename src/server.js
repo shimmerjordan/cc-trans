@@ -2,8 +2,8 @@
 import http from 'node:http';
 import os from 'node:os';
 import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
-import { Readable } from 'node:stream';
 import { loadConfig, cleanToken } from './config.js';
 import { createOAuthProvider } from './oauth.js';
 import { createMetrics } from './metrics.js';
@@ -67,8 +67,11 @@ const tokenMap = new Map(clientTokens.map((t) => [t.token, t.name]));
 // 订阅 OAuth provider(仅 oauth 模式启用)
 const oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
 
-// 指标采集(内存态)
-const metrics = createMetrics();
+// 指标采集:有 config.json 时把累计/每日聚合持久化到旁边的 data/metrics.json(纯环境变量模式则内存态)
+const metrics = createMetrics({
+  persistFile: config.__file ? path.join(path.dirname(config.__file), 'data', 'metrics.json') : null,
+  log,
+});
 
 // 原子地把若干字段写回 config.json(保留其它字段/注释)
 function patchConfigFile(patch) {
@@ -315,6 +318,13 @@ function ts() {
   return new Date().toISOString();
 }
 
+// 上游网络层瞬时故障的重试次数(仅在客户端尚未收到任何字节时重试,对客户端完全透明)
+const UPSTREAM_ATTEMPTS = 3;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function recordMetric(req, started, status, clientName, usage, model) {
   metrics.record({
     ts: started,
@@ -380,63 +390,155 @@ async function handleProxy(req, res, started) {
     return sendError(res, 502, 'api_error', `cc-trans 上游凭证不可用: ${err.message}`);
   }
 
-  let upstreamRes;
-  try {
-    upstreamRes = await fetch(url, {
-      method: req.method,
-      headers,
-      body: body.length ? body : undefined,
-    });
-  } catch (err) {
-    log(`${req.method} ${req.url} 502 上游不可达: ${err.message} [${clientName}]`);
-    recordMetric(req, started, 502, clientName, {}, model);
-    return sendError(res, 502, 'api_error', `cc-trans 无法连接上游: ${err.message}`);
-  }
-
-  // 透传状态码与响应头(去掉会失真的头)
-  const resHeaders = {};
-  upstreamRes.headers.forEach((v, k) => {
-    if (STRIP_RESPONSE_HEADERS.has(k.toLowerCase())) return;
-    resHeaders[k] = v;
+  // 客户端提前断开时中止上游请求;write 出错走 close 路径,不让 error 事件炸进程
+  const abort = new AbortController();
+  let clientGone = false;
+  res.on('error', () => {});
+  res.on('close', () => {
+    if (!res.writableFinished) {
+      clientGone = true;
+      abort.abort();
+    }
   });
-  res.writeHead(upstreamRes.status, resHeaders);
 
   const sniffer = makeUsageSniffer();
+  let upstreamRes = null;
+  let wroteHead = false; // 首字节到达才写响应头,首字节前上游中断可整体重试(对客户端透明)
+  let sentBytes = false;
   let recorded = false;
-  const finish = () => {
+
+  const writeHeadOnce = () => {
+    if (wroteHead) return;
+    wroteHead = true;
+    // 透传状态码与响应头(去掉会失真的头)
+    const resHeaders = {};
+    upstreamRes.headers.forEach((v, k) => {
+      if (STRIP_RESPONSE_HEADERS.has(k)) return;
+      resHeaders[k] = v;
+    });
+    res.writeHead(upstreamRes.status, resHeaders);
+  };
+
+  const finish = (note = '') => {
     if (recorded) return;
     recorded = true;
+    const status = upstreamRes ? upstreamRes.status : 0;
     const ms = Date.now() - started;
     const usage = sniffer.summary();
     log(
-      `${req.method} ${req.url} ${upstreamRes.status} ${ms}ms` +
+      `${req.method} ${req.url} ${status} ${ms}ms` +
         (model ? ` model=${model}` : '') +
         (usage ? ` ${usage}` : '') +
+        (note ? ` ${note}` : '') +
         ` [${clientName}]`,
     );
-    recordMetric(req, started, upstreamRes.status, clientName, sniffer.usage(), model);
+    recordMetric(req, started, status, clientName, sniffer.usage(), model);
   };
 
-  if (!upstreamRes.body) {
-    res.end();
-    return finish();
-  }
-
-  const nodeStream = Readable.fromWeb(upstreamRes.body);
-  nodeStream.on('data', (chunk) => {
-    try {
-      sniffer.feed(chunk.toString('utf8'));
-    } catch {
-      /* 嗅探失败不影响转发 */
+  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      await sleep(300 * (attempt - 1));
+      if (clientGone) return finish('(客户端已断开)');
+      try {
+        await applyUpstreamAuth(headers); // 订阅 token 可能刚轮换,重试前重新取
+      } catch {
+        /* 取不到就沿用上一次的头 */
+      }
     }
-  });
-  nodeStream.on('error', (err) => {
-    log(`${req.method} ${req.url} 流错误: ${err.message} [${clientName}]`);
-    res.destroy(err);
-  });
-  res.on('close', () => nodeStream.destroy());
-  nodeStream.pipe(res);
-  res.on('finish', finish);
+
+    try {
+      upstreamRes = await fetch(url, {
+        method: req.method,
+        headers,
+        body: body.length ? body : undefined,
+        signal: abort.signal,
+      });
+    } catch (err) {
+      if (clientGone) return finish('(客户端已断开)');
+      if (attempt < UPSTREAM_ATTEMPTS) {
+        log(`${req.method} ${req.url} 上游连接失败,重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1}: ${err.message} [${clientName}]`);
+        continue;
+      }
+      log(`${req.method} ${req.url} 502 上游不可达(已重试 ${UPSTREAM_ATTEMPTS - 1} 次): ${err.message} [${clientName}]`);
+      recordMetric(req, started, 502, clientName, {}, model);
+      return sendError(res, 502, 'api_error', `cc-trans 无法连接上游: ${err.message}`);
+    }
+
+    // 记录上游返回的订阅限额头(供管理台「订阅用量」展示)
+    const rl = {};
+    upstreamRes.headers.forEach((v, k) => {
+      if (k.startsWith('anthropic-ratelimit-')) rl[k] = v;
+    });
+    if (Object.keys(rl).length) metrics.setRateLimit({ ts: Date.now(), headers: rl });
+
+    if (!upstreamRes.body) {
+      writeHeadOnce();
+      res.end();
+      return finish();
+    }
+
+    const isSSE = String(upstreamRes.headers.get('content-type') || '').includes('text/event-stream');
+    try {
+      for await (const chunk of upstreamRes.body) {
+        if (clientGone) break;
+        try {
+          sniffer.feed(Buffer.from(chunk).toString('utf8'));
+        } catch {
+          /* 嗅探失败不影响转发 */
+        }
+        writeHeadOnce();
+        sentBytes = true;
+        if (!res.write(chunk) && !clientGone) {
+          // 背压:等客户端消费;客户端断开也要能醒来
+          await new Promise((resolve) => {
+            const done = () => {
+              res.off('drain', done);
+              res.off('close', done);
+              resolve();
+            };
+            res.once('drain', done);
+            res.once('close', done);
+          });
+        }
+      }
+      if (clientGone) return finish('(客户端提前断开)');
+      writeHeadOnce();
+      res.end();
+      return finish();
+    } catch (err) {
+      if (clientGone || res.destroyed) return finish('(客户端提前断开)');
+      if (!sentBytes && attempt < UPSTREAM_ATTEMPTS) {
+        log(`${req.method} ${req.url} 上游响应在首字节前中断,重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1}: ${err.message} [${clientName}]`);
+        upstreamRes = null;
+        continue;
+      }
+      if (!sentBytes) {
+        log(`${req.method} ${req.url} 502 上游响应中断: ${err.message} [${clientName}]`);
+        recordMetric(req, started, 502, clientName, {}, model);
+        return sendError(res, 502, 'api_error', `cc-trans 上游响应中断: ${err.message}`);
+      }
+      if (isSSE) {
+        // 已在回传 SSE:补一个合法的 error 事件并正常收尾,客户端能识别错误并自动重试,
+        // 而不是收到裸 TCP 断连("Connection closed mid-response")
+        log(`${req.method} ${req.url} 上游流中断,以 SSE error 事件收尾: ${err.message} [${clientName}]`);
+        try {
+          res.write(
+            `event: error\ndata: ${JSON.stringify({
+              type: 'error',
+              error: { type: 'overloaded_error', message: `cc-trans: 上游流中断(${err.message}),请重试` },
+            })}\n\n`,
+          );
+          res.end();
+        } catch {
+          res.destroy(err);
+        }
+        return finish('(流中断)');
+      }
+      log(`${req.method} ${req.url} 流错误(已回传部分数据,只能断开): ${err.message} [${clientName}]`);
+      res.destroy(err);
+      return finish('(流中断)');
+    }
+  }
 }
 
 function maskToken(t) {
@@ -460,6 +562,11 @@ const server = http.createServer((req, res) => {
 
 server.requestTimeout = 0; // 长连接 / 长流式不超时
 server.headersTimeout = 0;
+server.keepAliveTimeout = 0; // 不主动断开空闲 keep-alive 连接(Node 默认 5s,客户端复用连接时易撞上断连竞态)
+server.on('connection', (socket) => {
+  socket.setKeepAlive(true, 30_000); // TCP 层保活,防 NAT/隧道悄悄丢链
+  socket.setNoDelay(true); // SSE 小块即时送出
+});
 
 server.listen(config.port, config.host, () => {
   printBanner();
@@ -520,6 +627,7 @@ function printBanner() {
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     log(`收到 ${sig},关闭中…`);
+    metrics.flush();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

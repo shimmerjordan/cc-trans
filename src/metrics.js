@@ -1,39 +1,118 @@
-// 内存态指标采集:总量、按客户端聚合、最近请求环形缓冲、以及给实时日志用的订阅。
-// 重启清零(历史仍在 journald)。
+// 指标采集:累计/每日聚合/按客户端聚合(轻量持久化,跨重启保留)+ 最近请求环形缓冲(内存态)。
+// 持久化文件由调用方指定(通常 data/metrics.json);无文件路径时退化为纯内存态(如冒烟测试)。
 
-export function createMetrics(maxRecent = 500) {
+import fs from 'node:fs';
+import path from 'node:path';
+
+const MAX_DAILY_DAYS = 62; // 每日聚合最多保留天数
+const SAVE_INTERVAL_MS = 20_000;
+
+// 本地时区的 YYYY-MM-DD
+export function dayKey(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+export function createMetrics({ maxRecent = 500, persistFile = null, log = () => {} } = {}) {
   const startedAt = Date.now();
-  let totalRequests = 0;
-  let totalErrors = 0;
+  let since = startedAt; // 累计统计起点(持久化后跨重启)
+  let totals = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   const byClient = new Map(); // name -> 聚合
-  const recent = []; // 环形缓冲
+  const daily = new Map(); // 'YYYY-MM-DD' -> { requests, errors, inTokens, outTokens, cacheReadTokens, cacheWriteTokens }
+  const recent = []; // 环形缓冲(内存态,重启清零)
   const subscribers = new Set(); // 实时日志订阅回调
   let seq = 0;
+  let rateLimit = null; // 最近一次上游响应里的 anthropic-ratelimit-* 头 { ts, headers }
+  let dirty = false;
+
+  // ── 持久化:启动时加载 ──
+  if (persistFile) {
+    try {
+      if (fs.existsSync(persistFile)) {
+        const j = JSON.parse(fs.readFileSync(persistFile, 'utf8'));
+        if (j.totals) totals = { ...totals, ...j.totals };
+        if (j.since) since = j.since;
+        for (const [k, v] of Object.entries(j.daily || {})) daily.set(k, v);
+        for (const [k, v] of Object.entries(j.byClient || {})) byClient.set(k, v);
+        if (j.rateLimit) rateLimit = j.rateLimit;
+      }
+    } catch (err) {
+      log(`⚠️ 指标持久化文件读取失败(忽略,重新累计): ${err.message}`);
+    }
+  }
+
+  function save() {
+    if (!persistFile || !dirty) return;
+    dirty = false;
+    try {
+      fs.mkdirSync(path.dirname(persistFile), { recursive: true });
+      const tmp = `${persistFile}.tmp.${process.pid}`;
+      fs.writeFileSync(
+        tmp,
+        JSON.stringify({
+          version: 1,
+          since,
+          totals,
+          daily: Object.fromEntries(daily),
+          byClient: Object.fromEntries(byClient),
+          rateLimit,
+        }),
+        { mode: 0o600 },
+      );
+      fs.renameSync(tmp, persistFile);
+    } catch (err) {
+      dirty = true;
+      log(`⚠️ 指标落盘失败: ${err.message}`);
+    }
+  }
+  if (persistFile) setInterval(save, SAVE_INTERVAL_MS).unref();
 
   function isError(status) {
     return status === 0 || status >= 400;
   }
 
+  function bumpAggregate(agg, e, u) {
+    agg.requests++;
+    if (isError(e.status)) agg.errors++;
+    agg.inTokens += u.input || 0;
+    agg.outTokens += u.output || 0;
+    agg.cacheReadTokens += u.cacheRead || 0;
+    agg.cacheWriteTokens += u.cacheWrite || 0;
+  }
+
   function record(entry) {
     const e = { id: ++seq, ...entry };
-    totalRequests++;
-    if (isError(e.status)) totalErrors++;
+    const u = e.usage || {};
 
+    bumpAggregate(totals, e, u);
+
+    // 每日聚合
+    const day = dayKey(e.ts);
+    let d = daily.get(day);
+    if (!d) {
+      d = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      daily.set(day, d);
+      // 修剪最旧的天
+      while (daily.size > MAX_DAILY_DAYS) {
+        const oldest = [...daily.keys()].sort()[0];
+        daily.delete(oldest);
+      }
+    }
+    bumpAggregate(d, e, u);
+
+    // 按客户端聚合
     const name = e.client || '(unknown)';
     let c = byClient.get(name);
     if (!c) {
       c = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, lastSeen: 0, lastStatus: 0 };
       byClient.set(name, c);
     }
-    c.requests++;
-    if (isError(e.status)) c.errors++;
-    const u = e.usage || {};
-    c.inTokens += u.input || 0;
-    c.outTokens += u.output || 0;
-    c.cacheReadTokens += u.cacheRead || 0;
-    c.cacheWriteTokens += u.cacheWrite || 0;
+    bumpAggregate(c, e, u);
     c.lastSeen = e.ts;
     c.lastStatus = e.status;
+
+    dirty = true;
 
     recent.push(e);
     if (recent.length > maxRecent) recent.shift();
@@ -48,6 +127,12 @@ export function createMetrics(maxRecent = 500) {
     return e;
   }
 
+  // 上游订阅限额头快照(每次转发后更新)
+  function setRateLimit(info) {
+    rateLimit = info;
+    dirty = true;
+  }
+
   function subscribe(cb) {
     subscribers.add(cb);
     return () => subscribers.delete(cb);
@@ -57,8 +142,12 @@ export function createMetrics(maxRecent = 500) {
     return {
       startedAt,
       uptimeMs: Date.now() - startedAt,
-      totalRequests,
-      totalErrors,
+      since,
+      totalRequests: totals.requests,
+      totalErrors: totals.errors,
+      totals: { ...totals },
+      daily: [...daily.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([date, d]) => ({ date, ...d })),
+      rateLimit,
       subscribers: subscribers.size,
       clients: [...byClient.entries()].map(([name, c]) => ({ name, ...c })),
     };
@@ -71,7 +160,13 @@ export function createMetrics(maxRecent = 500) {
   // 某个客户端名被吊销/删除后,把它的聚合也清掉(可选)
   function forget(name) {
     byClient.delete(name);
+    dirty = true;
   }
 
-  return { record, subscribe, snapshot, recentLogs, forget };
+  // 进程退出前强制落盘
+  function flush() {
+    save();
+  }
+
+  return { record, setRateLimit, subscribe, snapshot, recentLogs, forget, flush };
 }
