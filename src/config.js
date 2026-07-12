@@ -55,17 +55,17 @@ export function cleanToken(t) {
   return s;
 }
 
-// 把 clientTokens 归一化成 [{ token, name }]
+// 把 clientTokens 归一化成 [{ token, name, overrides }]
 function normalizeTokens(list) {
   const out = [];
   for (const item of list || []) {
     if (!item) continue;
     if (typeof item === 'string') {
       const token = cleanToken(item);
-      if (token) out.push({ token, name: 'client' });
+      if (token) out.push({ token, name: 'client', overrides: {} });
     } else if (item.token) {
       const token = cleanToken(item.token);
-      if (token) out.push({ token, name: item.name || 'client' });
+      if (token) out.push({ token, name: item.name || 'client', overrides: item.overrides && typeof item.overrides === 'object' ? item.overrides : {} });
     }
   }
   return out;

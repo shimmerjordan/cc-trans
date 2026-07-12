@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { CATALOG, CATALOG_VERSION } from './models.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(__dirname, 'admin-ui.html');
@@ -180,6 +181,7 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
         id: idOf(t.token),
         name: t.name,
         tokenMask: maskToken(t.token),
+        overrides: t.overrides || {},
         stats: statByName.get(t.name) || null,
       }));
       const configuredNames = new Set(tokenAdmin.list().map((t) => t.name));
@@ -194,6 +196,49 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       const entry = tokenAdmin.add(name);
       log(`管理台新增客户端令牌: ${name} (${maskToken(entry.token)})`);
       return sendJson(res, 200, { name: entry.name, token: entry.token }); // 明文只在创建时返回一次
+    }
+
+    if (sub === '/api/tokens/overrides' && req.method === 'POST') {
+      if (!tokenAdmin.canManage()) return sendJson(res, 400, { error: '当前用环境变量配置令牌,无法在线修改;请改用 config.json' });
+      const b = await readJson(req);
+      const target = tokenAdmin.list().find((t) => idOf(t.token) === String(b.id || ''));
+      if (!target) return sendJson(res, 404, { error: '未找到该令牌' });
+      const saved = tokenAdmin.setOverrides(target.token, b.overrides || {});
+      log(`管理台更新 ${target.name} 的参数下发: ${JSON.stringify(saved)}`);
+      return sendJson(res, 200, { ok: true, overrides: saved });
+    }
+
+    // 模型目录(内置)+ 参数规则说明
+    if (sub === '/api/models' && req.method === 'GET') {
+      return sendJson(res, 200, { catalogVersion: CATALOG_VERSION, catalog: CATALOG });
+    }
+
+    // 从上游拉取实际可用模型列表(手动"检查更新");OAuth 订阅或静态密钥均尝试
+    if (sub === '/api/models/refresh' && req.method === 'POST') {
+      try {
+        const headers = { 'anthropic-version': '2023-06-01' };
+        if (oauth) {
+          headers['authorization'] = `Bearer ${await oauth.getAccessToken()}`;
+          headers['anthropic-beta'] = oauth.beta;
+        } else if (config.upstreamAuthToken) {
+          headers['authorization'] = `Bearer ${config.upstreamAuthToken}`;
+        } else if (config.upstreamApiKey) {
+          headers['x-api-key'] = config.upstreamApiKey;
+        }
+        const r = await fetch(config.upstreamBaseUrl + '/v1/models?limit=100', { headers });
+        const text = await r.text();
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 160)}`);
+        const j = JSON.parse(text);
+        const known = new Set(CATALOG.map((m) => m.id));
+        const live = (j.data || []).map((m) => ({
+          id: m.id,
+          displayName: m.display_name || m.id,
+          inCatalog: known.has(m.id),
+        }));
+        return sendJson(res, 200, { ok: true, fetchedAt: Date.now(), live });
+      } catch (err) {
+        return sendJson(res, 200, { ok: false, error: err.message });
+      }
     }
 
     if (sub === '/api/tokens/revoke' && req.method === 'POST') {

@@ -8,6 +8,7 @@ import { loadConfig, cleanToken } from './config.js';
 import { createOAuthProvider } from './oauth.js';
 import { createMetrics } from './metrics.js';
 import { createAdmin } from './admin.js';
+import { applyOverrides, normalizeOverrides } from './models.js';
 
 function generateClientToken() {
   return 'cct-' + crypto.randomBytes(24).toString('base64url');
@@ -60,9 +61,9 @@ try {
   process.exit(1);
 }
 
-// token -> name 映射,用于鉴权与日志标识;clientTokens 为可变的令牌清单(管理台增删)
-let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.name }));
-const tokenMap = new Map(clientTokens.map((t) => [t.token, t.name]));
+// token -> 条目映射,用于鉴权/日志标识/参数下发;clientTokens 为可变的令牌清单(管理台增删改)
+let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.name, overrides: t.overrides || {} }));
+const tokenMap = new Map(clientTokens.map((t) => [t.token, t]));
 
 // 订阅 OAuth provider(仅 oauth 模式启用)
 const oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
@@ -84,7 +85,13 @@ function patchConfigFile(patch) {
   fs.renameSync(tmp, file);
 }
 function persistClientTokens() {
-  patchConfigFile({ clientTokens: clientTokens.map((t) => ({ token: t.token, name: t.name })) });
+  patchConfigFile({
+    clientTokens: clientTokens.map((t) => ({
+      token: t.token,
+      name: t.name,
+      ...(t.overrides && Object.keys(t.overrides).length ? { overrides: t.overrides } : {}),
+    })),
+  });
 }
 
 // 定长防时序比较
@@ -98,11 +105,11 @@ function safeEqual(a, b) {
 // 供管理台增删令牌的接口
 const tokenAdmin = {
   canManage: () => !!config.__file,
-  list: () => clientTokens.map((t) => ({ token: t.token, name: t.name })),
+  list: () => clientTokens.map((t) => ({ token: t.token, name: t.name, overrides: t.overrides || {} })),
   add: (name) => {
-    const entry = { token: generateClientToken(), name: (name || 'client').trim() || 'client' };
+    const entry = { token: generateClientToken(), name: (name || 'client').trim() || 'client', overrides: {} };
     clientTokens.push(entry);
-    tokenMap.set(entry.token, entry.name);
+    tokenMap.set(entry.token, entry);
     persistClientTokens();
     return entry;
   },
@@ -113,6 +120,14 @@ const tokenAdmin = {
     tokenMap.delete(token);
     persistClientTokens();
     return true;
+  },
+  // 按客户端下发参数(强制模型/thinking/effort/门禁前缀/参数清洗),写回 config.json 立即生效
+  setOverrides: (token, overrides) => {
+    const entry = clientTokens.find((t) => t.token === token);
+    if (!entry) return null;
+    entry.overrides = normalizeOverrides(overrides);
+    persistClientTokens();
+    return entry.overrides;
   },
 };
 
@@ -239,24 +254,31 @@ function readBody(req) {
   });
 }
 
-// 仅当配置了 modelMap 且为 JSON 体时,改写 body 里的 model 字段
-function applyModelMap(bodyBuffer, req) {
-  const map = config.modelMap;
-  if (!map || Object.keys(map).length === 0) return { body: bodyBuffer, model: undefined };
+// 请求体改写管道:全局 modelMap + 客户端参数下发(强制模型/thinking/effort/门禁前缀/新模型参数清洗)。
+// 仅处理 /v1/messages* 的 JSON 体;无任何改写规则时原样透传(保持字节保真)。
+function applyBodyTransforms(bodyBuffer, req, clientEntry) {
+  const map = config.modelMap || {};
+  const ov = (clientEntry && clientEntry.overrides) || {};
+  const hasRules = Object.keys(map).length > 0 || Object.keys(ov).length > 0;
+  const pathOnly = (req.url || '').split('?')[0];
   const ct = String(req.headers['content-type'] || '');
-  if (!ct.includes('application/json') || bodyBuffer.length === 0) {
-    return { body: bodyBuffer, model: undefined };
+  if (!hasRules || !pathOnly.startsWith('/v1/messages') || !ct.includes('application/json') || bodyBuffer.length === 0) {
+    return { body: bodyBuffer, model: undefined, changes: [] };
   }
   try {
     const obj = JSON.parse(bodyBuffer.toString('utf8'));
     const original = obj.model;
+    const changes = [];
     if (original && map[original]) {
       obj.model = map[original];
-      return { body: Buffer.from(JSON.stringify(obj)), model: `${original}→${obj.model}` };
+      changes.push(`model=${original}→${obj.model}(modelMap)`);
     }
-    return { body: bodyBuffer, model: original };
+    changes.push(...applyOverrides(obj, ov));
+    if (!changes.length) return { body: bodyBuffer, model: original, changes };
+    const model = obj.model !== original ? `${original}→${obj.model}` : original;
+    return { body: Buffer.from(JSON.stringify(obj)), model, changes };
   } catch {
-    return { body: bodyBuffer, model: undefined };
+    return { body: bodyBuffer, model: undefined, changes: [] };
   }
 }
 
@@ -375,10 +397,12 @@ async function handleProxy(req, res, started) {
     recordMetric(req, started, 401, token ? '(令牌不匹配)' : '(未携带令牌)');
     return sendError(res, 401, 'authentication_error', `cc-trans: 无效的客户端访问令牌(${!token ? '未携带令牌' : '令牌不匹配'})`);
   }
-  const clientName = tokenMap.get(token);
+  const clientEntry = tokenMap.get(token);
+  const clientName = clientEntry.name;
 
   const bodyBuffer = req.method === 'GET' || req.method === 'HEAD' ? Buffer.alloc(0) : await readBody(req);
-  const { body, model } = applyModelMap(bodyBuffer, req);
+  const { body, model, changes } = applyBodyTransforms(bodyBuffer, req, clientEntry);
+  if (changes.length) log(`参数下发 [${clientName}]: ${changes.join(', ')}`);
 
   const url = config.upstreamBaseUrl + req.url;
   const headers = buildUpstreamHeaders(req);

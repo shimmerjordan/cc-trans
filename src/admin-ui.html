@@ -105,6 +105,7 @@
     <div class="tabs">
       <button data-tab="overview" class="active" onclick="switchTab('overview')">概览</button>
       <button data-tab="clients" onclick="switchTab('clients')">客户端</button>
+      <button data-tab="models" onclick="switchTab('models')">模型/参数</button>
       <button data-tab="logs" onclick="switchTab('logs')">实时日志</button>
       <button data-tab="settings" onclick="switchTab('settings')">设置</button>
     </div>
@@ -137,13 +138,40 @@
         <button class="primary" id="genBtn" onclick="openGen()">+ 生成客户端令牌</button>
       </div>
       <table>
-        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>缓存读</th><th>最近活跃</th><th></th></tr></thead>
+        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
         <tbody id="clientRows"></tbody>
       </table>
+      <p class="muted" style="font-size:12px;margin-top:10px">「参数下发」= 该客户端的请求转发前自动改写:强制模型 / thinking / effort / 注入 Claude Code system 前缀(过订阅门禁)/ 清洗新模型不支持的参数。参数含义见「模型/参数」页。</p>
       <div id="othersWrap" hidden>
         <p class="muted" style="margin-top:18px;font-size:12px">其它来源(未授权尝试等):</p>
         <table><thead><tr><th>来源</th><th>请求数</th><th>最近状态</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
       </div>
+    </section>
+
+    <section id="tab-models" hidden>
+      <section class="block">
+        <h2>模型目录 <span class="muted" style="font-weight:400;font-size:12px" id="catalogVer"></span></h2>
+        <div class="toolbar">
+          <span class="grow muted" style="font-size:12.5px">内置目录随 cc-trans 更新;点右侧按钮从上游拉取<b>订阅实际可用</b>的模型列表,发现新模型后到「客户端」页给对应客户端下发升级。</span>
+          <button class="primary" onclick="refreshLiveModels()">从上游拉取可用模型</button>
+        </div>
+        <div id="liveModels" hidden style="margin-bottom:12px"></div>
+        <table>
+          <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th></tr></thead>
+          <tbody id="catalogRows"></tbody>
+        </table>
+      </section>
+      <section class="block">
+        <h2>可传入参数说明(经订阅 OAuth 转发)</h2>
+        <dl class="dl" style="font-size:13px">
+          <dt>必备</dt><dd><span class="mono">model</span> + <span class="mono">max_tokens</span> + <span class="mono">messages</span>(<span class="mono">system</span>/<span class="mono">tools</span> 可选)</dd>
+          <dt class="mono">thinking</dt><dd>新家族只认 <span class="mono">{"type":"adaptive"}</span>;Opus 4.7+/Sonnet 5 可 <span class="mono">disabled</span>;<b>Fable 5 不接受 disabled(只能省略)</b>;老模型用 <span class="mono">enabled + budget_tokens</span></dd>
+          <dt class="mono">output_config.effort</dt><dd><span class="mono">low / medium / high / xhigh / max</span>,控制思考深度与 token 消耗;4.6+ 支持(4.6 无 xhigh),Sonnet 4.5 / Haiku 4.5 <b>不支持</b>,默认 high</dd>
+          <dt class="mono">temperature</dt><dd>⚠️ <b>Opus 4.7/4.8、Sonnet 5、Fable 5 已移除</b> temperature / top_p / top_k,传了直接 400;老模型(4.6 及更早、Haiku)仍可用</dd>
+          <dt>订阅门禁</dt><dd>⚠️ 非 Haiku 模型的请求 <span class="mono">system</span> 必须以 <span class="mono">You are Claude Code, ...</span> 开头,否则被上游拒(表现为脱敏的 400/429 "Error");Haiku 豁免。可在客户端参数里开「自动注入前缀」解决</dd>
+          <dt>流式</dt><dd><span class="mono">stream: true</span> 正常透传;长输出(&gt;16K tokens)建议流式</dd>
+        </dl>
+      </section>
     </section>
 
     <section id="tab-logs" hidden>
@@ -169,6 +197,41 @@
     </section>
   </main>
 </div>
+
+<dialog id="ovDlg" style="width:460px">
+  <h3 style="margin-top:0">参数下发 · <span id="ovName"></span></h3>
+  <div class="form-row"><label>强制模型</label>
+    <div>
+      <input id="ovModel" class="input" list="modelList" placeholder="留空 = 不改写客户端请求的模型" style="width:100%" />
+      <datalist id="modelList"></datalist>
+    </div>
+  </div>
+  <div class="form-row"><label>思考模式</label>
+    <select id="ovThinking" class="input">
+      <option value="">不覆盖(透传客户端的)</option>
+      <option value="adaptive">adaptive · 自适应</option>
+      <option value="disabled">disabled · 关闭(Fable 5 上自动改为移除)</option>
+    </select>
+  </div>
+  <div class="form-row"><label>思考深度 effort</label>
+    <select id="ovEffort" class="input">
+      <option value="">不覆盖</option>
+      <option value="low">low · 最快</option>
+      <option value="medium">medium</option>
+      <option value="high">high(API 默认)</option>
+      <option value="xhigh">xhigh</option>
+      <option value="max">max</option>
+    </select>
+  </div>
+  <div class="form-row"><label></label><label class="flex" style="display:flex;align-items:center;gap:8px;font-size:13px">
+    <input type="checkbox" id="ovInject" /> 注入 Claude Code system 前缀(非 Haiku 模型过订阅门禁)
+  </label></div>
+  <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
+    <input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)
+  </label></div>
+  <p class="muted" style="font-size:12px;margin:4px 0 14px">对合规请求(如真实 Claude Code)以上均为无操作;给自研客户端接订阅时建议开启两个开关。</p>
+  <div style="text-align:right"><button onclick="ovDlg.close()">取消</button> <button class="primary" onclick="saveOverrides()">保存</button></div>
+</dialog>
 
 <dialog id="genDlg">
   <h3 style="margin-top:0">生成客户端令牌</h3>
@@ -225,9 +288,10 @@ function enterApp() {
 function switchTab(t) {
   curTab = t;
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
-  ['overview', 'clients', 'logs', 'settings'].forEach((x) => show('tab-' + x, x === t));
+  ['overview', 'clients', 'models', 'logs', 'settings'].forEach((x) => show('tab-' + x, x === t));
   if (t === 'overview') refreshOverview();
   if (t === 'clients') refreshClients();
+  if (t === 'models') loadModels();
 }
 
 function fmtUptime(ms) { const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`; }
@@ -393,20 +457,99 @@ function drawDonut(box, segs) {
   box.innerHTML = `<svg viewBox="0 0 160 160" style="max-width:180px;margin:0 auto">${rings}<text x="80" y="76" text-anchor="middle" font-size="22" font-weight="700" fill="#1c2230">${total}</text><text x="80" y="94" text-anchor="middle" font-size="11" fill="#9ca3af">总请求</text></svg><ul class="legend">${legend}</ul>`;
 }
 
+let CLIENTS = [];
+function ovBadge(ov) {
+  ov = ov || {};
+  const parts = [];
+  if (ov.model) parts.push('→' + ov.model.replace(/^claude-/, ''));
+  if (ov.thinking) parts.push('think:' + ov.thinking);
+  if (ov.effort) parts.push('effort:' + ov.effort);
+  if (ov.injectClaudeCodeSystem) parts.push('+CC前缀');
+  if (ov.stripUnsupported) parts.push('清洗');
+  return parts.length ? `<span class="mono" style="font-size:11.5px;color:#4f46e5">${esc(parts.join(' '))}</span>` : '<span class="muted">—</span>';
+}
 async function refreshClients() {
   try {
     const d = await (await api('/clients')).json();
+    CLIENTS = d.tokens || [];
     el('genBtn').disabled = !d.canManage;
     el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
       <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td>${s.requests || 0}</td>
       <td class="${s.errors ? 'st-5' : ''}">${s.errors || 0}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
-      <td>${s.cacheReadTokens || 0}</td><td>${ago(s.lastSeen)}</td>
-      <td style="text-align:right">${d.canManage ? `<button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">暂无客户端令牌</td></tr>';
+      <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
+      <td style="text-align:right;white-space:nowrap">${d.canManage ? `<button onclick="openOverrides('${t.id}')">参数</button> <button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">暂无客户端令牌</td></tr>';
     const others = d.others || [];
     show('othersWrap', others.length > 0);
     el('otherRows').innerHTML = others.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.requests}</td><td class="${stClass(c.lastStatus)}">${c.lastStatus}</td><td>${ago(c.lastSeen)}</td></tr>`).join('');
   } catch (e) {}
+}
+
+// ── 模型/参数页 ──
+let CATALOG = [];
+async function loadModels() {
+  try {
+    const d = await (await api('/models')).json();
+    CATALOG = d.catalog || [];
+    el('catalogVer').textContent = `(目录版本 ${d.catalogVersion})`;
+    el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
+      <td class="mono">${esc(m.id)}${m.latest ? ' <span style="color:#059669;font-size:11px">●最新</span>' : ''}</td>
+      <td>${esc(m.tier)}</td>
+      <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除(传了 400)'}</td>
+      <td style="font-size:12px">${esc(m.thinking)}</td>
+      <td style="font-size:12px">${esc(m.effort)}</td>
+      <td class="muted" style="font-size:12px">${esc(m.note)}</td></tr>`).join('');
+    el('modelList').innerHTML = CATALOG.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
+  } catch (e) {}
+}
+async function refreshLiveModels() {
+  const box = el('liveModels');
+  box.hidden = false;
+  box.innerHTML = '<span class="muted">拉取中…</span>';
+  try {
+    const d = await (await api('/models/refresh', { method: 'POST' })).json();
+    if (!d.ok) { box.innerHTML = `<span class="st-5">拉取失败:${esc(d.error)}(上游可能不支持 /v1/models,以内置目录为准)</span>`; return; }
+    const news = d.live.filter((m) => !m.inCatalog);
+    box.innerHTML = `<div style="font-size:12.5px"><b>上游实际可用 ${d.live.length} 个模型:</b> ` +
+      d.live.map((m) => `<span class="mono" style="margin-right:8px${m.inCatalog ? '' : ';color:#d97706;font-weight:700'}">${esc(m.id)}${m.inCatalog ? '' : ' 🆕'}</span>`).join('') +
+      (news.length ? `<div style="margin-top:6px;color:#d97706">发现 ${news.length} 个目录外新模型 —— 可到「客户端」页把它下发给对应客户端(强制模型),即完成手动升级。</div>` : '<div class="muted" style="margin-top:6px">与内置目录一致,暂无更新。</div>') + '</div>';
+    // 新模型也加进强制模型下拉候选
+    el('modelList').innerHTML = d.live.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
+  } catch (e) {
+    box.innerHTML = '<span class="st-5">拉取失败(网络/会话问题)</span>';
+  }
+}
+
+// ── 客户端参数下发 ──
+const ovDlg = el('ovDlg');
+let ovTargetId = null;
+function openOverrides(id) {
+  const t = CLIENTS.find((c) => c.id === id);
+  if (!t) return;
+  ovTargetId = id;
+  const ov = t.overrides || {};
+  el('ovName').textContent = t.name;
+  el('ovModel').value = ov.model || '';
+  el('ovThinking').value = ov.thinking || '';
+  el('ovEffort').value = ov.effort || '';
+  el('ovInject').checked = !!ov.injectClaudeCodeSystem;
+  el('ovStrip').checked = !!ov.stripUnsupported;
+  if (!el('modelList').children.length && CATALOG.length === 0) loadModels();
+  ovDlg.showModal();
+}
+async function saveOverrides() {
+  const overrides = {
+    model: el('ovModel').value.trim(),
+    thinking: el('ovThinking').value,
+    effort: el('ovEffort').value,
+    injectClaudeCodeSystem: el('ovInject').checked,
+    stripUnsupported: el('ovStrip').checked,
+  };
+  const r = await api('/tokens/overrides', { method: 'POST', body: JSON.stringify({ id: ovTargetId, overrides }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { alert('保存失败:' + (d.error || '未知')); return; }
+  ovDlg.close();
+  refreshClients();
 }
 
 const genDlg = el('genDlg');
