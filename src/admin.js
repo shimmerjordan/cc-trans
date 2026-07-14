@@ -97,11 +97,13 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
     };
   }
 
-  // 订阅用量(与 Claude Code /usage 同源的 OAuth 接口),60s 缓存,失败时前端回落到限额头
+  // 订阅用量(与 Claude Code /usage 同源的 OAuth 接口),默认 10 分钟缓存(避免频繁调用被上游限流 429);
+  // 前端「刷新」按钮传 force=1 可跳过缓存强制拉取。失败时前端回落到限额头。
+  const USAGE_TTL_MS = 10 * 60 * 1000;
   let usageCache = { ts: 0, data: null };
-  async function fetchSubscriptionUsage() {
+  async function fetchSubscriptionUsage(force = false) {
     if (!oauth) return { available: false, reason: '非订阅 OAuth 模式' };
-    if (usageCache.data && Date.now() - usageCache.ts < 60_000) return usageCache.data;
+    if (!force && usageCache.data && Date.now() - usageCache.ts < USAGE_TTL_MS) return usageCache.data;
     try {
       const token = await oauth.getAccessToken();
       const r = await fetch(config.upstreamBaseUrl + '/api/oauth/usage', {
@@ -119,7 +121,7 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       }
       const data = { available: true, fetchedAt: Date.now(), windows, raw: j };
       usageCache = { ts: Date.now(), data };
-      return data;
+      return { ...data, cachedTtlMs: USAGE_TTL_MS };
     } catch (err) {
       return { available: false, reason: err.message };
     }
@@ -164,7 +166,9 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
     }
 
     if (sub === '/api/usage' && req.method === 'GET') {
-      return sendJson(res, 200, await fetchSubscriptionUsage());
+      const force = u.searchParams.get('force') === '1';
+      const data = await fetchSubscriptionUsage(force);
+      return sendJson(res, 200, { ...data, cachedAt: usageCache.ts || null });
     }
 
     if (sub === '/api/password' && req.method === 'POST') {

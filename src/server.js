@@ -343,6 +343,12 @@ function ts() {
 // 上游网络层瞬时故障的重试次数(仅在客户端尚未收到任何字节时重试,对客户端完全透明)
 const UPSTREAM_ATTEMPTS = 3;
 
+// SSE 静默保活:上游超过 SSE_KEEPALIVE_MS 没吐字节,就往客户端写一个 SSE 注释帧(客户端忽略),
+// 保证每隔一段就有字节穿过 frp/NAT/中转的每一跳,不让空闲超时掐断长思考期间的连接。
+// 用比阈值更短的轮询周期检查,避免"周期==阈值"导致刚好错过。
+const SSE_KEEPALIVE_MS = 10_000;
+const SSE_KEEPALIVE_POLL_MS = 2_500;
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -417,10 +423,12 @@ async function handleProxy(req, res, started) {
   // 客户端提前断开时中止上游请求;write 出错走 close 路径,不让 error 事件炸进程
   const abort = new AbortController();
   let clientGone = false;
+  let clientGoneMs = 0;
   res.on('error', () => {});
   res.on('close', () => {
     if (!res.writableFinished) {
       clientGone = true;
+      clientGoneMs = Date.now();
       abort.abort();
     }
   });
@@ -430,6 +438,25 @@ async function handleProxy(req, res, started) {
   let wroteHead = false; // 首字节到达才写响应头,首字节前上游中断可整体重试(对客户端透明)
   let sentBytes = false;
   let recorded = false;
+  // ── 诊断计数:定位"断开"到底发生在链路哪一段、是不是空闲超时 ──
+  let chunkCount = 0; // 回传给客户端的 chunk 数
+  let bytesToClient = 0; // 回传字节数
+  let firstByteMs = 0; // 首字节送出时刻(算 TTFB)
+  let lastWriteMs = 0; // 最近一次成功送出字节的时刻
+  let maxGapMs = 0; // 相邻两次送出字节的最大间隔(反映上游/链路的最长静默)
+  let upstreamEnded = false; // 上游流是否已完整读完
+  let keepAlives = 0; // 已补发的 SSE 保活帧数(在下方流循环里累加)
+
+  // 断开/中断类收尾时附加的诊断串。断开距上次发送=大 → 空闲超时(链路掐死静默连接);小 → 硬重置/客户端主动断。
+  const diag = () => {
+    const p = [`chunks=${chunkCount}`, `bytes=${bytesToClient}`];
+    if (firstByteMs) p.push(`ttfb=${firstByteMs - started}ms`);
+    if (maxGapMs) p.push(`最大静默=${maxGapMs}ms`);
+    if (clientGone && lastWriteMs) p.push(`断开距上次发送=${(clientGoneMs || Date.now()) - lastWriteMs}ms`);
+    if (keepAlives) p.push(`保活帧=${keepAlives}`);
+    p.push(`上游${upstreamEnded ? '已读完' : '未读完'}`);
+    return p.join(' ');
+  };
 
   const writeHeadOnce = () => {
     if (wroteHead) return;
@@ -462,7 +489,7 @@ async function handleProxy(req, res, started) {
   for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
     if (attempt > 1) {
       await sleep(300 * (attempt - 1));
-      if (clientGone) return finish('(客户端已断开)');
+      if (clientGone) return finish(`(客户端已断开·首字节前 ${diag()})`);
       try {
         await applyUpstreamAuth(headers); // 订阅 token 可能刚轮换,重试前重新取
       } catch {
@@ -478,7 +505,7 @@ async function handleProxy(req, res, started) {
         signal: abort.signal,
       });
     } catch (err) {
-      if (clientGone) return finish('(客户端已断开)');
+      if (clientGone) return finish(`(客户端已断开·首字节前 ${diag()})`);
       if (attempt < UPSTREAM_ATTEMPTS) {
         log(`${req.method} ${req.url} 上游连接失败,重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1}: ${err.message} [${clientName}]`);
         continue;
@@ -502,6 +529,19 @@ async function handleProxy(req, res, started) {
     }
 
     const isSSE = String(upstreamRes.headers.get('content-type') || '').includes('text/event-stream');
+    // 保活定时器:仅 SSE、已开始回传、客户端在线时,静默期补注释帧
+    const kaTimer = setInterval(() => {
+      if (!isSSE || !wroteHead || clientGone || res.writableEnded || !res.writable) return;
+      if (Date.now() - lastWriteMs < SSE_KEEPALIVE_MS) return;
+      try {
+        res.write(': keepalive\n\n');
+        keepAlives++;
+        lastWriteMs = Date.now();
+      } catch {
+        /* 写失败会走 close/error 路径 */
+      }
+    }, SSE_KEEPALIVE_POLL_MS);
+    kaTimer.unref();
     try {
       for await (const chunk of upstreamRes.body) {
         if (clientGone) break;
@@ -512,6 +552,12 @@ async function handleProxy(req, res, started) {
         }
         writeHeadOnce();
         sentBytes = true;
+        chunkCount++;
+        bytesToClient += chunk.length;
+        const now = Date.now();
+        if (!firstByteMs) firstByteMs = now;
+        else if (lastWriteMs) maxGapMs = Math.max(maxGapMs, now - lastWriteMs);
+        lastWriteMs = now;
         if (!res.write(chunk) && !clientGone) {
           // 背压:等客户端消费;客户端断开也要能醒来
           await new Promise((resolve) => {
@@ -525,12 +571,13 @@ async function handleProxy(req, res, started) {
           });
         }
       }
-      if (clientGone) return finish('(客户端提前断开)');
+      upstreamEnded = true;
+      if (clientGone) return finish(`(客户端提前断开 ${diag()})`);
       writeHeadOnce();
       res.end();
       return finish();
     } catch (err) {
-      if (clientGone || res.destroyed) return finish('(客户端提前断开)');
+      if (clientGone || res.destroyed) return finish(`(客户端提前断开 ${diag()})`);
       if (!sentBytes && attempt < UPSTREAM_ATTEMPTS) {
         log(`${req.method} ${req.url} 上游响应在首字节前中断,重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1}: ${err.message} [${clientName}]`);
         upstreamRes = null;
@@ -556,11 +603,13 @@ async function handleProxy(req, res, started) {
         } catch {
           res.destroy(err);
         }
-        return finish('(流中断)');
+        return finish(`(流中断 ${diag()})`);
       }
       log(`${req.method} ${req.url} 流错误(已回传部分数据,只能断开): ${err.message} [${clientName}]`);
       res.destroy(err);
-      return finish('(流中断)');
+      return finish(`(流中断 ${diag()})`);
+    } finally {
+      clearInterval(kaTimer);
     }
   }
 }

@@ -29,6 +29,7 @@
   section.block { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
   section.block > h2 { font-size: 14px; margin: 0 0 14px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
   section.block > h2::before { content: ""; width: 4px; height: 15px; background: var(--accent); border-radius: 2px; }
+  #usageBlock > h2::before { display: none; }
 
   .dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; }
   .dl dt { color: var(--muted); }
@@ -116,7 +117,10 @@
         <dl class="dl" id="svcInfo"></dl>
       </section>
       <section class="block" id="usageBlock">
-        <h2>订阅用量</h2>
+        <h2 style="justify-content:space-between">
+          <span style="display:flex;align-items:center;gap:8px"><span style="width:4px;height:15px;background:var(--accent);border-radius:2px;display:inline-block"></span>订阅用量</span>
+          <button id="usageRefreshBtn" onclick="refreshUsage()" style="font-weight:400;font-size:12px;padding:4px 10px">刷新</button>
+        </h2>
         <div id="usageBars" class="muted">加载中…</div>
         <p class="muted" id="usageNote" style="font-size:12px;margin:10px 0 0"></p>
       </section>
@@ -253,6 +257,7 @@ const API = PREFIX + '/api';
 const COLORS = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#0891b2', '#7c3aed', '#db2777', '#65a30d'];
 let SESSION = sessionStorage.getItem('cc-trans-admin') || '';
 let statusTimer = null, es = null, curTab = 'overview';
+let LAST_STATUS = null; // 最近一次 /status,供订阅用量手动刷新时复用 rateLimit 回落
 
 const el = (id) => document.getElementById(id);
 const show = (id, on) => { el(id).hidden = !on; };
@@ -310,6 +315,7 @@ async function refreshOverview() {
       (await api('/logs?limit=500')).json(),
       api('/usage').then((r) => r.json()).catch(() => null),
     ]);
+    LAST_STATUS = s;
     const t = s.totals || { inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     const today = (s.daily || []).find((d) => d.date === localDay(Date.now())) || { requests: 0 };
     // 顶部 pill
@@ -365,6 +371,7 @@ function usageBar(label, pct, resetDate) {
   return `<div class="ubar"><div class="row1"><span><b>${esc(label)}</b> · 已用 ${pct}% / 剩余 ${100 - pct}%</span><span class="rst">${rst}</span></div><div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div></div>`;
 }
 function renderUsage(s, us) {
+  s = s || LAST_STATUS || {};
   const box = el('usageBars'), note = el('usageNote');
   const bars = [];
   let noteHtml = '';
@@ -373,7 +380,8 @@ function renderUsage(s, us) {
       const pct = Math.max(0, Math.min(100, Math.round(w.utilization)));
       bars.push(usageBar(USAGE_LABELS[w.key] || w.key, pct, w.resetsAt ? new Date(w.resetsAt) : null));
     });
-    noteHtml = '数据来自订阅用量接口(与 Claude Code /usage 同源),约 1 分钟刷新一次。';
+    const when = us.cachedAt || us.fetchedAt;
+    noteHtml = '数据来自订阅用量接口(与 Claude Code /usage 同源),缓存 10 分钟以避免上游限流' + (when ? `,更新于 ${ago(when)}(点右上「刷新」可强制拉取)` : '') + '。';
   } else if (s.rateLimit && s.rateLimit.headers) {
     // 回落:从最近一次转发响应的 anthropic-ratelimit-unified-* 头推算
     const wins = {};
@@ -398,6 +406,21 @@ function renderUsage(s, us) {
   }
   box.innerHTML = bars.join('');
   note.innerHTML = noteHtml;
+}
+
+// 手动强制刷新订阅用量(跳过 10 分钟缓存)
+async function refreshUsage() {
+  const btn = el('usageRefreshBtn');
+  btn.disabled = true; btn.textContent = '刷新中…';
+  try {
+    const us = await (await api('/usage?force=1')).json();
+    renderUsage(LAST_STATUS, us);
+    if (us && us.available === false && us.reason) el('usageNote').textContent = '刷新失败:' + us.reason;
+  } catch (e) {
+    el('usageNote').textContent = '刷新失败(网络/会话)';
+  } finally {
+    btn.disabled = false; btn.textContent = '刷新';
+  }
 }
 
 function lastDays(daily, n) {
@@ -495,7 +518,7 @@ async function loadModels() {
     el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
       <td class="mono">${esc(m.id)}${m.latest ? ' <span style="color:#059669;font-size:11px">●最新</span>' : ''}</td>
       <td>${esc(m.tier)}</td>
-      <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除(传了 400)'}</td>
+      <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
       <td style="font-size:12px">${esc(m.thinking)}</td>
       <td style="font-size:12px">${esc(m.effort)}</td>
       <td class="muted" style="font-size:12px">${esc(m.note)}</td></tr>`).join('');
