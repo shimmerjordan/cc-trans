@@ -142,7 +142,7 @@
         <button class="primary" id="genBtn" onclick="openGen()">+ 生成客户端令牌</button>
       </div>
       <table>
-        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
+        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
         <tbody id="clientRows"></tbody>
       </table>
       <p class="muted" style="font-size:12px;margin-top:10px">「参数下发」= 该客户端的请求转发前自动改写:强制模型 / thinking / effort / 注入 Claude Code system 前缀(过订阅门禁)/ 清洗新模型不支持的参数。参数含义见「模型/参数」页。</p>
@@ -233,7 +233,27 @@
   <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
     <input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)
   </label></div>
-  <p class="muted" style="font-size:12px;margin:4px 0 14px">对合规请求(如真实 Claude Code)以上均为无操作;给自研客户端接订阅时建议开启两个开关。</p>
+  <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
+    <input type="checkbox" id="ovSpoof" /> <b>伪装成 Claude Code</b>(补全 UA/x-app + anthropic-beta 四件套,自研客户端走订阅更稳)
+  </label></div>
+  <p class="muted" style="font-size:12px;margin:4px 0 14px">对合规请求(如真实 Claude Code)以上均为无操作;给自研客户端接订阅时建议开启「注入前缀 + 清洗 + 伪装」三项。</p>
+
+  <h4 style="margin:6px 0 8px;font-size:13px;color:var(--muted)">安全限制(留空/0 = 不限制)</h4>
+  <div class="form-row"><label>限流</label>
+    <div style="display:flex;gap:6px;align-items:center;font-size:13px">
+      <input id="ovRlReq" type="number" min="0" class="input" style="width:80px" placeholder="次数" />
+      次 /
+      <input id="ovRlWin" type="number" min="0" class="input" style="width:80px" placeholder="秒" />
+      秒
+    </div>
+  </div>
+  <div class="form-row"><label>并发上限</label><input id="ovConc" type="number" min="0" class="input" placeholder="同时处理的请求数,0=不限" /></div>
+  <div class="form-row"><label>客户端限制</label>
+    <input id="ovClient" class="input" list="clientPresets" placeholder="留空=不限;claude_code=仅CC;或填 UA 正则" />
+    <datalist id="clientPresets"><option value="claude_code"></option></datalist>
+  </div>
+  <div class="form-row"><label>模型白名单</label><input id="ovModels" class="input" placeholder="逗号分隔,留空=不限。如 claude-haiku-4-5-20251001" /></div>
+  <p class="muted" style="font-size:12px;margin:4px 0 14px">限流/并发为内存态(重启清零);超限返回带 Retry-After 的 429;客户端/模型不匹配返回 403。</p>
   <div style="text-align:right"><button onclick="ovDlg.close()">取消</button> <button class="primary" onclick="saveOverrides()">保存</button></div>
 </dialog>
 
@@ -305,6 +325,7 @@ function ago(ts) { if (!ts) return '—'; const s = Math.floor((Date.now() - ts)
 function stClass(s) { return 'st st-' + Math.floor((s || 0) / 100); }
 
 function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : n < 1e9 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e9).toFixed(2) + 'B'; }
+function fmtUsd(n) { n = n || 0; if (n === 0) return '$0'; if (n < 0.01) return '$' + n.toFixed(4); if (n < 1) return '$' + n.toFixed(3); if (n < 100) return '$' + n.toFixed(2); return '$' + Math.round(n).toLocaleString(); }
 function localDay(ts) { const d = new Date(ts); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 
 async function refreshOverview() {
@@ -350,6 +371,7 @@ async function refreshOverview() {
       `<div class="metric"><div class="n" title="${t.outTokens}">${fmtNum(t.outTokens)}</div><div class="l">输出 token</div></div>`,
       `<div class="metric"><div class="n" title="${t.cacheReadTokens}">${fmtNum(t.cacheReadTokens)}</div><div class="l">缓存读</div></div>`,
       `<div class="metric"><div class="n" title="${t.cacheWriteTokens}">${fmtNum(t.cacheWriteTokens)}</div><div class="l">缓存写</div></div>`,
+      `<div class="metric"><div class="n" title="按模型定价估算,非账单">${fmtUsd(t.cost)}</div><div class="l">估算成本(累计)</div></div>`,
     ].join('');
     // 折线图:最近30分钟每分钟请求数
     drawLine(el('lineChart'), buckets(lg.logs || [], 30));
@@ -489,6 +511,11 @@ function ovBadge(ov) {
   if (ov.effort) parts.push('effort:' + ov.effort);
   if (ov.injectClaudeCodeSystem) parts.push('+CC前缀');
   if (ov.stripUnsupported) parts.push('清洗');
+  if (ov.spoofClaudeCode) parts.push('伪装CC');
+  if (ov.rateLimitRequests) parts.push(`限流${ov.rateLimitRequests}/${ov.rateLimitWindowSec || 0}s`);
+  if (ov.concurrencyLimit) parts.push(`并发${ov.concurrencyLimit}`);
+  if (ov.allowedClient) parts.push('限UA');
+  if (ov.allowedModels) parts.push(`白名单${ov.allowedModels.length}`);
   return parts.length ? `<span class="mono" style="font-size:11.5px;color:#4f46e5">${esc(parts.join(' '))}</span>` : '<span class="muted">—</span>';
 }
 async function refreshClients() {
@@ -500,8 +527,9 @@ async function refreshClients() {
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
       <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td>${s.requests || 0}</td>
       <td class="${s.errors ? 'st-5' : ''}">${s.errors || 0}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
+      <td title="按模型定价估算">${fmtUsd(s.cost)}</td>
       <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
-      <td style="text-align:right;white-space:nowrap">${d.canManage ? `<button onclick="openOverrides('${t.id}')">参数</button> <button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="8" class="muted">暂无客户端令牌</td></tr>';
+      <td style="text-align:right;white-space:nowrap">${d.canManage ? `<button onclick="openOverrides('${t.id}')">参数</button> <button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="9" class="muted">暂无客户端令牌</td></tr>';
     const others = d.others || [];
     show('othersWrap', others.length > 0);
     el('otherRows').innerHTML = others.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.requests}</td><td class="${stClass(c.lastStatus)}">${c.lastStatus}</td><td>${ago(c.lastSeen)}</td></tr>`).join('');
@@ -557,6 +585,12 @@ function openOverrides(id) {
   el('ovEffort').value = ov.effort || '';
   el('ovInject').checked = !!ov.injectClaudeCodeSystem;
   el('ovStrip').checked = !!ov.stripUnsupported;
+  el('ovSpoof').checked = !!ov.spoofClaudeCode;
+  el('ovRlReq').value = ov.rateLimitRequests || '';
+  el('ovRlWin').value = ov.rateLimitWindowSec || '';
+  el('ovConc').value = ov.concurrencyLimit || '';
+  el('ovClient').value = ov.allowedClient || '';
+  el('ovModels').value = (ov.allowedModels || []).join(', ');
   if (!el('modelList').children.length && CATALOG.length === 0) loadModels();
   ovDlg.showModal();
 }
@@ -567,6 +601,12 @@ async function saveOverrides() {
     effort: el('ovEffort').value,
     injectClaudeCodeSystem: el('ovInject').checked,
     stripUnsupported: el('ovStrip').checked,
+    spoofClaudeCode: el('ovSpoof').checked,
+    rateLimitRequests: Number(el('ovRlReq').value) || 0,
+    rateLimitWindowSec: Number(el('ovRlWin').value) || 0,
+    concurrencyLimit: Number(el('ovConc').value) || 0,
+    allowedClient: el('ovClient').value.trim(),
+    allowedModels: el('ovModels').value.split(',').map((s) => s.trim()).filter(Boolean),
   };
   const r = await api('/tokens/overrides', { method: 'POST', body: JSON.stringify({ id: ovTargetId, overrides }) });
   const d = await r.json();

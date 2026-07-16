@@ -8,10 +8,29 @@ import { loadConfig, cleanToken } from './config.js';
 import { createOAuthProvider } from './oauth.js';
 import { createMetrics } from './metrics.js';
 import { createAdmin } from './admin.js';
-import { applyOverrides, normalizeOverrides } from './models.js';
+import {
+  applyOverrides,
+  normalizeOverrides,
+  clientAllowed,
+  modelAllowed,
+  claudeCodeBetas,
+  claudeCodeIdentityHeaders,
+} from './models.js';
+import { createLimiter } from './limits.js';
+import { initUpstream } from './upstream.js';
+import { handleOpenAiCompat } from './openai_compat.js';
+import { createFileLogger, dirSize } from './logger.js';
 
 function generateClientToken() {
   return 'cct-' + crypto.randomBytes(24).toString('base64url');
+}
+
+// 版本号(供 /health 展示),读不到则 unknown
+let PKG_VERSION = 'unknown';
+try {
+  PKG_VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version || 'unknown';
+} catch {
+  /* ignore */
 }
 
 // ── 子命令: 生成客户端令牌 ───────────────────────────────────────────
@@ -61,6 +80,13 @@ try {
   process.exit(1);
 }
 
+// 可选滚动文件日志(默认 null;配了 logFile 才启用)。必须在任何 log() 调用前初始化。
+const fileLogger = createFileLogger({
+  logFile: config.logFile,
+  logMaxBytes: config.logMaxBytes,
+  logMaxFiles: config.logMaxFiles,
+});
+
 // token -> 条目映射,用于鉴权/日志标识/参数下发;clientTokens 为可变的令牌清单(管理台增删改)
 let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.name, overrides: t.overrides || {} }));
 const tokenMap = new Map(clientTokens.map((t) => [t.token, t]));
@@ -73,6 +99,15 @@ const metrics = createMetrics({
   persistFile: config.__file ? path.join(path.dirname(config.__file), 'data', 'metrics.json') : null,
   log,
 });
+
+// 按客户端限流/并发(内存态)
+const limiter = createLimiter();
+setInterval(() => limiter.sweep(), 300_000).unref();
+
+// 上游连接层(连接池 + 可选代理)。默认直连用内置 fetch;配代理时按需加载 undici。
+const upstream = await initUpstream(config, log);
+const upstreamFetch = upstream.fetch;
+const upstreamDispatcher = upstream.dispatcher;
 
 // 原子地把若干字段写回 config.json(保留其它字段/注释)
 function patchConfigFile(patch) {
@@ -118,6 +153,7 @@ const tokenAdmin = {
     if (idx === -1) return false;
     clientTokens.splice(idx, 1);
     tokenMap.delete(token);
+    limiter.forget(token);
     persistClientTokens();
     return true;
   },
@@ -245,6 +281,22 @@ async function applyUpstreamAuth(headers) {
   }
 }
 
+// A 兼容性:开启 spoofClaudeCode 且为订阅 OAuth 时,把请求头补成完整 Claude Code 身份
+//（UA/x-app/accept 等 + anthropic-beta 四件套),让自研客户端在上游看来像真 Claude Code。
+function applyClaudeCodeSpoof(headers, effectiveModel, overrides) {
+  if (!overrides || !overrides.spoofClaudeCode || !oauth) return [];
+  const changes = [];
+  const ident = claudeCodeIdentityHeaders();
+  for (const [k, v] of Object.entries(ident)) {
+    // 删掉客户端原有的同名头(任意大小写),再写入标准值
+    for (const ek of Object.keys(headers)) if (ek.toLowerCase() === k) delete headers[ek];
+    headers[k] = v;
+  }
+  for (const flag of claudeCodeBetas(effectiveModel)) ensureBeta(headers, flag);
+  changes.push('spoofCC');
+  return changes;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -259,11 +311,11 @@ function readBody(req) {
 function applyBodyTransforms(bodyBuffer, req, clientEntry) {
   const map = config.modelMap || {};
   const ov = (clientEntry && clientEntry.overrides) || {};
-  const hasRules = Object.keys(map).length > 0 || Object.keys(ov).length > 0;
   const pathOnly = (req.url || '').split('?')[0];
   const ct = String(req.headers['content-type'] || '');
-  if (!hasRules || !pathOnly.startsWith('/v1/messages') || !ct.includes('application/json') || bodyBuffer.length === 0) {
-    return { body: bodyBuffer, model: undefined, changes: [] };
+  // effectiveModel:实际发往上游的模型 id(供白名单/成本/身份 beta 判定);model:日志展示串。
+  if (!pathOnly.startsWith('/v1/messages') || !ct.includes('application/json') || bodyBuffer.length === 0) {
+    return { body: bodyBuffer, model: undefined, effectiveModel: undefined, changes: [] };
   }
   try {
     const obj = JSON.parse(bodyBuffer.toString('utf8'));
@@ -274,11 +326,12 @@ function applyBodyTransforms(bodyBuffer, req, clientEntry) {
       changes.push(`model=${original}→${obj.model}(modelMap)`);
     }
     changes.push(...applyOverrides(obj, ov));
-    if (!changes.length) return { body: bodyBuffer, model: original, changes };
+    const effectiveModel = obj.model;
+    if (!changes.length) return { body: bodyBuffer, model: original, effectiveModel, changes };
     const model = obj.model !== original ? `${original}→${obj.model}` : original;
-    return { body: Buffer.from(JSON.stringify(obj)), model, changes };
+    return { body: Buffer.from(JSON.stringify(obj)), model, effectiveModel, changes };
   } catch {
-    return { body: bodyBuffer, model: undefined, changes: [] };
+    return { body: bodyBuffer, model: undefined, effectiveModel: undefined, changes: [] };
   }
 }
 
@@ -353,7 +406,7 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function recordMetric(req, started, status, clientName, usage, model) {
+function recordMetric(req, started, status, clientName, usage, model, effectiveModel) {
   metrics.record({
     ts: started,
     method: req.method,
@@ -361,6 +414,7 @@ function recordMetric(req, started, status, clientName, usage, model) {
     status,
     ms: Date.now() - started,
     model,
+    costModel: effectiveModel || model, // 用实际发往上游的模型 id 算成本
     usage: usage || {},
     client: clientName,
   });
@@ -380,17 +434,12 @@ async function handleProxy(req, res, started) {
 
   // 健康检查 / 根路径:GET 与 HEAD 都无需鉴权(HEAD 只回头,常见于本地/浏览器探活)
   const pathOnly = req.url.split('?')[0];
-  if ((req.method === 'GET' || req.method === 'HEAD') && (pathOnly === '/' || pathOnly === '/health')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && (pathOnly === '/' || pathOnly === '/health' || pathOnly === '/healthz')) {
     if (req.method === 'HEAD') {
       res.writeHead(200);
       return res.end();
     }
-    return sendJson(res, 200, {
-      ok: true,
-      service: 'cc-trans',
-      upstream: config.upstreamBaseUrl,
-      clients: clientTokens.length,
-    });
+    return sendJson(res, 200, buildHealth());
   }
 
   // ── 鉴权 ──
@@ -405,20 +454,80 @@ async function handleProxy(req, res, started) {
   }
   const clientEntry = tokenMap.get(token);
   const clientName = clientEntry.name;
+  const ov = clientEntry.overrides || {};
+
+  // ── B 安全:客户端 UA 限制 ──
+  if (ov.allowedClient && !clientAllowed(ov.allowedClient, req.headers['user-agent'])) {
+    log(`${req.method} ${req.url} 403 客户端不被允许 UA=${maskToken(String(req.headers['user-agent'] || ''))} [${clientName}]`);
+    recordMetric(req, started, 403, clientName);
+    return sendError(res, 403, 'permission_error', `cc-trans: 该令牌限制了客户端类型,当前 User-Agent 不被允许`);
+  }
+
+  // ── D OpenAI 兼容端点:/v1/chat/completions(OpenAI 格式 → Anthropic)──
+  if (req.method === 'POST' && (req.url.split('?')[0] === '/v1/chat/completions')) {
+    const gate = limiter.tryAcquire(token, ov);
+    if (!gate.ok) {
+      recordMetric(req, started, gate.status, clientName);
+      res.setHeader('retry-after', String(gate.retryAfterSec));
+      return sendError(res, gate.status, 'rate_limit_error', `cc-trans: ${gate.message}`);
+    }
+    try {
+      await handleOpenAiCompat(req, res, {
+        readBody,
+        fetch: upstreamFetch,
+        upstreamBaseUrl: config.upstreamBaseUrl,
+        dispatcher: upstreamDispatcher,
+        buildBaseHeaders: () => buildUpstreamHeaders(req),
+        applyUpstreamAuth,
+        applyClaudeCodeSpoof,
+        overrides: ov,
+        allowedModels: ov.allowedModels,
+        log,
+        clientName,
+        sendError,
+        sendJson,
+        recordOpenAi: (status, usage, em) => recordMetric(req, started, status, clientName, usage, em, em),
+      });
+    } finally {
+      gate.release();
+    }
+    return;
+  }
 
   const bodyBuffer = req.method === 'GET' || req.method === 'HEAD' ? Buffer.alloc(0) : await readBody(req);
-  const { body, model, changes } = applyBodyTransforms(bodyBuffer, req, clientEntry);
+  const { body, model, effectiveModel, changes } = applyBodyTransforms(bodyBuffer, req, clientEntry);
   if (changes.length) log(`参数下发 [${clientName}]: ${changes.join(', ')}`);
+
+  // ── B 安全:模型白名单(针对实际发往上游的模型)──
+  if (effectiveModel && !modelAllowed(ov.allowedModels, effectiveModel)) {
+    log(`${req.method} ${req.url} 403 模型不在白名单 model=${effectiveModel} 允许=[${ov.allowedModels.join(', ')}] [${clientName}]`);
+    recordMetric(req, started, 403, clientName, {}, model);
+    return sendError(res, 403, 'permission_error', `cc-trans: 令牌不允许使用模型 ${effectiveModel}`);
+  }
+
+  // ── B 安全:限流 / 并发(仅对转发请求计数;放行则占额度,finish 时释放)──
+  const gate = limiter.tryAcquire(token, ov);
+  if (!gate.ok) {
+    log(`${req.method} ${req.url} ${gate.status} 限流:${gate.message} [${clientName}]`);
+    recordMetric(req, started, gate.status, clientName, {}, model);
+    res.setHeader('retry-after', String(gate.retryAfterSec));
+    return sendError(res, gate.status, 'rate_limit_error', `cc-trans: ${gate.message}`);
+  }
+  const release = gate.release;
 
   const url = config.upstreamBaseUrl + req.url;
   const headers = buildUpstreamHeaders(req);
   try {
     await applyUpstreamAuth(headers);
   } catch (err) {
+    release();
     log(`${req.method} ${req.url} 502 上游凭证错误: ${err.message} [${clientName}]`);
     recordMetric(req, started, 502, clientName, {}, model);
     return sendError(res, 502, 'api_error', `cc-trans 上游凭证不可用: ${err.message}`);
   }
+  // ── A 兼容性:Claude Code 身份伪装 ──
+  const spoof = applyClaudeCodeSpoof(headers, effectiveModel, ov);
+  if (spoof.length) log(`身份伪装 [${clientName}]: ${spoof.join(', ')}`);
 
   // 客户端提前断开时中止上游请求;write 出错走 close 路径,不让 error 事件炸进程
   const abort = new AbortController();
@@ -473,6 +582,7 @@ async function handleProxy(req, res, started) {
   const finish = (note = '') => {
     if (recorded) return;
     recorded = true;
+    release(); // 释放并发额度
     const status = upstreamRes ? upstreamRes.status : 0;
     const ms = Date.now() - started;
     const usage = sniffer.summary();
@@ -483,7 +593,7 @@ async function handleProxy(req, res, started) {
         (note ? ` ${note}` : '') +
         ` [${clientName}]`,
     );
-    recordMetric(req, started, status, clientName, sniffer.usage(), model);
+    recordMetric(req, started, status, clientName, sniffer.usage(), model, effectiveModel);
   };
 
   for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
@@ -498,11 +608,12 @@ async function handleProxy(req, res, started) {
     }
 
     try {
-      upstreamRes = await fetch(url, {
+      upstreamRes = await upstreamFetch(url, {
         method: req.method,
         headers,
         body: body.length ? body : undefined,
         signal: abort.signal,
+        dispatcher: upstreamDispatcher,
       });
     } catch (err) {
       if (clientGone) return finish(`(客户端已断开·首字节前 ${diag()})`);
@@ -620,8 +731,53 @@ function maskToken(t) {
   return t.slice(0, 6) + '…' + t.slice(-4);
 }
 
+// 健康检查详情(无需鉴权,不含敏感数据):存活 + 上游/凭证状态 + 内存 + 数据盘占用,供探针/运维用。
+const HEALTH_STARTED = Date.now();
+function buildHealth() {
+  const h = {
+    ok: true,
+    service: 'cc-trans',
+    version: PKG_VERSION,
+    uptimeSec: Math.floor((Date.now() - HEALTH_STARTED) / 1000),
+    upstream: config.upstreamBaseUrl,
+    upstreamProxy: upstream.describe,
+    upstreamAuth: config.upstreamAuth,
+    clients: clientTokens.length,
+    rssMB: Math.round(process.memoryUsage().rss / 1048576),
+  };
+  if (oauth) {
+    try {
+      const info = oauth.peek ? oauth.peek() : null;
+      if (info) {
+        h.oauth = {
+          subscriptionType: info.subscriptionType || null,
+          expiresInMin: info.expiresAt ? Math.round((info.expiresAt - Date.now()) / 60000) : null,
+          hasRefresh: !!info.hasRefresh,
+        };
+        // token 读不到 / 无 refresh 视为降级(但仍存活,便于区分探针语义)
+        if (!info.hasRefresh) h.ok = true;
+      } else {
+        h.oauth = { error: '凭证读取失败' };
+      }
+    } catch {
+      h.oauth = { error: '凭证读取异常' };
+    }
+  }
+  if (config.__file) {
+    try {
+      const d = dirSize(path.join(path.dirname(config.__file), 'data'));
+      h.dataDir = { bytes: d.bytes, mb: Math.round((d.bytes / 1048576) * 100) / 100, files: d.files };
+    } catch {
+      /* ignore */
+    }
+  }
+  return h;
+}
+
 function log(msg) {
-  process.stdout.write(`[${ts()}] ${msg}\n`);
+  const line = `[${ts()}] ${msg}\n`;
+  process.stdout.write(line);
+  if (fileLogger) fileLogger.write(line);
 }
 
 const server = http.createServer((req, res) => {

@@ -1,0 +1,11 @@
+node_modules
+data
+*.log
+.git
+.gitignore
+config.json
+test
+deploy
+README.md
+.DS_Store
+.env

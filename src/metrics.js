@@ -3,6 +3,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { costOf } from './pricing.js';
 
 const MAX_DAILY_DAYS = 62; // 每日聚合最多保留天数
 const SAVE_INTERVAL_MS = 20_000;
@@ -17,7 +18,7 @@ export function dayKey(ts) {
 export function createMetrics({ maxRecent = 500, persistFile = null, log = () => {} } = {}) {
   const startedAt = Date.now();
   let since = startedAt; // 累计统计起点(持久化后跨重启)
-  let totals = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  let totals = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
   const byClient = new Map(); // name -> 聚合
   const daily = new Map(); // 'YYYY-MM-DD' -> { requests, errors, inTokens, outTokens, cacheReadTokens, cacheWriteTokens }
   const recent = []; // 环形缓冲(内存态,重启清零)
@@ -79,11 +80,14 @@ export function createMetrics({ maxRecent = 500, persistFile = null, log = () =>
     agg.outTokens += u.output || 0;
     agg.cacheReadTokens += u.cacheRead || 0;
     agg.cacheWriteTokens += u.cacheWrite || 0;
+    if (e.cost) agg.cost = (agg.cost || 0) + e.cost;
   }
 
   function record(entry) {
     const e = { id: ++seq, ...entry };
     const u = e.usage || {};
+    // C 成本:按实际模型 + 用量估算 USD(仅展示,非账单)
+    e.cost = costOf(e.costModel || e.model, u);
 
     bumpAggregate(totals, e, u);
 
@@ -91,7 +95,7 @@ export function createMetrics({ maxRecent = 500, persistFile = null, log = () =>
     const day = dayKey(e.ts);
     let d = daily.get(day);
     if (!d) {
-      d = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      d = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
       daily.set(day, d);
       // 修剪最旧的天
       while (daily.size > MAX_DAILY_DAYS) {
@@ -105,7 +109,7 @@ export function createMetrics({ maxRecent = 500, persistFile = null, log = () =>
     const name = e.client || '(unknown)';
     let c = byClient.get(name);
     if (!c) {
-      c = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, lastSeen: 0, lastStatus: 0 };
+      c = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0, lastSeen: 0, lastStatus: 0 };
       byClient.set(name, c);
     }
     bumpAggregate(c, e, u);

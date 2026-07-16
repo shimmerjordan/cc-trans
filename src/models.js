@@ -9,6 +9,33 @@ export const CATALOG_VERSION = '2026-07-12';
 
 export const CC_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude.";
 
+// ── Claude Code 身份指纹(借鉴 claude-relay-service)──────────────────────
+// 订阅 OAuth 门禁不只看 system 前缀,还看整套 Claude Code 客户端指纹:
+// User-Agent(claude-cli/…)、x-app、anthropic-beta 四件套等。自研客户端缺这套指纹时
+// 会更频繁触发脱敏 429/门禁。开启 spoofClaudeCode 后 cc-trans 补齐这套身份。
+export const CLAUDE_CODE_UA = 'claude-cli/1.0.119 (external, cli)';
+export const OAUTH_BETA = 'oauth-2025-04-20';
+export const CLAUDE_CODE_BETA = 'claude-code-20250219';
+export const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
+export const TOOL_STREAMING_BETA = 'fine-grained-tool-streaming-2025-05-14';
+
+// 依 claude-relay-service:非 Haiku 用四件套,Haiku 只用 oauth + thinking。
+export function claudeCodeBetas(model) {
+  if (isHaiku(model)) return [OAUTH_BETA, INTERLEAVED_THINKING_BETA];
+  return [OAUTH_BETA, CLAUDE_CODE_BETA, INTERLEAVED_THINKING_BETA, TOOL_STREAMING_BETA];
+}
+
+// 返回一组要注入的 Claude Code 身份请求头(键为小写)。不含 authorization/anthropic-version(由凭证层加)。
+export function claudeCodeIdentityHeaders() {
+  return {
+    'user-agent': CLAUDE_CODE_UA,
+    'x-app': 'cli',
+    'anthropic-dangerous-direct-browser-access': 'true',
+    accept: 'application/json',
+    'accept-encoding': 'identity', // 避免上游压缩在中转链路上出问题
+  };
+}
+
 // tier: 排序用;latest: 该层级当前最新
 export const CATALOG = [
   { id: 'claude-fable-5',    tier: 'Fable',  latest: true,  temperature: false, thinking: '常开(只能省略或 adaptive,disabled 会 400)', effort: 'low~max(含 xhigh)', note: '最强旗舰;需 30 天数据保留' },
@@ -126,10 +153,42 @@ function ensureCcSystem(obj) {
 export function normalizeOverrides(raw) {
   const o = raw && typeof raw === 'object' ? raw : {};
   const out = {};
+  // A 兼容性
   if (o.model && typeof o.model === 'string') out.model = o.model.trim();
   if (['adaptive', 'disabled'].includes(o.thinking)) out.thinking = o.thinking;
   if (['low', 'medium', 'high', 'xhigh', 'max'].includes(o.effort)) out.effort = o.effort;
   if (o.injectClaudeCodeSystem) out.injectClaudeCodeSystem = true;
   if (o.stripUnsupported) out.stripUnsupported = true;
+  if (o.spoofClaudeCode) out.spoofClaudeCode = true;
+  // B 安全:限流 / 并发 / 客户端限制 / 模型白名单
+  const win = Number(o.rateLimitWindowSec);
+  if (Number.isFinite(win) && win > 0) out.rateLimitWindowSec = Math.min(Math.floor(win), 86400);
+  const rlr = Number(o.rateLimitRequests);
+  if (Number.isFinite(rlr) && rlr > 0) out.rateLimitRequests = Math.floor(rlr);
+  const cc = Number(o.concurrencyLimit);
+  if (Number.isFinite(cc) && cc > 0) out.concurrencyLimit = Math.floor(cc);
+  if (typeof o.allowedClient === 'string' && o.allowedClient.trim()) out.allowedClient = o.allowedClient.trim();
+  if (Array.isArray(o.allowedModels)) {
+    const list = o.allowedModels.map((m) => String(m || '').trim()).filter(Boolean);
+    if (list.length) out.allowedModels = list;
+  }
   return out;
+}
+
+// 客户端 UA 是否符合限制。allowedClient: "claude_code" 预设 | 任意正则串。空/无限制返回 true。
+export function clientAllowed(allowedClient, userAgent) {
+  if (!allowedClient) return true;
+  const ua = String(userAgent || '');
+  if (allowedClient === 'claude_code') return /^claude-cli\/[^\s]+/i.test(ua);
+  try {
+    return new RegExp(allowedClient, 'i').test(ua);
+  } catch {
+    return true; // 正则非法则不拦截,避免误锁死
+  }
+}
+
+// 请求模型是否在白名单内。allowedModels 为空返回 true(不限制)。
+export function modelAllowed(allowedModels, model) {
+  if (!Array.isArray(allowedModels) || !allowedModels.length) return true;
+  return allowedModels.includes(String(model || ''));
 }

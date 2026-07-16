@@ -16,13 +16,22 @@
   "upstreamAuthToken": "",
 
   "_comment_clients": "分发给远端电脑的访问令牌,远端填到 ANTHROPIC_AUTH_TOKEN。用 `npm run gen-token` 生成。可给每个设备一个,name 仅用于日志。",
+  "_comment_overrides": "每个令牌可选 overrides(也可在管理台「客户端→参数」里改,立即生效):model 强制模型 / thinking(adaptive|disabled)/ effort(low..max)/ injectClaudeCodeSystem 注入CC前缀 / stripUnsupported 清洗新模型不支持参数 / spoofClaudeCode 伪装成Claude Code身份(自研客户端走订阅更稳)/ rateLimitRequests+rateLimitWindowSec 限流 / concurrencyLimit 并发上限 / allowedClient(claude_code 或 UA 正则)/ allowedModels 模型白名单数组。",
   "clientTokens": [
     { "token": "cct-换成-gen-token-生成的值", "name": "laptop" },
-    { "token": "cct-另一台设备的令牌", "name": "desktop" }
+    { "token": "cct-自研客户端令牌", "name": "voice-bot", "overrides": { "injectClaudeCodeSystem": true, "stripUnsupported": true, "spoofClaudeCode": true } }
   ],
 
   "_comment_modelMap": "可选:把客户端请求的模型名重映射到上游真实模型。留空对象则原样转发。",
   "modelMap": {},
+
+  "_comment_proxy": "可选:上游走代理(网络受限时用)。支持 http://、https://、socks5://[user:pass@]host:port。留空=直连。注意:启用代理需 `npm i undici`(核心默认零依赖)。",
+  "upstreamProxy": "",
+
+  "_comment_log": "可选:把日志同时写到文件并自动轮转(不配则只 stdout,交给 journald/docker 轮转)。logMaxBytes 单文件上限、logMaxFiles 保留个数,用于控制磁盘占用。",
+  "logFile": "",
+  "logMaxBytes": 10485760,
+  "logMaxFiles": 5,
 
   "_comment_admin": "Web 管理台(客户端监控/令牌生成/实时日志)。adminEnabled=true 开启,访问 http://<本机IP>:端口/admin。账号密码登录:adminPassword 留空则首次启动自动生成随机密码并打印到控制台,登录后可在网页里改。",
   "adminEnabled": false,

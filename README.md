@@ -130,6 +130,61 @@ http://<本机IP>:8787/admin
 - 累计/每日/按客户端指标持久化在 `data/metrics.json`(已 .gitignore,20 秒落一次盘,重启不清零);最近请求明细为内存态,完整历史仍在 journald。
 - 管理台暴露在监听地址上,靠账号密码守门。**仍建议只在私网/ZeroTier 内访问,不要裸挂公网**。
 
+## 进阶能力(借鉴 claude-relay-service)
+
+以下能力均**默认关闭 / 不影响现有透传流量**,按需在 config.json 的 `clientTokens[].overrides` 或管理台「客户端 → 参数」里逐客户端开启,改完立即生效。
+
+### 兼容性:Claude Code 身份伪装(`spoofClaudeCode`)
+订阅 OAuth 门禁不只看 `system` 前缀,还看整套 Claude Code 客户端指纹。开启后 cc-trans 转发时把请求头补成完整 Claude Code 身份:`User-Agent: claude-cli/…`、`x-app: cli`、`accept-encoding: identity`,以及 `anthropic-beta` 四件套(`oauth-2025-04-20` + `claude-code-20250219` + `interleaved-thinking-2025-05-14` + `fine-grained-tool-streaming-2025-05-14`;Haiku 用精简集)。**自研客户端(非真 Claude Code)走订阅时建议开启,配合 `injectClaudeCodeSystem` + `stripUnsupported` 显著减少脱敏 429/门禁。** 对真实 Claude Code 流量为无操作。
+
+### 安全:限流 / 并发 / 客户端限制 / 模型白名单(逐令牌)
+- `rateLimitRequests` + `rateLimitWindowSec`:滑动窗口请求数上限,超限返回带 `Retry-After` 的 429。
+- `concurrencyLimit`:同时处理的请求数上限,超限 429。
+- `allowedClient`:`claude_code`(仅允许 `claude-cli/*`)或任意 User-Agent 正则,不匹配返回 403。
+- `allowedModels`:模型白名单数组,请求(经改写后的)模型不在其中返回 403。
+
+均为内存态,重启清零,零依赖。令牌泄露/滥用时可据此止血。
+
+### 用量成本
+内置 Claude 模型价格表,按实际模型 + token 用量估算 USD 成本(仅展示,非账单),在概览「估算成本」与客户端表「成本」列展示。
+
+### OpenAI 兼容端点 `/v1/chat/completions`
+让 OpenAI 生态的客户端也能用你的 Claude 订阅。cc-trans 把 OpenAI 请求翻译成 Anthropic `/v1/messages` 转发(复用订阅凭证 / 身份伪装 / 参数下发),再把响应翻译回 OpenAI 格式(含 SSE 流式)。支持文本、图片(`image_url`,含 data: base64)、`system`/`developer`、`temperature`/`top_p`/`stop`/`max_tokens`、`usage` 与 `finish_reason` 映射;工具定义与 `tool_calls` 基础支持。远端配置:
+```
+export OPENAI_BASE_URL="http://<服务器IP>:8787/v1"   # 视客户端而定,base 指到 /v1
+export OPENAI_API_KEY="cct-你的客户端令牌"
+# model 直接填 Claude 模型名,如 claude-opus-4-8
+```
+
+### 性能:上游连接池
+默认直连即复用连接(Node 内置 fetch 底层 undici 自带 keepalive 连接池),零配置即有收益。
+
+### 上游代理(HTTP / HTTPS / SOCKS5)
+网络受限时让上游走代理:config.json 设 `upstreamProxy`(或 env `CC_TRANS_UPSTREAM_PROXY`),支持 `http://`、`https://`、`socks5://[user:pass@]host:port`。SOCKS5 握手为零依赖自实现。⚠️ **启用代理需 `npm i undici`**(核心默认零依赖;不装则自动回落直连并给出提示)。
+
+### 健康检查
+`GET /health`(或 `/healthz`,无需令牌)返回:存活、版本、运行时长、上游/代理/凭证状态、订阅 token 到期分钟、内存 RSS、数据目录占用。供 Docker/systemd/k8s 探针与运维用。
+
+### 日志与磁盘控制
+默认日志走 stdout(交给 journald / docker 轮转)。需要独立文件日志时配 `logFile` + `logMaxBytes` + `logMaxFiles`:cc-trans 自动按大小轮转、只保留 N 个,控制磁盘占用。指标文件 `data/metrics.json` 本身有界(每日聚合最多保留 62 天)。
+
+## Docker 部署
+
+```bash
+cp config.example.json config.json   # 填好配置(订阅模式确保本机已 claude 登录)
+docker compose up -d --build          # restart=unless-stopped 即开机自启;含健康检查 + 日志轮转
+docker compose logs -f
+```
+
+compose 已挂载 `config.json`、`data/`、`~/.claude`(订阅凭证,读写以自动刷新);日志用 json-file 限制单文件 10MB、最多 5 个。需要上游代理时把 compose 里 `WITH_UNDICI` 改成 `"1"` 重新 build。
+
+## 一键安装
+
+```bash
+bash install.sh            # 引导生成 config.json(自动生成客户端令牌 + 开管理台)并装 systemd 服务
+bash install.sh docker     # 同样引导,但用 docker compose 起服务
+```
+
 ## 5. 远端电脑配置 Claude Code
 
 在远端设置两个环境变量,指向你的服务器:
@@ -208,7 +263,7 @@ claude
 ### 本机自带的单测
 
 ```bash
-npm test   # 用本地 mock 上游验证鉴权/密钥注入/转发/流式,无需真实密钥
+npm test   # 三套件:smoke(鉴权/注入/转发/流式)+ overrides(参数下发/目录)+ features(身份伪装/限流/成本/OpenAI 兼容),全用 mock 上游,无需真实密钥
 ```
 
 ## 稳定性(针对 "Connection closed mid-response")
@@ -251,11 +306,17 @@ npm test                                     # mock 上游单测(无需真实凭
 ```
 cc-trans/
 ├── src/
-│   ├── server.js          # HTTP 代理主体:鉴权 → 注入上游凭证 → 转发 → 流式回传 → 用量日志
+│   ├── server.js          # HTTP 代理主体:鉴权 → 访问控制/限流 → 参数下发/身份伪装 → 转发 → 流式回传 → 用量日志
 │   │                      #   子命令: gen-token / check-token
 │   ├── config.js          # 配置加载(config.json + 环境变量)与启动前校验
 │   ├── oauth.js           # 订阅 OAuth:读凭证、自动刷新、原子写回
-│   ├── metrics.js         # 内存态指标:按客户端聚合 + 最近请求 + 实时订阅
+│   ├── models.js          # 模型目录 + 参数规则 + 客户端参数下发(强制模型/thinking/effort/清洗/CC身份)
+│   ├── pricing.js         # 模型价格表 + 成本估算
+│   ├── limits.js          # 内存态限流 / 并发控制
+│   ├── openai_compat.js   # OpenAI /v1/chat/completions ↔ Anthropic 翻译(含 SSE 流式)
+│   ├── upstream.js        # 上游连接层:连接池 + 可选代理(HTTP/HTTPS/SOCKS5)
+│   ├── logger.js          # 可选滚动文件日志(自动轮转)+ 目录占用统计
+│   ├── metrics.js         # 指标:累计/每日/按客户端聚合(持久化)+ 成本 + 实时订阅
 │   ├── admin.js           # Web 管理台后端:登录鉴权 + API + 托管页面
 │   └── admin-ui.html      # 管理台前端(单文件,原生 JS,零外部依赖)
 ├── deploy/
@@ -263,8 +324,13 @@ cc-trans/
 │   ├── install-service.sh # 安装为系统服务(开机自启)
 │   └── uninstall-service.sh
 ├── test/
-│   ├── smoke.mjs          # mock 上游的端到端单测(npm test)
+│   ├── smoke.mjs          # mock 上游的端到端单测
+│   ├── overrides.mjs      # 参数下发 / 模型目录测试
+│   ├── features.mjs       # 身份伪装 / 限流 / 成本 / OpenAI 兼容测试
 │   └── client.mjs         # 客户端自检(npm run test:client)
+├── Dockerfile             # 容器镜像(零依赖;WITH_UNDICI=1 才装 undici 供代理用)
+├── docker-compose.yml     # 一键 docker 部署(自启 + 健康检查 + 日志轮转)
+├── install.sh             # 一键安装(引导配置 + systemd/docker)
 ├── config.example.json    # 配置模板
 └── config.json            # 实际配置(.gitignore 忽略,含令牌/密钥)
 ```

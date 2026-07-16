@@ -15,7 +15,11 @@ const DEFAULTS = {
   oauthCredentialsPath: '',
   clientTokens: [],
   modelMap: {},
+  upstreamProxy: '', // 上游代理:http://、https://、socks5://(留空=直连)
   logBody: false,
+  logFile: '', // 可选:把日志同时写到文件并自动轮转(留空=只 stdout,交给 journald/docker 轮转)
+  logMaxBytes: 10 * 1024 * 1024, // 单个日志文件上限,超过就轮转
+  logMaxFiles: 5, // 保留的轮转文件数(超出删最旧,控制磁盘占用)
   adminEnabled: false,
   adminUser: 'admin',
   adminPassword: '',
@@ -98,7 +102,11 @@ export function loadConfig() {
         : file.clientTokens || DEFAULTS.clientTokens,
     ),
     modelMap: file.modelMap || DEFAULTS.modelMap,
+    upstreamProxy: process.env.CC_TRANS_UPSTREAM_PROXY || file.upstreamProxy || DEFAULTS.upstreamProxy,
     logBody: parseBool(process.env.CC_TRANS_LOG_BODY) ?? file.logBody ?? DEFAULTS.logBody,
+    logFile: process.env.CC_TRANS_LOG_FILE || file.logFile || DEFAULTS.logFile,
+    logMaxBytes: Number(process.env.CC_TRANS_LOG_MAX_BYTES || file.logMaxBytes || DEFAULTS.logMaxBytes),
+    logMaxFiles: Number(process.env.CC_TRANS_LOG_MAX_FILES || file.logMaxFiles || DEFAULTS.logMaxFiles),
     adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
     adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,
     adminPassword: process.env.CC_TRANS_ADMIN_PASSWORD || file.adminPassword || DEFAULTS.adminPassword,
