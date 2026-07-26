@@ -16,7 +16,8 @@ services:
     # docker compose up 时自动拉最新镜像
     pull_policy: always
     ports:
-      # 宿主机端口可用环境变量覆盖(端口冲突时无需改本文件):
+      # 宿主机端口可用环境变量覆盖(端口冲突时无需改本文件),
+      # 也可写进同目录 .env(见 .env.example):
       #   CC_TRANS_HOST_PORT=18787 docker compose up -d
       - "${CC_TRANS_HOST_PORT:-8787}:8787"
     volumes:

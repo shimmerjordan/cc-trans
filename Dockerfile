@@ -14,12 +14,15 @@ RUN if [ "$WITH_UNDICI" = "1" ]; then npm install undici --no-save --omit=dev; f
 
 COPY src ./src
 COPY config.example.json ./
+COPY deploy/drop-privs.mjs ./deploy/drop-privs.mjs
 COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# 以非 root 运行(node 镜像自带 uid 1000 的 node 用户);/app/data 为状态卷挂载点
+# /app/data 是状态卷挂载点。
+# 这里【不】写 USER node:entrypoint 需要 root 才能修好 bind mount 的属主
+# (宿主机 ./data 不存在时 Docker 会以 root 建目录,非 root 进程写不进去),
+# 修完立刻用 deploy/drop-privs.mjs 降到 node(或 PUID/PGID)再跑服务。
 RUN mkdir -p /app/data && chown -R node:node /app
-USER node
 
 ENV CC_TRANS_HOST=0.0.0.0 \
     CC_TRANS_PORT=8787 \

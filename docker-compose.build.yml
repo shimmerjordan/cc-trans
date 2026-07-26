@@ -3,17 +3,21 @@
 #   git clone https://github.com/shimmerjordan/cc-trans.git && cd cc-trans
 #   docker compose -f docker-compose.build.yml up -d --build
 #
+# 基础镜像默认走 daocloud 镜像源 —— 直连 Docker Hub 在国内经常超时
+# (registry-1.docker.io i/o timeout),开箱即用优先。三个可调项都能用环境变量
+# 覆盖,或写进同目录 .env(见 .env.example):
+#   NODE_IMAGE=node:22-alpine   走 Docker Hub 官方(网络通/海外机器,或镜像源挂了换别家)
+#   WITH_UNDICI=1               需要上游 HTTP/SOCKS5 代理时装 undici
+#   CC_TRANS_HOST_PORT=18787    换宿主机端口(默认 8787)
+#
 # 只想直接用现成镜像?用默认的 docker-compose.yml(从 GHCR 拉取,不用构建)。
 services:
   cc-trans:
     build:
       context: .
       args:
-        # 需要上游代理(HTTP/SOCKS5)时改成 "1"(会装 undici)
-        WITH_UNDICI: "0"
-        # Docker Hub 拉不动基础镜像时换镜像源,例如:
-        # NODE_IMAGE: docker.m.daocloud.io/library/node:22-alpine
-        NODE_IMAGE: node:22-alpine
+        WITH_UNDICI: "${WITH_UNDICI:-0}"
+        NODE_IMAGE: "${NODE_IMAGE:-docker.m.daocloud.io/library/node:22-alpine}"
     image: cc-trans:local
     container_name: cc-trans
     restart: unless-stopped

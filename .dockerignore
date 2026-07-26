@@ -8,7 +8,7 @@ test
 README.md
 .DS_Store
 .env
-# 注意:deploy/ 不能整体忽略 —— Dockerfile 需要 deploy/docker-entrypoint.sh
+# 注意:deploy/ 不能整体忽略 —— Dockerfile 需要 docker-entrypoint.sh 和 drop-privs.mjs
 deploy/*.service
 deploy/install-service.sh
 deploy/uninstall-service.sh

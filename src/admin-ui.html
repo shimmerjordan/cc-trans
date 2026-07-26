@@ -6,84 +6,427 @@
 <title>cc-trans 管理台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%234f46e5'/%3E%3Ctext x='8' y='12' font-size='10' fill='white' text-anchor='middle' font-family='monospace'%3Ec%3C/text%3E%3C/svg%3E" />
 <style>
+  /* ─────────────────────────────────────────────────────────────────
+     设计令牌。改样式请改这里,不要在标记里写内联 style —— 那是这个
+     文件之前最大的漂移来源(同一个 12px/10px 被抄了几十遍)。
+
+     主题:跟随系统,可手动覆盖(header 右上按钮 → localStorage)。
+     场景决定的:这台管理台跟终端、编辑器并排开着,多数排查发生在
+     夜里,所以深色是一等公民而非附赠;白天用系统亮色。
+     ───────────────────────────────────────────────────────────────── */
   :root {
-    --bg: #f4f5f7; --card: #fff; --ink: #1c2230; --muted: #6b7280; --line: #e5e7eb;
-    --accent: #4f46e5; --ok: #059669; --warn: #d97706; --err: #dc2626;
+    /* 间距(4 的等比) */
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
+    /* 字号(1.15~1.25 步进,product register:固定 rem 而非 clamp) */
+    --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-base: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+    /* 圆角 / 层级 / 动效 */
+    --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-full: 999px;
+    --z-sticky: 10; --z-backdrop: 40; --z-modal: 50; --z-toast: 60;
+    --dur-1: 120ms; --dur-2: 200ms;
+    --ease: cubic-bezier(.22, 1, .36, 1); /* ease-out-quint:无弹跳 */
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+    /* 亮色:中性色带一点主色色相偏色(chroma .004~.008),不是纯灰也不是奶油色 */
+    --bg: oklch(.975 .004 275);
+    --card: oklch(1 0 0);
+    --surface-2: oklch(.985 .005 275);   /* 表头 / 工具条 / 代码块 */
+    --ink: oklch(.25 .02 272);
+    --muted: oklch(.52 .022 272);         /* 对 --card 5.6:1,正文可用 */
+    --faint: oklch(.63 .02 272);          /* 仅图表刻度等非正文,≥3:1 */
+    --line: oklch(.915 .007 275);
+    --line-strong: oklch(.86 .01 275);
+    --accent: oklch(.52 .21 277);         /* 保留原 indigo 身份 */
+    --accent-hover: oklch(.47 .21 277);
+    --accent-soft: oklch(.95 .03 277);    /* 选中/悬停底 */
+    --accent-ink: oklch(1 0 0);
+    --ok: oklch(.53 .14 162); --ok-soft: oklch(.95 .04 162);
+    --warn: oklch(.56 .14 68); --warn-soft: oklch(.95 .05 75);
+    --err: oklch(.54 .21 25); --err-soft: oklch(.95 .04 25);
+    --nav-bg: oklch(.24 .03 272); --nav-ink: oklch(.97 .005 275);
+    --sh-1: 0 1px 2px oklch(.25 .02 272 / .06);
+    --sh-2: 0 12px 32px oklch(.25 .02 272 / .18), 0 2px 6px oklch(.25 .02 272 / .08);
+    /* 图表分类色(与状态色区分开,顺序稳定) */
+    --c1: oklch(.55 .2 277); --c2: oklch(.58 .13 162); --c3: oklch(.65 .15 68); --c4: oklch(.58 .19 25);
+    --c5: oklch(.6 .12 220); --c6: oklch(.55 .19 305); --c7: oklch(.6 .19 350); --c8: oklch(.6 .14 130);
+    color-scheme: light;
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { color-scheme: dark;
+      --bg: oklch(.18 .012 272);
+      --card: oklch(.225 .014 272);
+      --surface-2: oklch(.26 .015 272);
+      --ink: oklch(.95 .006 275);
+      --muted: oklch(.73 .016 275);       /* 对 --card 5.2:1 */
+      --faint: oklch(.6 .015 275);
+      --line: oklch(.31 .014 272);
+      --line-strong: oklch(.4 .016 272);
+      --accent: oklch(.72 .15 277);       /* 暗底提亮降饱和,免刺眼 */
+      --accent-hover: oklch(.78 .14 277);
+      --accent-soft: oklch(.3 .05 277);
+      --accent-ink: oklch(.17 .02 277);
+      --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
+      --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
+      --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
+      --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
+      --sh-1: 0 1px 2px oklch(0 0 0 / .3);
+      --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
+      --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
+      --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
+    }
+  }
+  /* 手动选深色:与上面同一套值(CSS 不能变量化整段规则,只能重复一次) */
+  :root[data-theme="dark"] { color-scheme: dark;
+    --bg: oklch(.18 .012 272);
+    --card: oklch(.225 .014 272);
+    --surface-2: oklch(.26 .015 272);
+    --ink: oklch(.95 .006 275);
+    --muted: oklch(.73 .016 275);
+    --faint: oklch(.6 .015 275);
+    --line: oklch(.31 .014 272);
+    --line-strong: oklch(.4 .016 272);
+    --accent: oklch(.72 .15 277);
+    --accent-hover: oklch(.78 .14 277);
+    --accent-soft: oklch(.3 .05 277);
+    --accent-ink: oklch(.17 .02 277);
+    --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
+    --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
+    --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
+    --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
+    --sh-1: 0 1px 2px oklch(0 0 0 / .3);
+    --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
+    --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
+    --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
+  }
+
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--ink); }
-  header { background: #12172a; color: #fff; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  header .title { font-weight: 700; font-size: 16px; letter-spacing: .3px; }
-  header .pills { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
-  .pill { background: rgba(255,255,255,.1); border-radius: 999px; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
-  .pill b { color: #fff; }
-  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 8px; padding: 7px 14px; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.danger { color: var(--err); border-color: #f0c6c6; }
-  button:hover { filter: brightness(.97); }
-  main { max-width: 1080px; margin: 20px auto; padding: 0 16px; }
-  .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  .tabs button { border: 0; background: none; border-radius: 0; padding: 10px 16px; color: var(--muted); border-bottom: 2px solid transparent; }
+  body {
+    margin: 0; font: var(--fs-base)/1.55 var(--sans);
+    background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 键盘可达性:全局一套焦点环(之前完全没有焦点样式) */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+  :focus:not(:focus-visible) { outline: none; }
+
+  /* ── 顶栏 ── */
+  header {
+    background: var(--nav-bg); color: var(--nav-ink);
+    padding: var(--s3) var(--s5); display: flex; align-items: center;
+    gap: var(--s4); flex-wrap: wrap;
+  }
+  header .title { font-weight: 650; font-size: var(--fs-lg); letter-spacing: .2px; }
+  header .pills { display: flex; gap: var(--s2); flex-wrap: wrap; flex: 1; min-width: 0; }
+  .pill {
+    background: oklch(1 0 0 / .1); border: 1px solid oklch(1 0 0 / .08);
+    border-radius: var(--r-full); padding: 3px var(--s3);
+    font-size: var(--fs-sm); white-space: nowrap; color: oklch(1 0 0 / .78);
+  }
+  .pill b { color: var(--nav-ink); font-weight: 600; }
+  header button {
+    background: oklch(1 0 0 / .1); border-color: oklch(1 0 0 / .16); color: var(--nav-ink);
+  }
+  header button:hover:not(:disabled) { background: oklch(1 0 0 / .18); border-color: oklch(1 0 0 / .28); }
+  .icon-btn { padding: var(--s2); line-height: 0; min-width: 36px; display: inline-flex; justify-content: center; }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* ── 按钮:default / hover / active / focus / disabled / busy ── */
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line-strong);
+    background: var(--card); color: var(--ink);
+    border-radius: var(--r-sm); padding: 7px var(--s3);
+    min-height: 34px; display: inline-flex; align-items: center; gap: 6px;
+    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+                color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
+  button:active:not(:disabled) { transform: translateY(.5px); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button[aria-busy="true"] { cursor: progress; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 550; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.danger { color: var(--err); border-color: color-mix(in oklch, var(--err) 35%, var(--line)); }
+  button.danger:hover:not(:disabled) { background: var(--err-soft); border-color: var(--err); }
+  button.ghost { background: none; border-color: transparent; color: var(--muted); }
+  button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+  button.sm { min-height: 28px; padding: 3px var(--s2); font-size: var(--fs-sm); }
+
+  main { max-width: 1120px; margin: var(--s5) auto var(--s7); padding: 0 var(--s4); }
+
+  /* ── Tab(触控目标 ≥44px 高) ── */
+  .tabs {
+    display: flex; gap: var(--s1); margin-bottom: var(--s5);
+    border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .tabs button {
+    border: 0; background: none; border-radius: var(--r-sm) var(--r-sm) 0 0;
+    padding: var(--s3) var(--s4); min-height: 44px; color: var(--muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tabs button:hover:not(.active) { background: var(--surface-2); color: var(--ink); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
-  section.block { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
-  section.block > h2 { font-size: 14px; margin: 0 0 14px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
-  section.block > h2::before { content: ""; width: 4px; height: 15px; background: var(--accent); border-radius: 2px; }
-  #usageBlock > h2::before { display: none; }
+  /* ── 区块 ── */
+  section.block {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
+    padding: var(--s5); margin-bottom: var(--s4); box-shadow: var(--sh-1);
+  }
+  section.block > h2 {
+    font-size: var(--fs-base); font-weight: 600; margin: 0 0 var(--s4);
+    color: var(--ink); display: flex; align-items: center; gap: var(--s2);
+  }
+  section.block > h2::before {
+    content: ""; width: 3px; height: 14px; background: var(--accent);
+    border-radius: var(--r-full); flex: none;
+  }
+  /* 标题右侧带操作:靠 margin-left:auto 把按钮推到右边(不能用
+     space-between —— 那会把 ::before 那根竖条也推离标题文字) */
+  section.block > h2.with-action > button { margin-left: auto; font-weight: 400; }
 
-  .dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; }
+  .dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--s2) var(--s5); margin: 0; }
   .dl dt { color: var(--muted); }
-  .dl dd { margin: 0; word-break: break-all; }
-  .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .dl dd { margin: 0; overflow-wrap: anywhere; }
+  .mono { font-family: var(--mono); font-size: var(--fs-sm); }
 
-  .metrics { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 4px; }
-  .metric .n { font-size: 26px; font-weight: 700; }
-  .metric .l { font-size: 12px; color: var(--muted); }
+  /* ── 指标:9 个数字挤一行会撞在一起(尤其 262.8M 这种),
+        给每格 132px 下限让它自然折行 ── */
+  .metrics {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: var(--s5) var(--s4);
+  }
+  .metric .n { font-size: var(--fs-xl); font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .metric .l { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
   .metric .n.err { color: var(--err); }
 
-  .charts { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; margin-top: 16px; }
-  @media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
-  .chart h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 0 0 8px; }
+  /* ── 图表 ── */
+  .charts { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--s5); margin-top: var(--s5); }
+  .chart h3 { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; margin: 0 0 var(--s2); }
   .chart svg { width: 100%; height: auto; display: block; }
-  .legend { list-style: none; padding: 0; margin: 10px 0 0; font-size: 12.5px; }
-  .legend li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .chart .grid-line { stroke: var(--line); }
+  .chart .tick { fill: var(--faint); font-size: 10px; }
+  .chart .bar-label { fill: var(--muted); font-size: 10px; }
+  .chart .center-n { fill: var(--ink); font-size: 22px; font-weight: 650; }
+  .chart .center-l { fill: var(--muted); font-size: 11px; }
+  .chart rect.bar { fill: var(--accent); transition: opacity var(--dur-1) var(--ease); }
+  .chart g:hover rect.bar { opacity: .75; }
+  .legend { list-style: none; padding: 0; margin: var(--s3) 0 0; font-size: var(--fs-md); }
+  .legend li { display: flex; align-items: center; gap: var(--s2); padding: 2px 0; }
   .legend .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
-  .legend .val { margin-left: auto; color: var(--muted); }
+  .legend .val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-  .ubar { margin-bottom: 14px; }
-  .ubar:last-child { margin-bottom: 2px; }
-  .ubar .row1 { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; margin-bottom: 5px; }
+  /* ── 用量条 ── */
+  .ubar + .ubar { margin-top: var(--s4); }
+  .ubar .row1 { display: flex; justify-content: space-between; gap: var(--s3); font-size: var(--fs-md); margin-bottom: 5px; }
   .ubar .row1 .rst { color: var(--muted); white-space: nowrap; }
-  .ubar .track { height: 8px; border-radius: 4px; background: #eef0f3; overflow: hidden; }
-  .ubar .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  .ubar .track { height: 8px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+  .ubar .fill {
+    height: 100%; width: 100%; background: var(--accent);
+    /* 动 transform 而不是 width:后者每帧触发 layout。
+       圆角交给 track(overflow:hidden)裁,所以 scaleX 不会把圆角拉成椭圆。 */
+    transform-origin: left center;
+    transform: scaleX(var(--p, 0));
+    transition: transform var(--dur-2) var(--ease);
+  }
   .ubar .fill.warn { background: var(--warn); }
   .ubar .fill.err { background: var(--err); }
 
-  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
-  th { background: #fafbfc; color: var(--muted); font-weight: 600; }
+  /* ── 表格:窄屏横向滚动 + 表头吸顶 + 数字右对齐 ── */
+  .table-wrap {
+    border: 1px solid var(--line); border-radius: var(--r);
+    box-shadow: var(--sh-1); overflow-x: auto; overscroll-behavior-x: contain;
+    /* 横向可滚动时在被裁的那侧透出一道阴影 —— 否则窄屏上看不出右边还有列。
+       local 层是不动的"遮罩",scroll 层是随滚动露出的阴影。 */
+    background:
+      linear-gradient(to right, var(--card) 40%, transparent) left center / 32px 100% no-repeat local,
+      linear-gradient(to left, var(--card) 40%, transparent) right center / 32px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, oklch(0 0 0 / .16), transparent) left center / 12px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, oklch(0 0 0 / .16), transparent) right center / 12px 100% no-repeat scroll,
+      var(--card);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); font-size: var(--fs-md); }
+  th {
+    background: var(--surface-2); color: var(--muted); font-weight: 600;
+    font-size: var(--fs-sm); white-space: nowrap;
+    position: sticky; top: 0; z-index: var(--z-sticky);
+  }
+  tbody tr { transition: background var(--dur-1) var(--ease); }
+  tbody tr:hover { background: var(--surface-2); }
   tr:last-child td { border-bottom: 0; }
-  td.mono { font-size: 12px; }
-  .st { font-weight: 700; } .st-2 { color: var(--ok); } .st-4 { color: var(--warn); } .st-5, .st-0 { color: var(--err); }
-  .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
-  .toolbar .grow { flex: 1; }
+  td.mono { font-size: var(--fs-sm); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.act { text-align: right; white-space: nowrap; }
+  .st { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .st-2 { color: var(--ok); } .st-4 { color: var(--warn); } .st-5, .st-0 { color: var(--err); }
+  .hint { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+  td.trunc { font-size: var(--fs-xs); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 日志是密集等宽数据:一律单行,超长省略(完整值在 title),
+     行高才能整齐 —— 换行会让每行忽高忽低,扫读节奏全乱。
+     列超出宽度时由 .table-wrap 横向滚动承接。 */
+  #tab-logs td, #tab-logs th, #clientRows td, #otherRows td { white-space: nowrap; }
+  #tab-logs td.path { max-width: 30ch; overflow: hidden; text-overflow: ellipsis; }
+  #tab-logs td.usage { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; }
+  /* 模型表:层级/temperature/effort 内容都短,不该被挤成两行(行高才齐);
+     thinking 与说明是长文本,留给它们换行 */
+  #catalogRows td:nth-child(2), #catalogRows td:nth-child(3), #catalogRows td:nth-child(5) { white-space: nowrap; }
+  td.sm-cell { font-size: var(--fs-sm); }
+  .xs { font-size: var(--fs-xs); font-weight: 400; }
+  .dl.md { font-size: var(--fs-md); }
+  .ov-badge { font-size: var(--fs-xs); color: var(--accent); }
+  .tag { font-size: var(--fs-xs); padding: 1px 6px; border-radius: var(--r-full); white-space: nowrap; }
+  .tag.ok { color: var(--ok); background: var(--ok-soft); }
+  .tag.warn { color: var(--warn); background: var(--warn-soft); }
+
+  /* 空状态:教下一步,不只是"暂无" */
+  .empty { padding: var(--s7) var(--s5); text-align: center; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); font-size: var(--fs-base); margin-bottom: var(--s1); font-weight: 600; }
+  .empty .sub { font-size: var(--fs-md); }
+  /* 空态在 nowrap 的表格里也要能正常换行 */
+  td .empty { padding: var(--s6) var(--s4); white-space: normal; }
+
+  /* 骨架屏(product register:内容区用骨架而非居中转圈) */
+  .skeleton { border-radius: var(--r-sm); background: var(--surface-2); position: relative; overflow: hidden; min-height: 1em; }
+  .skeleton::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, oklch(1 0 0 / .18), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .sk-line { height: 12px; margin: var(--s2) 0; }
+
+  .toolbar { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
+  .toolbar .grow { flex: 1; min-width: 0; }
   .muted { color: var(--muted); }
-  input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
-  .login { max-width: 360px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px; }
-  .login h1 { font-size: 18px; margin: 0 0 4px; text-align: center; }
-  .login p { color: var(--muted); margin: 0 0 18px; font-size: 13px; text-align: center; }
-  .login input { width: 100%; margin-bottom: 12px; }
-  .login button { width: 100%; }
-  .err-msg { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 8px; text-align: center; }
-  .ok-msg { color: var(--ok); font-size: 13px; min-height: 18px; }
-  dialog { border: 1px solid var(--line); border-radius: 14px; padding: 22px; max-width: 460px; }
-  dialog::backdrop { background: rgba(0,0,0,.35); }
-  .token-box { background: #f6f7f9; border: 1px dashed var(--line); border-radius: 8px; padding: 12px; word-break: break-all; margin: 10px 0; }
-  .row-flash { animation: flash 1s ease; }
-  @keyframes flash { from { background: #fef9c3; } to { background: transparent; } }
-  .form-row { display: grid; grid-template-columns: max-content 1fr; gap: 12px; align-items: center; max-width: 460px; margin-bottom: 12px; }
-  .form-row label { color: var(--muted); }
+  .note { color: var(--muted); font-size: var(--fs-sm); margin: var(--s3) 0 0; }
+  .note-tight { margin-top: var(--s2); }
+
+  /* ── 表单控件:input / select 同一套视觉(此前 .input 类根本没定义,
+        所有 select 都在用原生外观,和输入框对不上) ── */
+  input, select, .input {
+    font: inherit; font-size: var(--fs-md); color: var(--ink);
+    padding: 7px var(--s2); border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm); background: var(--card);
+    min-height: 34px; max-width: 100%;
+    transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+  }
+  input:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--muted); }
+  input:focus-visible, select:focus-visible {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+  }
+  input:disabled, select:disabled { opacity: .55; cursor: not-allowed; background: var(--surface-2); }
+  input::placeholder { color: var(--muted); opacity: 1; } /* 占位符也要够对比 */
+  select {
+    appearance: none; padding-right: 26px; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 12px center, right 7px center;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+  }
+  input[type="checkbox"] { min-height: 0; accent-color: var(--accent); width: 16px; height: 16px; }
+  input[type="number"] { font-variant-numeric: tabular-nums; }
+  .check { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-md); cursor: pointer; min-height: 32px; }
+  .form-row { display: grid; grid-template-columns: 6.5em 1fr; gap: var(--s3); align-items: center; max-width: 520px; margin-bottom: var(--s3); }
+  /* 标签列必须是【固定】宽而不是 max-content:每个 .form-row 是独立 grid,
+     max-content 会各算各的,导致"鉴权方式"和"订阅凭证文件"两行的输入框
+     左边缘错开、宽度也不一样。 */
+  .form-row > label:first-child { color: var(--muted); font-size: var(--fs-md); }
+  .form-row .stack { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+  .grow-1 { flex: 1; min-width: 0; }
+  .w-full { width: 100%; }
+
+  /* ── 登录 ── */
+  .login {
+    max-width: 360px; margin: 12vh auto; background: var(--card);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: var(--s7) var(--s6); box-shadow: var(--sh-2);
+  }
+  .login h1 { font-size: var(--fs-xl); margin: 0 0 var(--s1); text-align: center; }
+  .login p { color: var(--muted); margin: 0 0 var(--s5); font-size: var(--fs-md); text-align: center; }
+  .login input { width: 100%; margin-bottom: var(--s3); min-height: 38px; }
+  .login button { width: 100%; justify-content: center; min-height: 38px; }
+  .err-msg { color: var(--err); font-size: var(--fs-md); min-height: 18px; margin-top: var(--s2); text-align: center; }
+  .ok-msg { color: var(--ok); font-size: var(--fs-md); min-height: 18px; }
+
+  /* ── 对话框 ── */
+  dialog {
+    border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s6);
+    max-width: 480px; width: calc(100vw - var(--s7));
+    background: var(--card); color: var(--ink); box-shadow: var(--sh-2);
+  }
+  dialog::backdrop { background: oklch(.2 .02 272 / .5); backdrop-filter: blur(2px); }
+  dialog h3 { margin: 0 0 var(--s3); font-size: var(--fs-lg); }
+  dialog h4 { margin: var(--s5) 0 var(--s2); font-size: var(--fs-md); color: var(--muted); font-weight: 600; }
+  dialog[open] { animation: dlg-in var(--dur-2) var(--ease); }
+  @keyframes dlg-in { from { opacity: 0; transform: translateY(6px) scale(.99); } to { opacity: 1; transform: none; } }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: var(--s2); margin-top: var(--s5); }
+  .token-box {
+    background: var(--surface-2); border: 1px dashed var(--line-strong); border-radius: var(--r-sm);
+    padding: var(--s3); overflow-wrap: anywhere; margin: var(--s3) 0; font-family: var(--mono); font-size: var(--fs-md);
+  }
+
+  /* ── Toast:替代 alert(),与对话框同一套语汇 ── */
+  .toasts {
+    position: fixed; right: var(--s4); bottom: var(--s4); z-index: var(--z-toast);
+    display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7)));
+  }
+  .toast {
+    background: var(--card); color: var(--ink); border: 1px solid var(--line);
+    border-radius: var(--r-sm); box-shadow: var(--sh-2);
+    padding: var(--s3) var(--s4); font-size: var(--fs-md);
+    display: flex; gap: var(--s2); align-items: flex-start;
+    animation: toast-in var(--dur-2) var(--ease);
+  }
+  .toast .ico { flex: none; font-weight: 700; }
+  .toast.ok .ico { color: var(--ok); }
+  .toast.err .ico { color: var(--err); }
+  .toast.leaving { animation: toast-out var(--dur-2) var(--ease) forwards; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes toast-out { to { opacity: 0; transform: translateY(4px); } }
+
+  .row-flash { animation: flash 1.2s var(--ease); }
+  @keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+
+  /* 宽屏时服务信息排两组,否则右边一大片空白 */
+  @media (min-width: 900px) {
+    #svcInfo { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); column-gap: var(--s6); }
+  }
+
+  /* ── 响应式:结构性收敛,不做流体字号 ── */
+  @media (max-width: 760px) {
+    .charts { grid-template-columns: 1fr; }
+    main { padding: 0 var(--s3); margin-top: var(--s4); }
+    section.block { padding: var(--s4); }
+    .dl { grid-template-columns: 1fr; gap: var(--s1) 0; }
+    .dl dt { margin-top: var(--s2); font-size: var(--fs-sm); }
+    .form-row { grid-template-columns: 1fr; gap: var(--s1); }
+    .form-row > label:first-child:empty { display: none; }
+    header { padding: var(--s3) var(--s4); gap: var(--s2); }
+    /* pills 独占第二行:否则它 flex:1 会把标题和按钮挤到两边、自己竖排成 4 行 */
+    header .pills { flex-basis: 100%; order: 3; }
+    header .title { flex: 1; }
+    /* tab 条保持单行、横向滑动(比折行更像移动端的标准做法) */
+    .tabs { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button { flex: none; }
+    #genBtn { width: 100%; justify-content: center; }
+    /* 表格里的小按钮桌面 28px 够用(WCAG 2.5.8 要求 24×24),
+       触屏上手指按不准,放大到 36px */
+    button.sm { min-height: 36px; padding: var(--s1) var(--s3); }
+  }
+
+  /* 动效是增强项:关掉后一切照常可用 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    .skeleton::after { display: none; }
+  }
 </style>
+<script>
+  // 尽早落主题,避免手动选了深色的人在首帧看到亮色闪一下。
+  try {
+    const t = localStorage.getItem('cc-trans-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch { /* 隐私模式下 localStorage 不可用,跟随系统即可 */ }
+</script>
 </head>
 <body>
 
@@ -100,6 +443,9 @@
   <header>
     <span class="title">cc-trans 管理台</span>
     <span class="pills" id="pills"></span>
+    <button class="icon-btn" id="themeBtn" onclick="cycleTheme()" title="切换主题" aria-label="切换主题">
+      <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+    </button>
     <button id="logoutBtn" onclick="logout()">退出</button>
   </header>
   <main>
@@ -117,12 +463,12 @@
         <dl class="dl" id="svcInfo"></dl>
       </section>
       <section class="block" id="usageBlock">
-        <h2 style="justify-content:space-between">
-          <span style="display:flex;align-items:center;gap:8px"><span style="width:4px;height:15px;background:var(--accent);border-radius:2px;display:inline-block"></span>订阅用量</span>
-          <button id="usageRefreshBtn" onclick="refreshUsage()" style="font-weight:400;font-size:12px;padding:4px 10px">刷新</button>
+        <h2 class="with-action">
+          订阅用量
+          <button class="sm" id="usageRefreshBtn" onclick="refreshUsage()">刷新</button>
         </h2>
-        <div id="usageBars" class="muted">加载中…</div>
-        <p class="muted" id="usageNote" style="font-size:12px;margin:10px 0 0"></p>
+        <div id="usageBars"><div class="skeleton sk-line" style="width:60%"></div><div class="skeleton sk-line" style="width:45%"></div></div>
+        <p class="note" id="usageNote"></p>
       </section>
       <section class="block">
         <h2>流量统计</h2>
@@ -131,8 +477,8 @@
           <div class="chart"><h3>最近 30 分钟 · 每分钟请求数</h3><div id="lineChart"></div></div>
           <div class="chart"><h3>请求按客户端分布</h3><div id="donutChart"></div></div>
         </div>
-        <div class="chart" style="margin-top:16px"><h3>最近 14 天 · 每日请求数</h3><div id="dailyChart"></div></div>
-        <p class="muted" id="statNote" style="font-size:12px;margin:14px 0 0"></p>
+        <div class="chart" style="margin-top:var(--s5)"><h3>最近 14 天 · 每日请求数</h3><div id="dailyChart"></div></div>
+        <p class="note" id="statNote"></p>
       </section>
     </section>
 
@@ -141,36 +487,42 @@
         <span class="grow muted" id="clientHint"></span>
         <button class="primary" id="genBtn" onclick="openGen()">+ 生成客户端令牌</button>
       </div>
-      <table>
-        <thead><tr><th>设备名</th><th>令牌(掩码)</th><th>请求数</th><th>错误</th><th>输入/输出 token</th><th>成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
-        <tbody id="clientRows"></tbody>
-      </table>
-      <p class="muted" style="font-size:12px;margin-top:10px">「参数下发」= 该客户端的请求转发前自动改写:强制模型 / thinking / effort / 注入 Claude Code system 前缀(过订阅门禁)/ 清洗新模型不支持的参数。参数含义见「模型/参数」页。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>设备名</th><th>令牌(掩码)</th><th class="num">请求数</th><th class="num">错误</th><th class="num">输入/输出 token</th><th class="num">成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
+          <tbody id="clientRows"></tbody>
+        </table>
+      </div>
+      <p class="note">「参数下发」= 该客户端的请求转发前自动改写:强制模型 / thinking / effort / 注入 Claude Code system 前缀(过订阅门禁)/ 清洗新模型不支持的参数。参数含义见「模型/参数」页。</p>
       <div id="othersWrap" hidden>
-        <p class="muted" style="margin-top:18px;font-size:12px"><b>异常来源</b>(未携带令牌 / 令牌不匹配等未授权尝试)—— 已标注来源 IP、User-Agent 与请求路径,便于定位是谁在打:</p>
-        <table><thead><tr><th>类型</th><th>请求数</th><th>最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
+        <p class="note" style="margin-top:var(--s6)"><b>异常来源</b>(未携带令牌 / 令牌不匹配等未授权尝试)—— 已标注来源 IP、User-Agent 与请求路径,便于定位是谁在打:</p>
+        <div class="table-wrap">
+          <table><thead><tr><th>类型</th><th class="num">请求数</th><th class="num">最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
+        </div>
       </div>
     </section>
 
     <section id="tab-models" hidden>
       <section class="block">
-        <h2>模型目录 <span class="muted" style="font-weight:400;font-size:12px" id="catalogVer"></span></h2>
+        <h2>模型目录 <span class="muted xs" id="catalogVer"></span></h2>
         <div class="toolbar">
-          <span class="grow muted" style="font-size:12.5px" id="modelSrcNote"></span>
-          <input id="addModelId" class="input" placeholder="手动补一个模型 id" style="width:220px" />
+          <span class="grow muted" id="modelSrcNote"></span>
+          <input id="addModelId" aria-label="手动补一个模型 id" placeholder="手动补一个模型 id" style="width:220px" />
           <button onclick="addModel()">添加</button>
-          <button class="primary" onclick="refreshLiveModels()">从上游拉取并更新列表</button>
+          <button class="primary" onclick="refreshLiveModels(event)">从上游拉取并更新列表</button>
         </div>
-        <div id="liveModels" hidden style="margin-bottom:12px"></div>
-        <table>
-          <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th><th></th></tr></thead>
-          <tbody id="catalogRows"></tbody>
-        </table>
-        <p class="muted" style="font-size:12px;margin-top:10px">列表来自<b>上游实际可用模型</b>(拉取后持久化到 <span class="mono">data/models.json</span>,重启保留);参数规则按模型 id 自动推断,上游出新模型也能识别。</p>
+        <div id="liveModels" hidden style="margin-bottom:var(--s3)"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th><th></th></tr></thead>
+            <tbody id="catalogRows"></tbody>
+          </table>
+        </div>
+        <p class="note">列表来自<b>上游实际可用模型</b>(拉取后持久化到 <span class="mono">data/models.json</span>,重启保留);参数规则按模型 id 自动推断,上游出新模型也能识别。</p>
       </section>
       <section class="block">
         <h2>可传入参数说明(经订阅 OAuth 转发)</h2>
-        <dl class="dl" style="font-size:13px">
+        <dl class="dl md">
           <dt>必备</dt><dd><span class="mono">model</span> + <span class="mono">max_tokens</span> + <span class="mono">messages</span>(<span class="mono">system</span>/<span class="mono">tools</span> 可选)</dd>
           <dt class="mono">thinking</dt><dd>新家族只认 <span class="mono">{"type":"adaptive"}</span>;Opus 4.7+/Sonnet 5 可 <span class="mono">disabled</span>;<b>Fable 5 不接受 disabled(只能省略)</b>;老模型用 <span class="mono">enabled + budget_tokens</span></dd>
           <dt class="mono">output_config.effort</dt><dd><span class="mono">low / medium / high / xhigh / max</span>,控制思考深度与 token 消耗;4.6+ 支持(4.6 无 xhigh),Sonnet 4.5 / Haiku 4.5 <b>不支持</b>,默认 high</dd>
@@ -184,108 +536,123 @@
     <section id="tab-logs" hidden>
       <div class="toolbar">
         <span class="muted" id="logStatus">连接中…</span>
-        <label style="display:flex;align-items:center;gap:5px;font-size:12.5px"><input type="checkbox" id="logLive" checked /> 实时追加</label>
+        <label class="check"><input type="checkbox" id="logLive" checked /> 实时追加</label>
         <span class="grow"></span>
-        <input id="logQ" class="input" placeholder="搜索路径/模型/客户端/IP" style="width:180px" onkeydown="if(event.key==='Enter')reloadLogs(0)" />
-        <select id="logErrOnly" class="input" onchange="reloadLogs(0)">
+        <input id="logQ" aria-label="搜索日志" placeholder="搜索路径/模型/客户端/IP" style="width:180px" onkeydown="if(event.key==='Enter')reloadLogs(0)" />
+        <select id="logErrOnly" aria-label="状态过滤" onchange="reloadLogs(0)">
           <option value="">全部状态</option>
           <option value="1">仅异常(≥400)</option>
         </select>
         <button onclick="reloadLogs(0)">查询</button>
-        <button onclick="clearLogs()">清屏</button>
+        <button class="ghost" onclick="clearLogs()">清屏</button>
         <button class="danger" onclick="pruneDlg.showModal()">清理日志</button>
       </div>
-      <table>
-        <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>模型</th><th>用量</th><th>客户端</th><th>来源</th></tr></thead>
-        <tbody id="logRows"></tbody>
-      </table>
-      <div class="toolbar" style="margin-top:12px">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th class="num">状态</th><th class="num">耗时</th><th>模型</th><th>用量</th><th>客户端</th><th>来源</th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin-top:var(--s3)">
         <button id="logPrev" onclick="pageLogs(-1)">← 上一页</button>
-        <span class="muted" id="logPageInfo" style="font-size:12.5px"></span>
+        <span class="muted" id="logPageInfo" style="font-size:var(--fs-md)"></span>
         <button id="logNext" onclick="pageLogs(1)">下一页 →</button>
         <span class="grow"></span>
-        <span class="muted" id="logStoreInfo" style="font-size:12px"></span>
+        <span class="note" id="logStoreInfo" style="margin:0"></span>
       </div>
     </section>
 
     <section id="tab-settings" hidden>
       <section class="block">
         <h2>本地 AI 订阅 / 上游凭证</h2>
-        <div id="upCurrent" class="muted" style="font-size:12.5px;margin-bottom:14px">加载中…</div>
-        <div class="form-row"><label>鉴权方式</label>
-          <select id="upAuth" class="input" onchange="onUpAuthChange()">
+        <div id="upCurrent" class="muted" style="font-size:var(--fs-md);margin-bottom:var(--s4)"><span class="skeleton sk-line" style="display:block;width:70%"></span></div>
+        <div class="form-row"><label for="upAuth">鉴权方式</label>
+          <select id="upAuth" onchange="onUpAuthChange()">
             <option value="oauth">订阅 OAuth(用本机 Claude 登录态,推荐)</option>
             <option value="apiKey">静态密钥(官方 API Key / 第三方网关)</option>
           </select>
         </div>
         <div id="upOauthRows">
-          <div class="form-row"><label>订阅凭证文件</label>
-            <div style="display:flex;gap:6px">
-              <input id="upCredPath" class="input" style="flex:1" placeholder="留空 = ~/.claude/.credentials.json" />
+          <div class="form-row"><label for="upCredPath">订阅凭证文件</label>
+            <div class="stack">
+              <input id="upCredPath" class="grow-1" placeholder="留空 = ~/.claude/.credentials.json" />
               <button onclick="probeCreds()">检测</button>
             </div>
           </div>
-          <div class="form-row"><label></label><div id="upProbeMsg" class="muted" style="font-size:12px;min-height:16px"></div></div>
-          <p class="muted" style="font-size:12px;margin:0 0 12px">订阅模式无需任何密钥 —— 只要本机用 <span class="mono">claude</span> 登录过(Pro/Max/Team),cc-trans 就转发这份登录态并<b>自动刷新 token</b>。Docker 部署时记得把宿主机 <span class="mono">~/.claude</span> 挂进容器。</p>
+          <div class="form-row"><label></label><div id="upProbeMsg" class="muted" style="font-size:var(--fs-sm);min-height:16px"></div></div>
+          <p class="note" style="margin:0 0 var(--s3)">订阅模式无需任何密钥 —— 只要本机用 <span class="mono">claude</span> 登录过(Pro/Max/Team),cc-trans 就转发这份登录态并<b>自动刷新 token</b>。Docker 部署时记得把宿主机 <span class="mono">~/.claude</span> 挂进容器。</p>
         </div>
         <div id="upKeyRows" hidden>
-          <div class="form-row"><label>API Key</label><input id="upApiKey" class="input" type="password" placeholder="留空=不修改;走 x-api-key" /></div>
-          <div class="form-row"><label>Auth Token</label><input id="upAuthToken" class="input" type="password" placeholder="留空=不修改;走 Authorization: Bearer" /></div>
-          <p class="muted" style="font-size:12px;margin:0 0 12px">二者填其一即可。想清空已存的密钥,填 <span class="mono">__clear__</span> 保存。</p>
+          <div class="form-row"><label for="upApiKey">API Key</label><input id="upApiKey" type="password" placeholder="留空=不修改;走 x-api-key" /></div>
+          <div class="form-row"><label for="upAuthToken">Auth Token</label><input id="upAuthToken" type="password" placeholder="留空=不修改;走 Authorization: Bearer" /></div>
+          <p class="note" style="margin:0 0 var(--s3)">二者填其一即可。想清空已存的密钥,填 <span class="mono">__clear__</span> 保存。</p>
         </div>
-        <div class="form-row"><label>上游地址</label><input id="upBaseUrl" class="input" placeholder="https://api.anthropic.com" /></div>
-        <div class="form-row"><label>上游代理</label><input id="upProxy" class="input" placeholder="留空=直连;支持 http:// https:// socks5://" /></div>
-        <div class="form-row"><label></label><div>
+        <div class="form-row"><label for="upBaseUrl">上游地址</label><input id="upBaseUrl" placeholder="https://api.anthropic.com" /></div>
+        <div class="form-row"><label for="upProxy">上游代理</label><input id="upProxy" placeholder="留空=直连;支持 http:// https:// socks5://" /></div>
+        <div class="form-row"><label></label><div class="stack">
           <button class="primary" onclick="saveUpstream()">保存并立即生效</button>
           <span id="upMsg" class="ok-msg"></span>
         </div></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
+        <p class="note">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
       </section>
       <section class="block">
         <h2>修改管理台密码</h2>
-        <div class="form-row"><label>当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
-        <div class="form-row"><label>新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 6 位" /></div>
-        <div class="form-row"><label>确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
-        <div class="form-row"><label></label><div><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+        <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
+        <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 6 位" /></div>
+        <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
+        <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
       </section>
     </section>
   </main>
 </div>
 
-<dialog id="pruneDlg" style="width:420px">
-  <h3 style="margin-top:0">清理日志</h3>
-  <p class="muted" style="font-size:12.5px;margin:0 0 12px">删除持久化的请求日志(分块存储)。此操作不可撤销;不影响累计统计数字。</p>
-  <div class="form-row"><label>方式</label>
-    <select id="pruneMode" class="input" onchange="onPruneMode()">
+<dialog id="pruneDlg">
+  <h3>清理日志</h3>
+  <p class="note" style="margin:0 0 var(--s4)">删除持久化的请求日志(分块存储)。此操作不可撤销;不影响累计统计数字。</p>
+  <div class="form-row"><label for="pruneMode">方式</label>
+    <select id="pruneMode" onchange="onPruneMode()">
       <option value="days">删除早于 N 天前的</option>
       <option value="range">删除指定时间区间</option>
       <option value="all">清空全部日志</option>
     </select>
   </div>
-  <div class="form-row" id="pruneDaysRow"><label>N 天</label><input id="pruneDays" type="number" min="0" value="7" class="input" /></div>
-  <div class="form-row" id="pruneFromRow" hidden><label>起</label><input id="pruneFrom" type="datetime-local" class="input" /></div>
-  <div class="form-row" id="pruneToRow" hidden><label>止</label><input id="pruneTo" type="datetime-local" class="input" /></div>
-  <div id="pruneMsg" class="muted" style="font-size:12px;min-height:16px"></div>
-  <div style="text-align:right;margin-top:10px"><button onclick="pruneDlg.close()">取消</button> <button class="danger" onclick="doPrune()">确认删除</button></div>
+  <div class="form-row" id="pruneDaysRow"><label for="pruneDays">N 天</label><input id="pruneDays" type="number" min="0" value="7" /></div>
+  <div class="form-row" id="pruneFromRow" hidden><label for="pruneFrom">起</label><input id="pruneFrom" type="datetime-local" /></div>
+  <div class="form-row" id="pruneToRow" hidden><label for="pruneTo">止</label><input id="pruneTo" type="datetime-local" /></div>
+  <div id="pruneMsg" class="muted" style="font-size:var(--fs-sm);min-height:16px"></div>
+  <div class="dlg-actions"><button onclick="pruneDlg.close()">取消</button> <button class="danger" onclick="doPrune()">确认删除</button></div>
 </dialog>
 
-<dialog id="ovDlg" style="width:460px">
-  <h3 style="margin-top:0">参数下发 · <span id="ovName"></span></h3>
-  <div class="form-row"><label>强制模型</label>
+<!-- 破坏性确认:替代 confirm(),与其它对话框同一套语汇(此前吊销令牌用原生
+     confirm、清理日志用自定义弹窗,同类操作两种形状) -->
+<dialog id="confirmDlg">
+  <h3 id="confirmTitle">确认</h3>
+  <p id="confirmBody" class="muted" style="font-size:var(--fs-md);margin:0"></p>
+  <div class="dlg-actions">
+    <button onclick="confirmDlg.close()">取消</button>
+    <button class="danger" id="confirmOk">确认</button>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<dialog id="ovDlg">
+  <h3>参数下发 · <span id="ovName"></span></h3>
+  <div class="form-row"><label for="ovModel">强制模型</label>
     <div>
-      <input id="ovModel" class="input" list="modelList" placeholder="留空 = 不改写客户端请求的模型" style="width:100%" />
+      <input id="ovModel" class="w-full" list="modelList" placeholder="留空 = 不改写客户端请求的模型" />
       <datalist id="modelList"></datalist>
     </div>
   </div>
-  <div class="form-row"><label>思考模式</label>
-    <select id="ovThinking" class="input">
+  <div class="form-row"><label for="ovThinking">思考模式</label>
+    <select id="ovThinking">
       <option value="">不覆盖(透传客户端的)</option>
       <option value="adaptive">adaptive · 自适应</option>
       <option value="disabled">disabled · 关闭(Fable 5 上自动改为移除)</option>
     </select>
   </div>
-  <div class="form-row"><label>思考深度 effort</label>
-    <select id="ovEffort" class="input">
+  <div class="form-row"><label for="ovEffort">思考深度 effort</label>
+    <select id="ovEffort">
       <option value="">不覆盖</option>
       <option value="low">low · 最快</option>
       <option value="medium">medium</option>
@@ -294,48 +661,42 @@
       <option value="max">max</option>
     </select>
   </div>
-  <h4 style="margin:6px 0 8px;font-size:13px;color:var(--muted)">订阅兼容(全部<b>默认开启</b>,取消勾选即对该客户端关闭)</h4>
-  <div class="form-row"><label></label><label class="flex" style="display:flex;align-items:center;gap:8px;font-size:13px">
-    <input type="checkbox" id="ovInject" /> 注入 Claude Code system 前缀(非 Haiku 模型过订阅门禁)
-  </label></div>
-  <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
-    <input type="checkbox" id="ovSpoof" /> <b>伪装成 Claude Code</b>(补全 UA/x-app + anthropic-beta 四件套)
-  </label></div>
-  <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
-    <input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)
-  </label></div>
-  <p class="muted" style="font-size:12px;margin:4px 0 14px">这三项让任意客户端(含自研)接订阅开箱即稳;对合规请求(真实 Claude Code)为无操作。前两项仅在<b>订阅 OAuth</b> 模式下生效(apiKey 模式注入前缀只会白改提示词)。</p>
+  <h4>订阅兼容(全部<b>默认开启</b>,取消勾选即对该客户端关闭)</h4>
+  <label class="check"><input type="checkbox" id="ovInject" /> 注入 Claude Code system 前缀(非 Haiku 模型过订阅门禁)</label>
+  <label class="check"><input type="checkbox" id="ovSpoof" /> <span><b>伪装成 Claude Code</b>(补全 UA/x-app + anthropic-beta 四件套)</span></label>
+  <label class="check"><input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)</label>
+  <p class="note">这三项让任意客户端(含自研)接订阅开箱即稳;对合规请求(真实 Claude Code)为无操作。前两项仅在<b>订阅 OAuth</b> 模式下生效(apiKey 模式注入前缀只会白改提示词)。</p>
 
-  <h4 style="margin:6px 0 8px;font-size:13px;color:var(--muted)">安全限制(留空/0 = 不限制)</h4>
-  <div class="form-row"><label>限流</label>
-    <div style="display:flex;gap:6px;align-items:center;font-size:13px">
-      <input id="ovRlReq" type="number" min="0" class="input" style="width:80px" placeholder="次数" />
+  <h4>安全限制(留空/0 = 不限制)</h4>
+  <div class="form-row"><label for="ovRlReq">限流</label>
+    <div class="stack" style="font-size:var(--fs-md)">
+      <input id="ovRlReq" type="number" min="0" style="width:80px" placeholder="次数" />
       次 /
-      <input id="ovRlWin" type="number" min="0" class="input" style="width:80px" placeholder="秒" />
+      <input id="ovRlWin" type="number" min="0" style="width:80px" placeholder="秒" aria-label="限流窗口秒数" />
       秒
     </div>
   </div>
-  <div class="form-row"><label>并发上限</label><input id="ovConc" type="number" min="0" class="input" placeholder="同时处理的请求数,0=不限" /></div>
-  <div class="form-row"><label>客户端限制</label>
-    <input id="ovClient" class="input" list="clientPresets" placeholder="留空=不限;claude_code=仅CC;或填 UA 正则" />
+  <div class="form-row"><label for="ovConc">并发上限</label><input id="ovConc" type="number" min="0" placeholder="同时处理的请求数,0=不限" /></div>
+  <div class="form-row"><label for="ovClient">客户端限制</label>
+    <input id="ovClient" list="clientPresets" placeholder="留空=不限;claude_code=仅CC;或填 UA 正则" />
     <datalist id="clientPresets"><option value="claude_code"></option></datalist>
   </div>
-  <div class="form-row"><label>模型白名单</label><input id="ovModels" class="input" placeholder="逗号分隔,留空=不限。如 claude-haiku-4-5-20251001" /></div>
-  <p class="muted" style="font-size:12px;margin:4px 0 14px">限流/并发为内存态(重启清零);超限返回带 Retry-After 的 429;客户端/模型不匹配返回 403。</p>
-  <div style="text-align:right"><button onclick="ovDlg.close()">取消</button> <button class="primary" onclick="saveOverrides()">保存</button></div>
+  <div class="form-row"><label for="ovModels">模型白名单</label><input id="ovModels" placeholder="逗号分隔,留空=不限。如 claude-haiku-4-5-20251001" /></div>
+  <p class="note">限流/并发为内存态(重启清零);超限返回带 Retry-After 的 429;客户端/模型不匹配返回 403。</p>
+  <div class="dlg-actions"><button onclick="ovDlg.close()">取消</button> <button class="primary" onclick="saveOverrides()">保存</button></div>
 </dialog>
 
 <dialog id="genDlg">
-  <h3 style="margin-top:0">生成客户端令牌</h3>
+  <h3>生成客户端令牌</h3>
   <div id="genForm">
-    <p class="muted" style="margin:0 0 10px">给设备起个名字(仅用于日志/统计区分):</p>
-    <input id="genName" type="text" placeholder="例如 laptop / server-2" style="width:100%" />
-    <div style="margin-top:16px;text-align:right"><button onclick="genDlg.close()">取消</button> <button class="primary" onclick="doGen()">生成</button></div>
+    <p class="note" style="margin:0 0 var(--s3)">给设备起个名字(仅用于日志/统计区分):</p>
+    <input id="genName" type="text" class="w-full" placeholder="例如 laptop / server-2" aria-label="设备名" />
+    <div class="dlg-actions"><button onclick="genDlg.close()">取消</button> <button class="primary" onclick="doGen()">生成</button></div>
   </div>
   <div id="genResult" hidden>
-    <p class="muted" style="margin:0">新令牌(<b>只显示这一次</b>,复制到远端 <span class="mono">ANTHROPIC_AUTH_TOKEN</span>):</p>
-    <div class="token-box mono" id="newToken"></div>
-    <div style="text-align:right"><button onclick="copyToken()">复制</button> <button class="primary" onclick="closeGen()">完成</button></div>
+    <p class="note" style="margin:0">新令牌(<b>只显示这一次</b>,复制到远端 <span class="mono">ANTHROPIC_AUTH_TOKEN</span>):</p>
+    <div class="token-box" id="newToken"></div>
+    <div class="dlg-actions"><button onclick="copyToken()">复制</button> <button class="primary" onclick="closeGen()">完成</button></div>
   </div>
 </dialog>
 
@@ -349,7 +710,8 @@ const PREFIX = (() => {
   return p || '/admin';
 })();
 const API = PREFIX + '/api';
-const COLORS = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#0891b2', '#7c3aed', '#db2777', '#65a30d'];
+// 图表分类色:引用 CSS 变量,亮/暗主题各有一套,切换即自动跟随
+const COLORS = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)', 'var(--c6)', 'var(--c7)', 'var(--c8)'];
 let SESSION = sessionStorage.getItem('cc-trans-admin') || '';
 let statusTimer = null, es = null, curTab = 'overview';
 let LAST_STATUS = null; // 最近一次 /status,供订阅用量手动刷新时复用 rateLimit 回落
@@ -357,6 +719,50 @@ let LAST_STATUS = null; // 最近一次 /status,供订阅用量手动刷新时�
 const el = (id) => document.getElementById(id);
 const show = (id, on) => { el(id).hidden = !on; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ── 主题:auto(跟随系统)→ light → dark 循环,选择记在 localStorage ──
+const THEME_ICONS = {
+  // 自动=显示器,亮=太阳,暗=月亮(线性图标,同一族同一线宽)
+  auto: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  light: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  dark: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+};
+const THEME_LABELS = { auto: '主题:跟随系统', light: '主题:亮色', dark: '主题:深色' };
+function currentTheme() { return document.documentElement.dataset.theme || 'auto'; }
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { t === 'auto' ? localStorage.removeItem('cc-trans-theme') : localStorage.setItem('cc-trans-theme', t); } catch {}
+  const btn = el('themeBtn');
+  if (btn) { el('themeIcon').innerHTML = THEME_ICONS[t]; btn.title = THEME_LABELS[t]; btn.setAttribute('aria-label', THEME_LABELS[t]); }
+  // 图表颜色全部走 CSS 变量(见 COLORS / .chart 规则),换主题自动跟随,不需要重画
+}
+function cycleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[currentTheme()]); }
+
+// ── Toast:替代 alert(),不打断操作 ──
+function toast(msg, kind = 'ok', ms = 3600) {
+  const box = el('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.innerHTML = `<span class="ico" aria-hidden="true">${kind === 'err' ? '!' : '✓'}</span><span>${esc(msg)}</span>`;
+  box.appendChild(t);
+  setTimeout(() => { t.classList.add('leaving'); setTimeout(() => t.remove(), 220); }, ms);
+}
+
+// ── 破坏性确认:替代 confirm(),与其它对话框同形 ──
+const confirmDlg = el('confirmDlg');
+function askConfirm(title, body, okLabel = '确认') {
+  return new Promise((resolve) => {
+    el('confirmTitle').textContent = title;
+    el('confirmBody').textContent = body;
+    const ok = el('confirmOk');
+    ok.textContent = okLabel;
+    const done = (v) => { ok.onclick = null; confirmDlg.onclose = null; resolve(v); };
+    ok.onclick = () => { confirmDlg.close(); done(true); };
+    confirmDlg.onclose = () => done(false);
+    confirmDlg.showModal();
+  });
+}
 
 async function api(path, opts = {}) {
   const r = await fetch(API + path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}), authorization: 'Bearer ' + SESSION } });
@@ -474,7 +880,7 @@ async function refreshOverview() {
     drawDonut(el('donutChart'), dist);
     // 柱状图:最近14天每日请求
     drawBars(el('dailyChart'), lastDays(s.daily || [], 14));
-    el('statNote').innerHTML = `累计统计自 ${new Date(s.since || s.startedAt).toLocaleDateString('zh-CN')},已持久化(重启不清零);最近请求明细与折线图为内存态。完整历史见 <span class="mono">journalctl -u cc-trans</span>。`;
+    el('statNote').innerHTML = `累计统计自 ${new Date(s.since || s.startedAt).toLocaleDateString('zh-CN')},已持久化(重启不清零);上方折线图取最近 500 条内存记录。逐条历史在「实时日志」页分页查看。`;
   } catch (e) {}
 }
 
@@ -482,7 +888,7 @@ const USAGE_LABELS = { five_hour: '5 小时窗口', seven_day: '7 天窗口(全�
 function usageBar(label, pct, resetDate) {
   const cls = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : '';
   const rst = resetDate && !isNaN(resetDate.getTime()) ? resetDate.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' 重置' : '';
-  return `<div class="ubar"><div class="row1"><span><b>${esc(label)}</b> · 已用 ${pct}% / 剩余 ${100 - pct}%</span><span class="rst">${rst}</span></div><div class="track"><div class="fill ${cls}" style="width:${pct}%"></div></div></div>`;
+  return `<div class="ubar"><div class="row1"><span><b>${esc(label)}</b> · 已用 ${pct}% / 剩余 ${100 - pct}%</span><span class="rst">${rst}</span></div><div class="track" role="progressbar" aria-label="${esc(label)}已用" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="fill ${cls}" style="--p:${(pct / 100).toFixed(3)}"></div></div></div>`;
 }
 function renderUsage(s, us) {
   s = s || LAST_STATUS || {};
@@ -548,18 +954,19 @@ function lastDays(daily, n) {
 }
 
 function drawBars(box, days) {
-  if (!days.some((d) => d.requests > 0)) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">最近 14 天暂无请求</div>'; return; }
+  if (!days.some((d) => d.requests > 0)) { box.innerHTML = emptyChart('最近 14 天暂无请求'); return; }
   const W = 1040, H = 180, pl = 40, pr = 8, pt = 18, pb = 22;
   const max = Math.max(1, ...days.map((d) => d.requests));
   const n = days.length, bw = (W - pl - pr) / n;
   const Y = (v) => H - pb - v / max * (H - pt - pb);
-  const gy = [0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}" stroke="#eef0f3"/><text x="${pl - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`; }).join('');
+  const gy = [0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line class="grid-line" x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}"/><text class="tick" x="${pl - 6}" y="${y + 3}" text-anchor="end">${v}</text>`; }).join('');
   const bars = days.map((d, i) => {
     const x = pl + i * bw + bw * 0.15, w = bw * 0.7, y = Y(d.requests), h = Math.max(H - pb - y, d.requests ? 2 : 0);
-    const lbl = d.requests ? `<text x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="#6b7280">${d.requests}</text>` : '';
-    return `<g><title>${d.date} · ${d.requests} 请求 / ${d.errors || 0} 错误 · in ${fmtNum(d.inTokens)} out ${fmtNum(d.outTokens)}</title><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="#4f46e5"/>${lbl}<text x="${(x + w / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${d.date.slice(5)}</text></g>`;
+    const lbl = d.requests ? `<text class="bar-label" x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${d.requests}</text>` : '';
+    return `<g><title>${d.date} · ${d.requests} 请求 / ${d.errors || 0} 错误 · in ${fmtNum(d.inTokens)} out ${fmtNum(d.outTokens)}</title><rect class="bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="3"/>${lbl}<text class="tick" x="${(x + w / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle">${d.date.slice(5)}</text></g>`;
   }).join('');
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${gy}${bars}</svg>`;
+  const total = days.reduce((s, d) => s + d.requests, 0);
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="最近 ${n} 天每日请求数,共 ${total} 次">${gy}${bars}</svg>`;
 }
 
 function buckets(logs, minutes) {
@@ -568,6 +975,9 @@ function buckets(logs, minutes) {
   logs.forEach((e) => { if (e.ts >= start) { const i = Math.min(minutes - 1, Math.floor((e.ts - start) / 60000)); arr[i].v++; } });
   return arr;
 }
+
+// 图表空态:与表格空态同一套排版
+function emptyChart(text) { return `<div class="empty"><span class="sub">${esc(text)}</span></div>`; }
 
 function drawLine(box, data) {
   const W = 540, H = 190, pl = 34, pr = 10, pt = 12, pb = 24;
@@ -578,20 +988,21 @@ function drawLine(box, data) {
   const line = data.map((d, i) => `${X(i).toFixed(1)},${Y(d.v).toFixed(1)}`).join(' ');
   const area = `${X(0).toFixed(1)},${(H - pb).toFixed(1)} ${line} ${X(n - 1).toFixed(1)},${(H - pb).toFixed(1)}`;
   const total = data.reduce((s, d) => s + d.v, 0);
-  if (!total) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">最近 30 分钟暂无请求</div>'; return; }
-  const gy = [0, 0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}" stroke="#eef0f3"/><text x="${pl - 6}" y="${y + 3}" text-anchor="end" font-size="10" fill="#9ca3af">${v}</text>`; }).join('');
-  const gx = [0, Math.floor(n / 2), n - 1].map((i) => `<text x="${X(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#9ca3af">${i === n - 1 ? '现在' : '-' + (n - 1 - i) + 'm'}</text>`).join('');
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f46e5" stop-opacity=".25"/><stop offset="1" stop-color="#4f46e5" stop-opacity="0"/></linearGradient></defs>${gy}${gx}<polygon points="${area}" fill="url(#lg)"/><polyline points="${line}" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linejoin="round"/></svg>`;
+  if (!total) { box.innerHTML = emptyChart('最近 30 分钟暂无请求'); return; }
+  const gy = [0, 0.5, 1].map((f) => { const v = Math.round(max * f), y = Y(v); return `<line class="grid-line" x1="${pl}" y1="${y}" x2="${W - pr}" y2="${y}"/><text class="tick" x="${pl - 6}" y="${y + 3}" text-anchor="end">${v}</text>`; }).join('');
+  const gx = [0, Math.floor(n / 2), n - 1].map((i) => `<text class="tick" x="${X(i)}" y="${H - 6}" text-anchor="middle">${i === n - 1 ? '现在' : '-' + (n - 1 - i) + 'm'}</text>`).join('');
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="最近 ${n} 分钟每分钟请求数,共 ${total} 次"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>${gy}${gx}<polygon points="${area}" fill="url(#lg)"/><polyline points="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 }
 
 function drawDonut(box, segs) {
   const total = segs.reduce((s, x) => s + x.value, 0);
-  if (!total) { box.innerHTML = '<div class="muted" style="padding:24px 0;text-align:center">暂无请求</div>'; return; }
+  if (!total) { box.innerHTML = emptyChart('暂无请求'); return; }
   const cx = 80, cy = 80, R = 58, sw = 24, C = 2 * Math.PI * R;
   let off = 0;
-  const rings = segs.map((s, i) => { const len = s.value / total * C; const c = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${COLORS[i % COLORS.length]}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`; off += len; return c; }).join('');
+  const rings = segs.map((s, i) => { const len = s.value / total * C; const c = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${COLORS[i % COLORS.length]}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"><title>${esc(s.label)} · ${s.value} 次 · ${Math.round(s.value / total * 100)}%</title></circle>`; off += len; return c; }).join('');
   const legend = segs.map((s, i) => `<li><span class="sw" style="background:${COLORS[i % COLORS.length]}"></span>${esc(s.label)}<span class="val">${s.value} · ${Math.round(s.value / total * 100)}%</span></li>`).join('');
-  box.innerHTML = `<svg viewBox="0 0 160 160" style="max-width:180px;margin:0 auto">${rings}<text x="80" y="76" text-anchor="middle" font-size="22" font-weight="700" fill="#1c2230">${total}</text><text x="80" y="94" text-anchor="middle" font-size="11" fill="#9ca3af">总请求</text></svg><ul class="legend">${legend}</ul>`;
+  const desc = segs.map((s) => `${s.label} ${s.value}`).join('、');
+  box.innerHTML = `<svg viewBox="0 0 160 160" style="max-width:180px;margin:0 auto" role="img" aria-label="请求按客户端分布:${esc(desc)}">${rings}<text class="center-n" x="80" y="76" text-anchor="middle">${total}</text><text class="center-l" x="80" y="94" text-anchor="middle">总请求</text></svg><ul class="legend">${legend}</ul>`;
 }
 
 let CLIENTS = [];
@@ -607,7 +1018,7 @@ function errCell(s) {
     s.lastErrorPath ? `路径 ${s.lastErrorPath}` : '',
     s.lastErrorUa ? `UA ${s.lastErrorUa}` : '',
   ].filter(Boolean).join('\n');
-  return `<span title="${esc(tip)}" style="cursor:help;text-decoration:underline dotted">${n}</span>`;
+  return `<span class="hint" title="${esc(tip)}">${n}</span>`;
 }
 // 多来源 IP 徽标
 function ipsBadge(errorIps) {
@@ -615,7 +1026,7 @@ function ipsBadge(errorIps) {
   const ks = Object.keys(errorIps);
   if (ks.length <= 1) return '';
   const tip = ks.map((k) => `${k}: ${errorIps[k]} 次`).join('\n');
-  return ` <span class="muted" title="${esc(tip)}" style="cursor:help">+${ks.length - 1}</span>`;
+  return ` <span class="muted hint" title="${esc(tip)}">+${ks.length - 1}</span>`;
 }
 function ovBadge(ov) {
   ov = ov || {};
@@ -631,7 +1042,7 @@ function ovBadge(ov) {
   if (ov.concurrencyLimit) parts.push(`并发${ov.concurrencyLimit}`);
   if (ov.allowedClient) parts.push('限UA');
   if (ov.allowedModels) parts.push(`白名单${ov.allowedModels.length}`);
-  return parts.length ? `<span class="mono" style="font-size:11.5px;color:#4f46e5">${esc(parts.join(' '))}</span>` : '<span class="muted">—</span>';
+  return parts.length ? `<span class="mono ov-badge">${esc(parts.join(' '))}</span>` : '<span class="muted">—</span>';
 }
 async function refreshClients() {
   try {
@@ -641,20 +1052,21 @@ async function refreshClients() {
     el('genBtn').disabled = !d.canManage;
     el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
-      <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td>${s.requests || 0}</td>
-      <td class="${s.errors ? 'st-5' : ''}">${errCell(s)}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
-      <td title="按模型定价估算">${fmtUsd(s.cost)}</td>
+      <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td class="num">${fmtNum(s.requests)}</td>
+      <td class="num ${s.errors ? 'st-5' : ''}">${errCell(s)}</td><td class="num">${fmtNum(s.inTokens)} / ${fmtNum(s.outTokens)}</td>
+      <td class="num" title="按模型定价估算">${fmtUsd(s.cost)}</td>
       <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
-      <td style="text-align:right;white-space:nowrap">${d.canManage ? `<button onclick="openOverrides('${t.id}')">参数</button> <button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="9" class="muted">暂无客户端令牌</td></tr>';
+      <td class="act">${d.canManage ? `<button class="sm" onclick="openOverrides('${t.id}')">参数</button> <button class="sm danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('')
+      || `<tr><td colspan="9"><div class="empty"><b>还没有客户端令牌</b><span class="sub">${d.canManage ? '点右上「+ 生成客户端令牌」为第一台设备发一个,填到远端的 ANTHROPIC_AUTH_TOKEN 即可接入。' : '当前用环境变量配置令牌,请在 config.json 或环境变量里添加。'}</span></div></td></tr>`;
     const others = d.others || [];
     show('othersWrap', others.length > 0);
     el('otherRows').innerHTML = others.map((c) => `<tr>
       <td>${esc(c.name)}</td>
-      <td>${c.requests}</td>
-      <td class="${stClass(c.lastStatus)}">${c.lastStatus}</td>
-      <td class="mono" style="font-size:11.5px">${esc(c.lastErrorIp || c.lastIp || '—')}${ipsBadge(c.errorIps)}</td>
-      <td class="mono" style="font-size:11px" title="${esc(c.lastErrorUa || c.lastUa || '')}">${esc((c.lastErrorUa || c.lastUa || '—').slice(0, 28))}</td>
-      <td class="mono" style="font-size:11px" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
+      <td class="num">${c.requests}</td>
+      <td class="num ${stClass(c.lastStatus)}">${c.lastStatus}</td>
+      <td class="mono">${esc(c.lastErrorIp || c.lastIp || '—')}${ipsBadge(c.errorIps)}</td>
+      <td class="mono trunc" title="${esc(c.lastErrorUa || c.lastUa || '')}">${esc((c.lastErrorUa || c.lastUa || '—').slice(0, 28))}</td>
+      <td class="mono trunc" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
       <td>${ago(c.lastSeen)}</td></tr>`).join('');
   } catch (e) {}
 }
@@ -670,14 +1082,14 @@ function renderCatalog(d) {
     ? '列表已来自上游拉取结果,可再次拉取以同步最新。'
     : '当前是内置种子列表 —— 点右侧「从上游拉取并更新列表」获取订阅实际可用的模型。';
   el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
-      <td class="mono">${esc(m.id)}${m.latest ? ' <span style="color:#059669;font-size:11px">●最新</span>' : ''}${m.unknown ? ' <span style="color:#d97706;font-size:11px">?规则推断</span>' : ''}</td>
+      <td class="mono">${esc(m.id)}${m.latest ? ' <span class="tag ok">最新</span>' : ''}${m.unknown ? ' <span class="tag warn">规则推断</span>' : ''}</td>
       <td>${esc(m.tier)}</td>
       <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
-      <td style="font-size:12px">${esc(m.thinking)}</td>
-      <td style="font-size:12px">${esc(m.effort)}</td>
-      <td class="muted" style="font-size:12px">${esc(m.note)}</td>
-      <td style="text-align:right"><button class="danger" onclick="removeModel('${esc(m.id)}')">移除</button></td></tr>`).join('')
-    || '<tr><td colspan="7" class="muted">列表为空,点右上「从上游拉取并更新列表」</td></tr>';
+      <td class="sm-cell">${esc(m.thinking)}</td>
+      <td class="sm-cell">${esc(m.effort)}</td>
+      <td class="muted sm-cell">${esc(m.note)}</td>
+      <td class="act"><button class="sm danger" onclick="removeModel('${esc(m.id)}')">移除</button></td></tr>`).join('')
+    || '<tr><td colspan="7"><div class="empty"><b>模型列表是空的</b><span class="sub">点右上「从上游拉取并更新列表」,或在左侧输入框手动补一个模型 id。</span></div></td></tr>';
   el('modelList').innerHTML = CATALOG.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
 }
 async function loadModels() {
@@ -685,41 +1097,52 @@ async function loadModels() {
     renderCatalog(await (await api('/models')).json());
   } catch (e) {}
 }
-async function refreshLiveModels() {
+// 异步按钮:统一的忙碌态(禁用 + 文案),避免各处自己拼
+async function withBusy(btn, busyText, fn) {
+  if (!btn) return fn();
+  const old = btn.textContent;
+  btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = busyText;
+  try { return await fn(); } finally { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = old; }
+}
+async function refreshLiveModels(ev) {
   const box = el('liveModels');
   box.hidden = false;
-  box.innerHTML = '<span class="muted">拉取中…</span>';
-  try {
-    const d = await (await api('/models/refresh', { method: 'POST' })).json();
-    if (!d.ok) {
-      box.innerHTML = `<span class="st-5">拉取失败:${esc(d.error)}</span> <span class="muted">—— 上游可能不支持 /v1/models;可用左侧输入框手动补模型 id。</span>`;
-      return;
+  box.innerHTML = '<span class="skeleton sk-line" style="display:block;width:40%"></span>';
+  await withBusy(ev && ev.currentTarget, '拉取中…', async () => {
+    try {
+      const d = await (await api('/models/refresh', { method: 'POST' })).json();
+      if (!d.ok) {
+        box.innerHTML = `<span class="st-5">拉取失败:${esc(d.error)}</span> <span class="muted">—— 上游可能不支持 /v1/models;可用左侧输入框手动补模型 id。</span>`;
+        return;
+      }
+      renderCatalog({ models: d.models, fetchedAt: d.fetchedAt, fromUpstream: true });
+      const parts = [`<b>已更新列表:共 ${d.models.length} 个模型</b>`];
+      if (d.added.length) parts.push(`<span class="st-4">新增 ${d.added.map(esc).join(', ')}</span>`);
+      if (d.removed.length) parts.push(`<span class="muted">移除 ${d.removed.map(esc).join(', ')}</span>`);
+      if (!d.added.length && !d.removed.length) parts.push('<span class="muted">与上次一致,无变化</span>');
+      box.innerHTML = `<div class="note" style="margin:0">${parts.join(' · ')}</div>`;
+    } catch (e) {
+      box.innerHTML = '<span class="st-5">拉取失败(网络/会话问题)</span>';
     }
-    renderCatalog({ models: d.models, fetchedAt: d.fetchedAt, fromUpstream: true });
-    const parts = [`<b>已更新列表:共 ${d.models.length} 个模型</b>`];
-    if (d.added.length) parts.push(`<span style="color:#d97706">新增 ${d.added.map(esc).join(', ')}</span>`);
-    if (d.removed.length) parts.push(`<span class="muted">移除 ${d.removed.map(esc).join(', ')}</span>`);
-    if (!d.added.length && !d.removed.length) parts.push('<span class="muted">与上次一致,无变化</span>');
-    box.innerHTML = `<div style="font-size:12.5px">${parts.join(' · ')}</div>`;
-  } catch (e) {
-    box.innerHTML = '<span class="st-5">拉取失败(网络/会话问题)</span>';
-  }
+  });
 }
 async function addModel() {
   const id = el('addModelId').value.trim();
-  if (!id) return;
+  if (!id) { el('addModelId').focus(); return; }
   const r = await api('/models/add', { method: 'POST', body: JSON.stringify({ id }) });
   const d = await r.json();
-  if (!r.ok) { alert('添加失败:' + (d.error || '未知')); return; }
+  if (!r.ok) { toast('添加失败:' + (d.error || '未知'), 'err'); return; }
   el('addModelId').value = '';
   renderCatalog({ models: d.models, fromUpstream: true });
+  toast(`已添加 ${id}`);
 }
 async function removeModel(id) {
-  if (!confirm(`从列表移除 ${id}?(仅影响管理台展示与下拉候选)`)) return;
+  if (!await askConfirm('移除模型', `从列表移除 ${id}?仅影响管理台展示与下拉候选,不影响转发。`, '移除')) return;
   const r = await api('/models/remove', { method: 'POST', body: JSON.stringify({ id }) });
   const d = await r.json();
-  if (!r.ok) { alert('移除失败:' + (d.error || '未知')); return; }
+  if (!r.ok) { toast('移除失败:' + (d.error || '未知'), 'err'); return; }
   renderCatalog({ models: d.models, fromUpstream: true });
+  toast(`已移除 ${id}`);
 }
 
 // ── 客户端参数下发 ──
@@ -764,9 +1187,10 @@ async function saveOverrides() {
   };
   const r = await api('/tokens/overrides', { method: 'POST', body: JSON.stringify({ id: ovTargetId, overrides }) });
   const d = await r.json();
-  if (!r.ok || !d.ok) { alert('保存失败:' + (d.error || '未知')); return; }
+  if (!r.ok || !d.ok) { toast('保存失败:' + (d.error || '未知'), 'err'); return; }
   ovDlg.close();
   refreshClients();
+  toast('参数下发已保存');
 }
 
 const genDlg = el('genDlg');
@@ -774,16 +1198,21 @@ function openGen() { show('genForm', true); show('genResult', false); el('genNam
 async function doGen() {
   const r = await api('/tokens', { method: 'POST', body: JSON.stringify({ name: el('genName').value.trim() || 'client' }) });
   const d = await r.json();
-  if (!r.ok) { alert(d.error || '生成失败'); return; }
+  if (!r.ok) { toast(d.error || '生成失败', 'err'); return; }
   el('newToken').textContent = d.token; show('genForm', false); show('genResult', true);
 }
-function copyToken() { navigator.clipboard.writeText(el('newToken').textContent).catch(() => {}); }
+function copyToken() {
+  navigator.clipboard.writeText(el('newToken').textContent)
+    .then(() => toast('令牌已复制到剪贴板'))
+    .catch(() => toast('复制失败,请手动选中复制', 'err'));
+}
 function closeGen() { genDlg.close(); refreshClients(); }
 async function revoke(id, name, mask) {
-  if (!confirm(`确定吊销 "${name}" (${mask}) 吗?该设备将立即无法使用。`)) return;
+  if (!await askConfirm('吊销令牌', `吊销 "${name}"(${mask})?该设备会立即无法使用,且令牌无法恢复。`, '吊销')) return;
   const r = await api('/tokens/revoke', { method: 'POST', body: JSON.stringify({ id }) });
   const d = await r.json();
-  if (r.ok && d.ok) refreshClients(); else alert('吊销失败:' + (d.error || '未找到'));
+  if (r.ok && d.ok) { refreshClients(); toast(`已吊销 ${name}`); }
+  else toast('吊销失败:' + (d.error || '未找到'), 'err');
 }
 
 async function changePw() {
@@ -817,6 +1246,10 @@ async function reloadLogs(offset) {
     const d = await (await api('/logs?' + logFilterQS(logOffset))).json();
     el('logRows').innerHTML = '';
     (d.logs || []).forEach((e) => addLogRow(e, false, true)); // 已是倒序,顺序 append
+    if (!(d.logs || []).length) {
+      const filtered = el('logQ').value.trim() || el('logErrOnly').value === '1';
+      el('logRows').innerHTML = `<tr><td colspan="9"><div class="empty"><b>${filtered ? '没有匹配的日志' : '还没有转发请求'}</b><span class="sub">${filtered ? '换个关键字,或把状态过滤改回「全部状态」。' : '远端把 ANTHROPIC_BASE_URL 指到本服务并发起一次请求,这里会实时出现。'}</span></div></td></tr>`;
+    }
     logTotal = d.total ?? 0;
     const from = logTotal ? logOffset + 1 : 0;
     const to = logOffset + (d.logs || []).length;
@@ -849,11 +1282,12 @@ function stopLive() { if (es) { es.close(); es = null; } }
 function clearLogs() { el('logRows').innerHTML = ''; }
 function addLogRow(e, live, append) {
   const tb = el('logRows'), tr = document.createElement('tr');
+  if (tb.querySelector('.empty')) tb.innerHTML = ''; // 实时来了第一条:先清掉空态
   if (live) tr.className = 'row-flash';
   const u = e.usage || {};
   const usageStr = [u.input != null ? 'in ' + u.input : '', u.output != null ? 'out ' + u.output : '', u.cacheRead ? 'cR ' + u.cacheRead : ''].filter(Boolean).join(' ');
   const src = [e.ip || '', e.ua ? e.ua.slice(0, 24) : ''].filter(Boolean).join(' · ');
-  tr.innerHTML = `<td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono" title="${esc(e.path)}">${esc((e.path || '').slice(0, 36))}</td><td class="${stClass(e.status)}">${e.status}</td><td>${e.ms}ms</td><td class="mono">${esc(e.model || '')}</td><td class="mono">${usageStr}</td><td>${esc(e.client || '')}</td><td class="mono" style="font-size:11px" title="${esc((e.ip || '') + ' ' + (e.ua || ''))}">${esc(src)}</td>`;
+  tr.innerHTML = `<td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono path" title="${esc(e.path)}">${esc(e.path || '')}</td><td class="num ${stClass(e.status)}">${e.status}</td><td class="num">${e.ms}ms</td><td class="mono">${esc(e.model || '')}</td><td class="mono usage" title="${esc(usageStr)}">${usageStr}</td><td>${esc(e.client || '')}</td><td class="mono trunc" title="${esc((e.ip || '') + ' ' + (e.ua || ''))}">${esc(src)}</td>`;
   if (append) tb.appendChild(tr);
   else tb.insertBefore(tr, tb.firstChild);
   while (tb.children.length > 300) tb.removeChild(tb.lastChild);
@@ -895,8 +1329,8 @@ async function probeCreds() {
   const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ path: el('upCredPath').value.trim() }) });
   const d = await r.json();
   el('upProbeMsg').innerHTML = d.ok
-    ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono" style="font-size:11px">${esc(d.file)}</span>`
-    : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono" style="font-size:11px">${esc(d.file || '')}</span>`;
+    ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono xs">${esc(d.file)}</span>`
+    : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono xs">${esc(d.file || '')}</span>`;
 }
 async function saveUpstream() {
   el('upMsg').className = 'ok-msg';
@@ -935,16 +1369,20 @@ async function doPrune() {
     if (!f || !t) { el('pruneMsg').textContent = '请填写起止时间'; return; }
     body = { from: new Date(f).getTime(), to: new Date(t).getTime() };
   } else body = { before: Date.now() + 60_000 }; // 全部
-  if (!confirm('确认删除?此操作不可撤销。')) return;
+  const what = m === 'days' ? `早于 ${el('pruneDays').value} 天前的日志` : m === 'range' ? '所选区间的日志' : '全部日志';
+  if (!await askConfirm('确认删除', `即将删除${what}。此操作不可撤销(不影响累计统计数字)。`, '删除')) return;
   el('pruneMsg').textContent = '删除中…';
   const r = await api('/logs/prune', { method: 'POST', body: JSON.stringify(body) });
   const d = await r.json();
   if (!r.ok) { el('pruneMsg').textContent = '失败:' + (d.error || '未知'); return; }
-  el('pruneMsg').textContent = `✅ 已删除 ${d.removedEntries} 条(${d.removedBlocks} 个块)`;
+  el('pruneMsg').textContent = '';
+  pruneDlg.close();
+  toast(`已删除 ${d.removedEntries} 条日志(${d.removedBlocks} 个块)`);
   reloadLogs(0);
 }
 
 async function boot() {
+  applyTheme(currentTheme()); // 同步按钮图标/aria(data-theme 已在 head 里落好,不闪)
   try { const m = await (await fetch(API + '/meta')).json(); if (m.user && !el('user').value) el('user').value = m.user; } catch {}
   if (SESSION) enterApp(); else toLogin();
 }

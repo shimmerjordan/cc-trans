@@ -136,8 +136,22 @@ function parseBool(v) {
 function validate(cfg) {
   const problems = [];
   if (cfg.upstreamAuth === 'oauth') {
-    // 订阅模式:校验本机 Claude Code 凭证可用
-    if (!fs.existsSync(cfg.oauthCredentialsPath)) {
+    // 订阅模式:校验本机 Claude Code 凭证可用。
+    // 区分「不存在」和「存在但读不了」—— 后者多为运行用户 uid 与 ~/.claude 属主不一致
+    // (容器里 PUID 设错、或 systemd 用别的用户跑),报「找不到」会把人带偏。
+    let credErr = null;
+    try {
+      fs.accessSync(cfg.oauthCredentialsPath, fs.constants.R_OK);
+    } catch (err) {
+      credErr = err;
+    }
+    if (credErr && (credErr.code === 'EACCES' || credErr.code === 'EPERM')) {
+      const uid = process.getuid ? process.getuid() : '?';
+      problems.push(
+        `OAuth 凭证文件读不了(当前 uid=${uid},权限不足): ${cfg.oauthCredentialsPath} —— ` +
+          `Docker 里用 PUID/PGID 对齐宿主机 ~/.claude 的属主;裸机部署请让服务运行用户能读该文件`,
+      );
+    } else if (credErr) {
       problems.push(
         `OAuth 订阅模式但找不到凭证文件: ${cfg.oauthCredentialsPath} —— 请先在服务器上 \`claude\` 登录订阅`,
       );

@@ -136,10 +136,14 @@ docker compose pull && docker compose up -d  # 升级到最新镜像(GHCR)
 | --- | --- |
 | `denied` / `unauthorized` 拉不到镜像 | GHCR 包还是私有。**维护者**按下一节把包设为 Public;或**使用者**先登录:`echo <你的GitHub PAT(read:packages)> \| docker login ghcr.io -u <你的GitHub用户名> --password-stdin` |
 | 日志提示「订阅模式但没找到凭证」 | 宿主机没 `claude` 登录,或 `~/.claude` 没挂进容器。先 `claude` 登录;compose 默认挂载 `${HOME}/.claude`,用 root/其他用户跑时确认这个路径对。 |
-| 想启用上游代理(HTTP/SOCKS5) | 预构建镜像不含 undici。改用源码构建:把 `docker-compose.build.yml` 里 `WITH_UNDICI` 改成 `"1"`,`docker compose -f docker-compose.build.yml up -d --build`,再到管理台「设置 → 上游代理」填地址。 |
-| 源码构建时 Docker Hub 拉不动基础镜像 | 改 `docker-compose.build.yml` 里的 `NODE_IMAGE`(如 `docker.m.daocloud.io/library/node:22-alpine`)后重新 build。 |
+| 想启用上游代理(HTTP/SOCKS5) | 预构建镜像不含 undici。改用源码构建并打开开关:`WITH_UNDICI=1 docker compose -f docker-compose.build.yml up -d --build`,再到管理台「设置 → 上游代理」填地址。 |
+| 源码构建时基础镜像拉不动(`i/o timeout`) | 默认已走 daocloud 镜像源。该源也不通就换一家:`NODE_IMAGE=<别的源>/library/node:22-alpine docker compose -f docker-compose.build.yml up -d --build`。治本是给 Docker 配 `registry-mirrors`(见下方 C 节)。 |
+| Docker 里用原来的管理员密码登不进 | 两种部署读的是不同的 config.json,容器首启新生成了一份。要复用原来的:`./deploy/import-config.sh` 后重启容器,见下方「从 systemd/裸机迁到 Docker」。 |
 | 端口冲突(8787 被占) | 不用改文件:`CC_TRANS_HOST_PORT=9787 docker compose up -d`。 |
+| `data` 目录权限 / `EACCES` | 容器会自己处理:以 root 入场把 `./data` 属主改成宿主机用户(取挂载的 `~/.claude` 属主,取不到用 1000),再降权到非 root 跑服务。宿主机 uid 不是 1000 且没挂 `~/.claude` 时,用 `PUID`/`PGID` 显式指定。 |
 | 想换成 systemd 裸机部署 | 见下方「一键安装」。 |
+
+> 上面这些环境变量都可以写进 compose 同目录的 **`.env`**(见 `.env.example`,`cp .env.example .env`),改一次永久生效,不必每次敲在命令前。
 
 ---
 
@@ -189,25 +193,100 @@ CC_TRANS_URL=http://localhost:8787 CC_TRANS_TOKEN=cct-你的令牌 npm run test:
 
 ## C. 本地 Docker 部署(和 GHCR 镜像等价)
 
-从源码构建并跑起来:
+开箱一条命令,**不需要 `.env`、不需要带任何环境变量**(基础镜像默认走 daocloud 镜像源,因为直连 Docker Hub 在国内经常 i/o timeout):
 
 ```bash
 docker compose -f docker-compose.build.yml up -d --build
 docker compose -f docker-compose.build.yml logs -f      # 首启令牌 + 管理员密码在这
+curl http://localhost:8787/health
 ```
 
-**本机已有 cc-trans 在跑(systemd 或另一个容器)时会撞 8787 端口**,换个宿主机端口即可:
+<details>
+<summary>要改端口 / 换镜像源 / 开代理支持</summary>
+
+三个可调项都能用环境变量覆盖,或写进 `.env`(`cp .env.example .env`,改一次永久生效):
 
 ```bash
-CC_TRANS_HOST_PORT=18787 docker compose -f docker-compose.build.yml up -d --build
-curl http://localhost:18787/health
+CC_TRANS_HOST_PORT=18787 \
+NODE_IMAGE=node:22-alpine \
+WITH_UNDICI=1 \
+  docker compose -f docker-compose.build.yml up -d --build
 ```
 
-Docker Hub 拉不动基础镜像时加镜像源:
+| 变量 | 默认 | 什么时候改 |
+| --- | --- | --- |
+| `CC_TRANS_HOST_PORT` | `8787` | 本机已有 cc-trans 在跑(systemd 或另一个容器)会撞端口 |
+| `NODE_IMAGE` | `docker.m.daocloud.io/library/node:22-alpine` | 海外机器/网络通 → 用 `node:22-alpine`;镜像源挂了 → 换别家 |
+| `WITH_UNDICI` | `0` | 要用上游 HTTP/SOCKS5 代理(装 undici) |
+
+**根治镜像源问题(推荐,一次配好所有项目受益)**:给 Docker 守护进程配加速,之后 `NODE_IMAGE=node:22-alpine` 也能拉。
 
 ```bash
-docker compose -f docker-compose.build.yml build \
-  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:22-alpine
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{ "registry-mirrors": ["https://docker.m.daocloud.io"] }
+EOF
+sudo systemctl restart docker
+docker pull node:22-alpine        # 验证
+```
+
+> 镜像源时好时坏,`docker manifest inspect` 对它们常常不准(有的不支持该 API),只有 `docker pull` 能判断是否可用。
+
+</details>
+
+### 从 systemd/裸机迁到 Docker(复用原来的令牌和密码)
+
+两种部署**读的是不同的配置文件**,所以容器首启会自己生成一份全新的(新客户端令牌 + 新随机管理员密码)—— 原来的管理员密码在容器里登不进去,不是数据坏了:
+
+| 部署方式 | 配置文件 | 状态目录 |
+| --- | --- | --- |
+| systemd / 裸机 | `<仓库根>/config.json` | `<仓库根>/data/` |
+| Docker | `./data/config.json`(容器内 `/app/data/config.json`) | 同一个 `./data/` |
+
+要沿用原来那份,导入一次即可(会自动备份容器现有配置、改好容器内路径):
+
+```bash
+sudo systemctl stop cc-trans          # 先停裸机版,否则两个实例抢 8787 和同一个 data/
+./deploy/import-config.sh             # 源 = ./config.json → ./data/config.json
+docker compose -f docker-compose.build.yml restart
+```
+
+客户端令牌、每客户端的参数下发(`overrides`)、`modelMap`、管理员密码都原样保留;只有 `host`/`port`/`dataDir`/`oauthCredentialsPath` 会改成容器内的值。
+
+> ⚠️ 两种部署的 `data/` 目录是**同一个**(裸机版 `dataDir` 默认就是 `config.json` 同级的 `data/`)。别让 systemd 版和容器同时跑 —— 指标和日志会互相覆盖。
+
+#### 累计统计和请求日志丢了怎么办
+
+`data/` 被误删、或从没持久化过(旧版本)时,只要 systemd 还在往 journald 写日志,就能**从 journald 反向重建**:
+
+```bash
+journalctl -u cc-trans --no-pager -o cat | node deploy/rebuild-metrics.mjs --force
+docker compose -f docker-compose.build.yml restart
+```
+
+脚本解析历史请求行(时间/状态/耗时/模型/in/out/cacheR/cacheW/客户端),喂给**运行时同一套** `createMetrics`/`createLogStore` —— 聚合口径、成本估算、分块布局与线上完全一致,不是另写一份。输出示例:
+
+```
+扫描 10468 行,重建 3600 条请求
+  时间跨度:2026-07-08 12:24 → 2026-07-26 01:30(18 天,19 个日聚合)
+  累计:请求 3600 / 异常 44
+  token:in 12896173 · out 5650130 · cacheR 262767654 · cacheW 49099959
+  估算成本:$599.25
+  客户端 laptop:3475 条 / xyz_local_agent:105 条 / yzt:20 条
+```
+
+几点注意:
+
+- **幂等保护**:已有 `metrics.json` 或 `logs/` 时会拒绝执行(重复导入会让统计翻倍),加 `--force` 才继续,并自动备份成 `.bak-<时间戳>`。
+- **历史日志里没有 IP/UA**(那时还没记),所以这批数据在「异常来源」里 IP/UA 列是空的,其余字段完整。
+- **保留期**:导入跨度超过 `logRetentionDays`(默认 14 天)时,容器启动会把更早的块当过期清掉 —— 脚本会提示你该调到多少。
+- 也可以喂文件:`node deploy/rebuild-metrics.mjs --file saved.log --force`。
+
+**权限不用自己管**:`./data` 不存在时 Docker 会以 `root` 建目录,容器里的非 root 进程本会写不进去(`EACCES`)。entrypoint 以 root 入场先把属主改成宿主机用户(取挂载的 `~/.claude` 属主,取不到用 1000),再用 `deploy/drop-privs.mjs` 降权到非 root 跑服务 —— 所以 `data/` 下的文件在宿主机上直接可读可改。宿主机 uid 不是 1000 且没挂 `~/.claude` 时用 `PUID=<uid> PGID=<gid>` 指定。
+
+```bash
+docker exec cc-trans ps -o user,args | grep server.js   # 应显示 node(不是 root)
+ls -ld data                                              # 属主应是你自己
 ```
 
 ## D. 验证「用户拿到的那份 compose」(镜像还没发布时)
@@ -613,9 +692,13 @@ cc-trans/
 │   └── client.mjs         # 客户端自检(npm run test:client)
 ├── .github/workflows/docker-publish.yml  # CI:打 v* 标签时构建多架构镜像并发布到 GHCR
 ├── Dockerfile             # 容器镜像(零依赖;WITH_UNDICI=1 才装 undici 供代理用;NODE_IMAGE 可换镜像源)
-├── deploy/docker-entrypoint.sh  # 容器首启引导:自动生成 config.json + 客户端令牌 + 管理员密码
+├── deploy/docker-entrypoint.sh  # 容器首启引导:修正卷属主 + 生成 config.json/令牌/管理员密码 + 降权启动
+├── deploy/drop-privs.mjs  # 用 Node 自带 setuid/setgid 降权(免装 su-exec,保持零依赖)
+├── deploy/import-config.sh      # 把裸机版 config.json 导入 Docker 卷(复用令牌/密码/参数下发)
+├── deploy/rebuild-metrics.mjs   # 从 journald 历史日志反向重建 metrics.json + 分块日志
 ├── docker-compose.yml     # 主部署:从 GHCR 拉预构建镜像(下载这一个文件即可)
 ├── docker-compose.build.yml     # 备用:从源码本地构建(改代码 / 需要代理支持时)
+├── .env.example           # compose 可选配置(端口 / 镜像源 / undici / PUID)
 ├── install.sh             # 一键安装(引导配置 + systemd/docker)
 ├── config.example.json    # 配置模板
 └── config.json            # 实际配置(.gitignore 忽略,含令牌/密钥)
