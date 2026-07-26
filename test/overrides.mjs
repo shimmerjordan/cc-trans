@@ -103,9 +103,27 @@ async function main() {
     const login = await (await fetch(base + '/admin/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'secret123' }) })).json();
     const H = { authorization: 'Bearer ' + login.session, 'content-type': 'application/json' };
     const cat = await (await fetch(base + '/admin/api/models', { headers: H })).json();
-    check('模型目录接口', Array.isArray(cat.catalog) && cat.catalog.some((m) => m.id === 'claude-opus-4-8') && !!cat.catalogVersion);
+    check('模型列表接口(未拉取=内置种子)', Array.isArray(cat.models) && cat.models.some((m) => m.id === 'claude-opus-4-8') && cat.fromUpstream === false);
+    // 拉取上游 → 列表被替换成上游结果并持久化
     const live = await (await fetch(base + '/admin/api/models/refresh', { method: 'POST', headers: H })).json();
-    check('上游模型拉取+新模型识别', live.ok && live.live.length === 2 && live.live.find((m) => m.id === 'claude-opus-4-9' && !m.inCatalog));
+    check('上游拉取更新列表 + 新模型识别',
+      live.ok && live.models.length === 2 && live.models.some((m) => m.id === 'claude-opus-4-9') && live.added.includes('claude-opus-4-9'),
+      JSON.stringify({ n: live.models && live.models.length, added: live.added }));
+    // 未在上游列表里的内置种子应被移除(说明列表不再写死)
+    check('列表不写死: 内置种子被上游结果替换', !live.models.some((m) => m.id === 'claude-haiku-4-5-20251001') && live.removed.length > 0);
+    // 新模型的参数规则由 id 推断(opus-4-9 属新家族 → temperature 已移除)
+    const m49 = live.models.find((m) => m.id === 'claude-opus-4-9');
+    check('新模型参数规则自动推断', m49 && m49.temperature === false && m49.tier === 'Opus', JSON.stringify(m49));
+    // 持久化落盘 + 再查接口仍是上游列表
+    const modelsFile = path.join(TMP, 'data', 'models.json');
+    check('模型列表落盘 data/models.json', fs.existsSync(modelsFile) && JSON.parse(fs.readFileSync(modelsFile, 'utf8')).models.some((m) => m.id === 'claude-opus-4-9'));
+    const cat2 = await (await fetch(base + '/admin/api/models', { headers: H })).json();
+    check('再查列表来自上游', cat2.fromUpstream === true && cat2.models.length === 2);
+    // 手动补模型 + 移除
+    const addR = await (await fetch(base + '/admin/api/models/add', { method: 'POST', headers: H, body: JSON.stringify({ id: 'claude-manual-x' }) })).json();
+    check('手动补模型', addR.ok && addR.models.some((m) => m.id === 'claude-manual-x'));
+    const rmR = await (await fetch(base + '/admin/api/models/remove', { method: 'POST', headers: H, body: JSON.stringify({ id: 'claude-manual-x' }) })).json();
+    check('移除模型', rmR.ok && !rmR.models.some((m) => m.id === 'claude-manual-x'));
     const clients = await (await fetch(base + '/admin/api/clients', { headers: H })).json();
     const noneTok = clients.tokens.find((t) => t.name === 'none');
     check('客户端列表带 overrides', clients.tokens.find((t) => t.name === 'full').overrides.effort === 'low');

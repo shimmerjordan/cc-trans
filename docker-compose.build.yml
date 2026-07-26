@@ -1,0 +1,35 @@
+# cc-trans —— 从源码本地构建部署(改了代码、或需要上游代理支持时用这份)
+#
+#   git clone https://github.com/shimmerjordan/cc-trans.git && cd cc-trans
+#   docker compose -f docker-compose.build.yml up -d --build
+#
+# 只想直接用现成镜像?用默认的 docker-compose.yml(从 GHCR 拉取,不用构建)。
+services:
+  cc-trans:
+    build:
+      context: .
+      args:
+        # 需要上游代理(HTTP/SOCKS5)时改成 "1"(会装 undici)
+        WITH_UNDICI: "0"
+        # Docker Hub 拉不动基础镜像时换镜像源,例如:
+        # NODE_IMAGE: docker.m.daocloud.io/library/node:22-alpine
+        NODE_IMAGE: node:22-alpine
+    image: cc-trans:local
+    container_name: cc-trans
+    restart: unless-stopped
+    ports:
+      # 宿主机端口可用环境变量覆盖(端口冲突时无需改本文件):
+      #   CC_TRANS_HOST_PORT=18787 docker compose up -d
+      - "${CC_TRANS_HOST_PORT:-8787}:8787"
+    volumes:
+      - ./data:/app/data
+      - ${HOME}/.claude:/home/node/.claude
+    environment:
+      - CC_TRANS_PORT=8787
+      - CC_TRANS_CONFIG=/app/data/config.json
+      - CC_TRANS_OAUTH_CREDENTIALS=/home/node/.claude/.credentials.json
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

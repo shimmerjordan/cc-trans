@@ -1,30 +1,33 @@
-# cc-trans docker 部署。一键:docker compose up -d --build
+# cc-trans —— 从 GHCR 拉取预构建镜像部署(推荐,无需 clone、无需本地构建)
 #
-# 挂载说明:
-#   - ./config.json         : 你的配置(先 cp config.example.json config.json 并填好)
-#   - ./data                : 指标持久化(cc-trans 自动写,重启不丢统计)
-#   - ~/.claude             : 订阅 OAuth 凭证目录(oauth 模式需要;容器要能读写以自动刷新 token)
+#   mkdir -p ~/cc-trans && cd ~/cc-trans
+#   curl -fsSL -O https://raw.githubusercontent.com/shimmerjordan/cc-trans/main/docker-compose.yml
+#   docker compose up -d && docker compose logs
 #
-# 需要上游代理(HTTP/SOCKS5)时:把下面 build 的 WITH_UNDICI 改成 "1" 重新 build,并在 config.json 配 upstreamProxy。
+# 首次启动会在 ./data/config.json 自动生成配置 + 客户端令牌 + 随机管理员密码(都打印在日志里)。
+# 升级:docker compose pull && docker compose up -d
+#
+# 想从源码构建(改了代码 / 需要上游代理支持)?用 docker-compose.build.yml。
 services:
   cc-trans:
-    build:
-      context: .
-      args:
-        WITH_UNDICI: "0"
-    image: cc-trans:latest
+    image: ghcr.io/shimmerjordan/cc-trans:latest
     container_name: cc-trans
     restart: unless-stopped
+    # docker compose up 时自动拉最新镜像
+    pull_policy: always
     ports:
-      - "8787:8787"
+      # 宿主机端口可用环境变量覆盖(端口冲突时无需改本文件):
+      #   CC_TRANS_HOST_PORT=18787 docker compose up -d
+      - "${CC_TRANS_HOST_PORT:-8787}:8787"
     volumes:
-      - ./config.json:/app/config.json
+      # 全部状态(config.json / 指标 / 模型列表 / 日志块)都在这一个卷里
       - ./data:/app/data
-      # 订阅 OAuth:把宿主机的 Claude 登录态挂进容器(需读写以自动刷新)。apiKey 模式可删掉这行。
+      # 订阅 OAuth:把宿主机的 Claude 登录态挂进容器(需可读写以自动刷新 token)。
+      # 用静态密钥(apiKey 模式)时可删掉这行。
       - ${HOME}/.claude:/home/node/.claude
     environment:
       - CC_TRANS_PORT=8787
-      # 容器内 node 用户 home 是 /home/node,凭证默认路径随之改到这里
+      - CC_TRANS_CONFIG=/app/data/config.json
       - CC_TRANS_OAUTH_CREDENTIALS=/home/node/.claude/.credentials.json
     # 日志轮转(控制磁盘占用):单文件 10MB、最多 5 个
     logging:
@@ -32,9 +35,3 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s

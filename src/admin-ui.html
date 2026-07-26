@@ -147,8 +147,8 @@
       </table>
       <p class="muted" style="font-size:12px;margin-top:10px">「参数下发」= 该客户端的请求转发前自动改写:强制模型 / thinking / effort / 注入 Claude Code system 前缀(过订阅门禁)/ 清洗新模型不支持的参数。参数含义见「模型/参数」页。</p>
       <div id="othersWrap" hidden>
-        <p class="muted" style="margin-top:18px;font-size:12px">其它来源(未授权尝试等):</p>
-        <table><thead><tr><th>来源</th><th>请求数</th><th>最近状态</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
+        <p class="muted" style="margin-top:18px;font-size:12px"><b>异常来源</b>(未携带令牌 / 令牌不匹配等未授权尝试)—— 已标注来源 IP、User-Agent 与请求路径,便于定位是谁在打:</p>
+        <table><thead><tr><th>类型</th><th>请求数</th><th>最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
       </div>
     </section>
 
@@ -156,14 +156,17 @@
       <section class="block">
         <h2>模型目录 <span class="muted" style="font-weight:400;font-size:12px" id="catalogVer"></span></h2>
         <div class="toolbar">
-          <span class="grow muted" style="font-size:12.5px">内置目录随 cc-trans 更新;点右侧按钮从上游拉取<b>订阅实际可用</b>的模型列表,发现新模型后到「客户端」页给对应客户端下发升级。</span>
-          <button class="primary" onclick="refreshLiveModels()">从上游拉取可用模型</button>
+          <span class="grow muted" style="font-size:12.5px" id="modelSrcNote"></span>
+          <input id="addModelId" class="input" placeholder="手动补一个模型 id" style="width:220px" />
+          <button onclick="addModel()">添加</button>
+          <button class="primary" onclick="refreshLiveModels()">从上游拉取并更新列表</button>
         </div>
         <div id="liveModels" hidden style="margin-bottom:12px"></div>
         <table>
-          <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th></tr></thead>
+          <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th><th></th></tr></thead>
           <tbody id="catalogRows"></tbody>
         </table>
+        <p class="muted" style="font-size:12px;margin-top:10px">列表来自<b>上游实际可用模型</b>(拉取后持久化到 <span class="mono">data/models.json</span>,重启保留);参数规则按模型 id 自动推断,上游出新模型也能识别。</p>
       </section>
       <section class="block">
         <h2>可传入参数说明(经订阅 OAuth 转发)</h2>
@@ -181,16 +184,63 @@
     <section id="tab-logs" hidden>
       <div class="toolbar">
         <span class="muted" id="logStatus">连接中…</span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12.5px"><input type="checkbox" id="logLive" checked /> 实时追加</label>
         <span class="grow"></span>
+        <input id="logQ" class="input" placeholder="搜索路径/模型/客户端/IP" style="width:180px" onkeydown="if(event.key==='Enter')reloadLogs(0)" />
+        <select id="logErrOnly" class="input" onchange="reloadLogs(0)">
+          <option value="">全部状态</option>
+          <option value="1">仅异常(≥400)</option>
+        </select>
+        <button onclick="reloadLogs(0)">查询</button>
         <button onclick="clearLogs()">清屏</button>
+        <button class="danger" onclick="pruneDlg.showModal()">清理日志</button>
       </div>
       <table>
-        <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>模型</th><th>用量</th><th>客户端</th></tr></thead>
+        <thead><tr><th>时间</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>模型</th><th>用量</th><th>客户端</th><th>来源</th></tr></thead>
         <tbody id="logRows"></tbody>
       </table>
+      <div class="toolbar" style="margin-top:12px">
+        <button id="logPrev" onclick="pageLogs(-1)">← 上一页</button>
+        <span class="muted" id="logPageInfo" style="font-size:12.5px"></span>
+        <button id="logNext" onclick="pageLogs(1)">下一页 →</button>
+        <span class="grow"></span>
+        <span class="muted" id="logStoreInfo" style="font-size:12px"></span>
+      </div>
     </section>
 
     <section id="tab-settings" hidden>
+      <section class="block">
+        <h2>本地 AI 订阅 / 上游凭证</h2>
+        <div id="upCurrent" class="muted" style="font-size:12.5px;margin-bottom:14px">加载中…</div>
+        <div class="form-row"><label>鉴权方式</label>
+          <select id="upAuth" class="input" onchange="onUpAuthChange()">
+            <option value="oauth">订阅 OAuth(用本机 Claude 登录态,推荐)</option>
+            <option value="apiKey">静态密钥(官方 API Key / 第三方网关)</option>
+          </select>
+        </div>
+        <div id="upOauthRows">
+          <div class="form-row"><label>订阅凭证文件</label>
+            <div style="display:flex;gap:6px">
+              <input id="upCredPath" class="input" style="flex:1" placeholder="留空 = ~/.claude/.credentials.json" />
+              <button onclick="probeCreds()">检测</button>
+            </div>
+          </div>
+          <div class="form-row"><label></label><div id="upProbeMsg" class="muted" style="font-size:12px;min-height:16px"></div></div>
+          <p class="muted" style="font-size:12px;margin:0 0 12px">订阅模式无需任何密钥 —— 只要本机用 <span class="mono">claude</span> 登录过(Pro/Max/Team),cc-trans 就转发这份登录态并<b>自动刷新 token</b>。Docker 部署时记得把宿主机 <span class="mono">~/.claude</span> 挂进容器。</p>
+        </div>
+        <div id="upKeyRows" hidden>
+          <div class="form-row"><label>API Key</label><input id="upApiKey" class="input" type="password" placeholder="留空=不修改;走 x-api-key" /></div>
+          <div class="form-row"><label>Auth Token</label><input id="upAuthToken" class="input" type="password" placeholder="留空=不修改;走 Authorization: Bearer" /></div>
+          <p class="muted" style="font-size:12px;margin:0 0 12px">二者填其一即可。想清空已存的密钥,填 <span class="mono">__clear__</span> 保存。</p>
+        </div>
+        <div class="form-row"><label>上游地址</label><input id="upBaseUrl" class="input" placeholder="https://api.anthropic.com" /></div>
+        <div class="form-row"><label>上游代理</label><input id="upProxy" class="input" placeholder="留空=直连;支持 http:// https:// socks5://" /></div>
+        <div class="form-row"><label></label><div>
+          <button class="primary" onclick="saveUpstream()">保存并立即生效</button>
+          <span id="upMsg" class="ok-msg"></span>
+        </div></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
+      </section>
       <section class="block">
         <h2>修改管理台密码</h2>
         <div class="form-row"><label>当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
@@ -201,6 +251,23 @@
     </section>
   </main>
 </div>
+
+<dialog id="pruneDlg" style="width:420px">
+  <h3 style="margin-top:0">清理日志</h3>
+  <p class="muted" style="font-size:12.5px;margin:0 0 12px">删除持久化的请求日志(分块存储)。此操作不可撤销;不影响累计统计数字。</p>
+  <div class="form-row"><label>方式</label>
+    <select id="pruneMode" class="input" onchange="onPruneMode()">
+      <option value="days">删除早于 N 天前的</option>
+      <option value="range">删除指定时间区间</option>
+      <option value="all">清空全部日志</option>
+    </select>
+  </div>
+  <div class="form-row" id="pruneDaysRow"><label>N 天</label><input id="pruneDays" type="number" min="0" value="7" class="input" /></div>
+  <div class="form-row" id="pruneFromRow" hidden><label>起</label><input id="pruneFrom" type="datetime-local" class="input" /></div>
+  <div class="form-row" id="pruneToRow" hidden><label>止</label><input id="pruneTo" type="datetime-local" class="input" /></div>
+  <div id="pruneMsg" class="muted" style="font-size:12px;min-height:16px"></div>
+  <div style="text-align:right;margin-top:10px"><button onclick="pruneDlg.close()">取消</button> <button class="danger" onclick="doPrune()">确认删除</button></div>
+</dialog>
 
 <dialog id="ovDlg" style="width:460px">
   <h3 style="margin-top:0">参数下发 · <span id="ovName"></span></h3>
@@ -227,16 +294,17 @@
       <option value="max">max</option>
     </select>
   </div>
+  <h4 style="margin:6px 0 8px;font-size:13px;color:var(--muted)">订阅兼容(全部<b>默认开启</b>,取消勾选即对该客户端关闭)</h4>
   <div class="form-row"><label></label><label class="flex" style="display:flex;align-items:center;gap:8px;font-size:13px">
     <input type="checkbox" id="ovInject" /> 注入 Claude Code system 前缀(非 Haiku 模型过订阅门禁)
   </label></div>
   <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
-    <input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)
+    <input type="checkbox" id="ovSpoof" /> <b>伪装成 Claude Code</b>(补全 UA/x-app + anthropic-beta 四件套)
   </label></div>
   <div class="form-row"><label></label><label style="display:flex;align-items:center;gap:8px;font-size:13px">
-    <input type="checkbox" id="ovSpoof" /> <b>伪装成 Claude Code</b>(补全 UA/x-app + anthropic-beta 四件套,自研客户端走订阅更稳)
+    <input type="checkbox" id="ovStrip" /> 清洗新模型不支持的参数(temperature 等,避免 400)
   </label></div>
-  <p class="muted" style="font-size:12px;margin:4px 0 14px">对合规请求(如真实 Claude Code)以上均为无操作;给自研客户端接订阅时建议开启「注入前缀 + 清洗 + 伪装」三项。</p>
+  <p class="muted" style="font-size:12px;margin:4px 0 14px">这三项让任意客户端(含自研)接订阅开箱即稳;对合规请求(真实 Claude Code)为无操作。前两项仅在<b>订阅 OAuth</b> 模式下生效(apiKey 模式注入前缀只会白改提示词)。</p>
 
   <h4 style="margin:6px 0 8px;font-size:13px;color:var(--muted)">安全限制(留空/0 = 不限制)</h4>
   <div class="form-row"><label>限流</label>
@@ -272,7 +340,14 @@
 </dialog>
 
 <script>
-const PREFIX = location.pathname.replace(/\/+$/, '') || '/admin';
+// 每个 tab 一个 URL:/admin/<tab>。PREFIX 需剥掉路径里的 tab 段,才能拼出正确的 /api。
+const TABS = ['overview', 'clients', 'models', 'logs', 'settings'];
+const PREFIX = (() => {
+  let p = location.pathname.replace(/\/+$/, '') || '/admin';
+  const last = p.split('/').pop();
+  if (TABS.includes(last)) p = p.slice(0, -(last.length + 1));
+  return p || '/admin';
+})();
 const API = PREFIX + '/api';
 const COLORS = ['#4f46e5', '#059669', '#d97706', '#dc2626', '#0891b2', '#7c3aed', '#db2777', '#65a30d'];
 let SESSION = sessionStorage.getItem('cc-trans-admin') || '';
@@ -309,15 +384,32 @@ function enterApp() {
   clearInterval(statusTimer);
   statusTimer = setInterval(() => { if (curTab === 'overview') refreshOverview(); if (curTab === 'clients') refreshClients(); }, 5000);
   startLogs();
+  // 按当前 URL 打开对应 tab(直接访问 /admin/logs、刷新、收藏都能落到正确页面)
+  switchTab(tabFromPath(), { replace: true });
 }
-function switchTab(t) {
+// tab 名 ←→ URL。switchTab 会 pushState,浏览器前进/后退与刷新都保持在同一 tab。
+function tabFromPath() {
+  const last = (location.pathname.replace(/\/+$/, '') || '').split('/').pop();
+  return TABS.includes(last) ? last : 'overview';
+}
+function switchTab(t, opts = {}) {
+  if (!TABS.includes(t)) t = 'overview';
   curTab = t;
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
-  ['overview', 'clients', 'models', 'logs', 'settings'].forEach((x) => show('tab-' + x, x === t));
+  TABS.forEach((x) => show('tab-' + x, x === t));
+  // 同步 URL(replace: 初始进入用 replaceState,避免多压一条历史)
+  const url = PREFIX + '/' + t;
+  if (location.pathname !== url && !opts.noPush) {
+    try { history[opts.replace ? 'replaceState' : 'pushState']({ tab: t }, '', url); } catch { /* file:// 等场景忽略 */ }
+  }
+  document.title = `cc-trans · ${({ overview: '概览', clients: '客户端', models: '模型/参数', logs: '实时日志', settings: '设置' })[t]}`;
   if (t === 'overview') refreshOverview();
   if (t === 'clients') refreshClients();
   if (t === 'models') loadModels();
+  if (t === 'logs') reloadLogs(0);
+  if (t === 'settings') loadUpstream();
 }
+window.addEventListener('popstate', () => switchTab(tabFromPath(), { noPush: true }));
 
 function fmtUptime(ms) { const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`; }
 function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }); }
@@ -503,15 +595,38 @@ function drawDonut(box, segs) {
 }
 
 let CLIENTS = [];
+let CLIENT_DEFAULTS = { injectClaudeCodeSystem: true, spoofClaudeCode: true, stripUnsupported: true };
+// 错误数单元格:带最近一次异常的来源提示(悬停可见)
+function errCell(s) {
+  const n = s.errors || 0;
+  if (!n) return '0';
+  const tip = [
+    s.lastErrorStatus ? `最近异常 ${s.lastErrorStatus}` : '',
+    s.lastErrorAt ? `于 ${new Date(s.lastErrorAt).toLocaleString('zh-CN')}` : '',
+    s.lastErrorIp ? `来源 ${s.lastErrorIp}` : '',
+    s.lastErrorPath ? `路径 ${s.lastErrorPath}` : '',
+    s.lastErrorUa ? `UA ${s.lastErrorUa}` : '',
+  ].filter(Boolean).join('\n');
+  return `<span title="${esc(tip)}" style="cursor:help;text-decoration:underline dotted">${n}</span>`;
+}
+// 多来源 IP 徽标
+function ipsBadge(errorIps) {
+  if (!errorIps) return '';
+  const ks = Object.keys(errorIps);
+  if (ks.length <= 1) return '';
+  const tip = ks.map((k) => `${k}: ${errorIps[k]} 次`).join('\n');
+  return ` <span class="muted" title="${esc(tip)}" style="cursor:help">+${ks.length - 1}</span>`;
+}
 function ovBadge(ov) {
   ov = ov || {};
   const parts = [];
   if (ov.model) parts.push('→' + ov.model.replace(/^claude-/, ''));
   if (ov.thinking) parts.push('think:' + ov.thinking);
   if (ov.effort) parts.push('effort:' + ov.effort);
-  if (ov.injectClaudeCodeSystem) parts.push('+CC前缀');
-  if (ov.stripUnsupported) parts.push('清洗');
-  if (ov.spoofClaudeCode) parts.push('伪装CC');
+  // 订阅兼容三项默认开:只在被显式关闭时提示
+  if (ov.injectClaudeCodeSystem === false) parts.push('✗CC前缀');
+  if (ov.spoofClaudeCode === false) parts.push('✗伪装CC');
+  if (ov.stripUnsupported === false) parts.push('✗清洗');
   if (ov.rateLimitRequests) parts.push(`限流${ov.rateLimitRequests}/${ov.rateLimitWindowSec || 0}s`);
   if (ov.concurrencyLimit) parts.push(`并发${ov.concurrencyLimit}`);
   if (ov.allowedClient) parts.push('限UA');
@@ -522,35 +637,52 @@ async function refreshClients() {
   try {
     const d = await (await api('/clients')).json();
     CLIENTS = d.tokens || [];
+    if (d.defaults) CLIENT_DEFAULTS = d.defaults;
     el('genBtn').disabled = !d.canManage;
     el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
       <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td>${s.requests || 0}</td>
-      <td class="${s.errors ? 'st-5' : ''}">${s.errors || 0}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
+      <td class="${s.errors ? 'st-5' : ''}">${errCell(s)}</td><td>${s.inTokens || 0} / ${s.outTokens || 0}</td>
       <td title="按模型定价估算">${fmtUsd(s.cost)}</td>
       <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
       <td style="text-align:right;white-space:nowrap">${d.canManage ? `<button onclick="openOverrides('${t.id}')">参数</button> <button class="danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="9" class="muted">暂无客户端令牌</td></tr>';
     const others = d.others || [];
     show('othersWrap', others.length > 0);
-    el('otherRows').innerHTML = others.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.requests}</td><td class="${stClass(c.lastStatus)}">${c.lastStatus}</td><td>${ago(c.lastSeen)}</td></tr>`).join('');
+    el('otherRows').innerHTML = others.map((c) => `<tr>
+      <td>${esc(c.name)}</td>
+      <td>${c.requests}</td>
+      <td class="${stClass(c.lastStatus)}">${c.lastStatus}</td>
+      <td class="mono" style="font-size:11.5px">${esc(c.lastErrorIp || c.lastIp || '—')}${ipsBadge(c.errorIps)}</td>
+      <td class="mono" style="font-size:11px" title="${esc(c.lastErrorUa || c.lastUa || '')}">${esc((c.lastErrorUa || c.lastUa || '—').slice(0, 28))}</td>
+      <td class="mono" style="font-size:11px" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
+      <td>${ago(c.lastSeen)}</td></tr>`).join('');
   } catch (e) {}
 }
 
 // ── 模型/参数页 ──
 let CATALOG = [];
-async function loadModels() {
-  try {
-    const d = await (await api('/models')).json();
-    CATALOG = d.catalog || [];
-    el('catalogVer').textContent = `(目录版本 ${d.catalogVersion})`;
-    el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
-      <td class="mono">${esc(m.id)}${m.latest ? ' <span style="color:#059669;font-size:11px">●最新</span>' : ''}</td>
+function renderCatalog(d) {
+  CATALOG = d.models || d.catalog || [];
+  el('catalogVer').textContent = d.fetchedAt
+    ? `(共 ${CATALOG.length} 个 · 上游更新于 ${new Date(d.fetchedAt).toLocaleString('zh-CN')})`
+    : `(共 ${CATALOG.length} 个 · 内置种子,未从上游拉取过)`;
+  el('modelSrcNote').innerHTML = d.fromUpstream
+    ? '列表已来自上游拉取结果,可再次拉取以同步最新。'
+    : '当前是内置种子列表 —— 点右侧「从上游拉取并更新列表」获取订阅实际可用的模型。';
+  el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
+      <td class="mono">${esc(m.id)}${m.latest ? ' <span style="color:#059669;font-size:11px">●最新</span>' : ''}${m.unknown ? ' <span style="color:#d97706;font-size:11px">?规则推断</span>' : ''}</td>
       <td>${esc(m.tier)}</td>
       <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
       <td style="font-size:12px">${esc(m.thinking)}</td>
       <td style="font-size:12px">${esc(m.effort)}</td>
-      <td class="muted" style="font-size:12px">${esc(m.note)}</td></tr>`).join('');
-    el('modelList').innerHTML = CATALOG.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
+      <td class="muted" style="font-size:12px">${esc(m.note)}</td>
+      <td style="text-align:right"><button class="danger" onclick="removeModel('${esc(m.id)}')">移除</button></td></tr>`).join('')
+    || '<tr><td colspan="7" class="muted">列表为空,点右上「从上游拉取并更新列表」</td></tr>';
+  el('modelList').innerHTML = CATALOG.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
+}
+async function loadModels() {
+  try {
+    renderCatalog(await (await api('/models')).json());
   } catch (e) {}
 }
 async function refreshLiveModels() {
@@ -559,16 +691,35 @@ async function refreshLiveModels() {
   box.innerHTML = '<span class="muted">拉取中…</span>';
   try {
     const d = await (await api('/models/refresh', { method: 'POST' })).json();
-    if (!d.ok) { box.innerHTML = `<span class="st-5">拉取失败:${esc(d.error)}(上游可能不支持 /v1/models,以内置目录为准)</span>`; return; }
-    const news = d.live.filter((m) => !m.inCatalog);
-    box.innerHTML = `<div style="font-size:12.5px"><b>上游实际可用 ${d.live.length} 个模型:</b> ` +
-      d.live.map((m) => `<span class="mono" style="margin-right:8px${m.inCatalog ? '' : ';color:#d97706;font-weight:700'}">${esc(m.id)}${m.inCatalog ? '' : ' 🆕'}</span>`).join('') +
-      (news.length ? `<div style="margin-top:6px;color:#d97706">发现 ${news.length} 个目录外新模型 —— 可到「客户端」页把它下发给对应客户端(强制模型),即完成手动升级。</div>` : '<div class="muted" style="margin-top:6px">与内置目录一致,暂无更新。</div>') + '</div>';
-    // 新模型也加进强制模型下拉候选
-    el('modelList').innerHTML = d.live.map((m) => `<option value="${esc(m.id)}"></option>`).join('');
+    if (!d.ok) {
+      box.innerHTML = `<span class="st-5">拉取失败:${esc(d.error)}</span> <span class="muted">—— 上游可能不支持 /v1/models;可用左侧输入框手动补模型 id。</span>`;
+      return;
+    }
+    renderCatalog({ models: d.models, fetchedAt: d.fetchedAt, fromUpstream: true });
+    const parts = [`<b>已更新列表:共 ${d.models.length} 个模型</b>`];
+    if (d.added.length) parts.push(`<span style="color:#d97706">新增 ${d.added.map(esc).join(', ')}</span>`);
+    if (d.removed.length) parts.push(`<span class="muted">移除 ${d.removed.map(esc).join(', ')}</span>`);
+    if (!d.added.length && !d.removed.length) parts.push('<span class="muted">与上次一致,无变化</span>');
+    box.innerHTML = `<div style="font-size:12.5px">${parts.join(' · ')}</div>`;
   } catch (e) {
     box.innerHTML = '<span class="st-5">拉取失败(网络/会话问题)</span>';
   }
+}
+async function addModel() {
+  const id = el('addModelId').value.trim();
+  if (!id) return;
+  const r = await api('/models/add', { method: 'POST', body: JSON.stringify({ id }) });
+  const d = await r.json();
+  if (!r.ok) { alert('添加失败:' + (d.error || '未知')); return; }
+  el('addModelId').value = '';
+  renderCatalog({ models: d.models, fromUpstream: true });
+}
+async function removeModel(id) {
+  if (!confirm(`从列表移除 ${id}?(仅影响管理台展示与下拉候选)`)) return;
+  const r = await api('/models/remove', { method: 'POST', body: JSON.stringify({ id }) });
+  const d = await r.json();
+  if (!r.ok) { alert('移除失败:' + (d.error || '未知')); return; }
+  renderCatalog({ models: d.models, fromUpstream: true });
 }
 
 // ── 客户端参数下发 ──
@@ -583,9 +734,12 @@ function openOverrides(id) {
   el('ovModel').value = ov.model || '';
   el('ovThinking').value = ov.thinking || '';
   el('ovEffort').value = ov.effort || '';
-  el('ovInject').checked = !!ov.injectClaudeCodeSystem;
-  el('ovStrip').checked = !!ov.stripUnsupported;
-  el('ovSpoof').checked = !!ov.spoofClaudeCode;
+  // 三态:未设置 → 用全局默认(默认开);显式 true/false → 照显示
+  const dflt = CLIENT_DEFAULTS;
+  const eff = (k) => (typeof ov[k] === 'boolean' ? ov[k] : !!dflt[k]);
+  el('ovInject').checked = eff('injectClaudeCodeSystem');
+  el('ovStrip').checked = eff('stripUnsupported');
+  el('ovSpoof').checked = eff('spoofClaudeCode');
   el('ovRlReq').value = ov.rateLimitRequests || '';
   el('ovRlWin').value = ov.rateLimitWindowSec || '';
   el('ovConc').value = ov.concurrencyLimit || '';
@@ -642,26 +796,152 @@ async function changePw() {
   else { el('pwMsg').className = 'err-msg'; el('pwMsg').textContent = '失败:' + (d.error || '未知'); }
 }
 
+// ── 实时日志(分块持久化 + 分页)──
+const LOG_PAGE = 100;
+let logOffset = 0;
+let logTotal = 0;
+
+function logFilterQS(offset) {
+  const p = new URLSearchParams({ limit: String(LOG_PAGE), offset: String(offset) });
+  const q = el('logQ').value.trim();
+  if (q) p.set('q', q);
+  if (el('logErrOnly').value === '1') p.set('errorsOnly', '1');
+  return p.toString();
+}
 function startLogs() {
-  api('/logs?limit=200').then((r) => r.json()).then((d) => { el('logRows').innerHTML = ''; (d.logs || []).forEach((e) => addLogRow(e, false)); openStream(); }).catch(() => {});
+  reloadLogs(0).then(() => openStream());
+}
+async function reloadLogs(offset) {
+  if (offset != null) logOffset = Math.max(0, offset);
+  try {
+    const d = await (await api('/logs?' + logFilterQS(logOffset))).json();
+    el('logRows').innerHTML = '';
+    (d.logs || []).forEach((e) => addLogRow(e, false, true)); // 已是倒序,顺序 append
+    logTotal = d.total ?? 0;
+    const from = logTotal ? logOffset + 1 : 0;
+    const to = logOffset + (d.logs || []).length;
+    el('logPageInfo').textContent = logTotal >= 0 ? `${from}-${to} / 共 ${logTotal} 条` : `${from}-${to}`;
+    el('logPrev').disabled = logOffset <= 0;
+    el('logNext').disabled = !d.hasMore;
+    const st = d.stats;
+    el('logStoreInfo').textContent = st && st.enabled
+      ? `分块存储:${st.blocks} 块 / ${st.days} 天 / ${st.mb} MB,自动保留 ${st.retentionDays} 天`
+      : (d.persisted === false ? '未启用分块存储(内存态,仅最近 500 条)' : '');
+  } catch (e) {}
+}
+function pageLogs(dir) {
+  const next = logOffset + dir * LOG_PAGE;
+  if (next < 0) return;
+  reloadLogs(next);
 }
 function openStream() {
   stopLive();
   es = new EventSource(API + '/logs/stream?s=' + encodeURIComponent(SESSION));
   es.onopen = () => { el('logStatus').textContent = '● 实时'; el('logStatus').style.color = 'var(--ok)'; };
   es.onerror = () => { el('logStatus').textContent = '○ 断开,重连中'; el('logStatus').style.color = 'var(--warn)'; };
-  es.onmessage = (ev) => { try { addLogRow(JSON.parse(ev.data), true); } catch {} };
+  es.onmessage = (ev) => {
+    // 只在第一页 + 勾选了实时追加时插入,避免翻页时被打乱
+    if (!el('logLive').checked || logOffset > 0) return;
+    try { addLogRow(JSON.parse(ev.data), true); } catch {}
+  };
 }
 function stopLive() { if (es) { es.close(); es = null; } }
 function clearLogs() { el('logRows').innerHTML = ''; }
-function addLogRow(e, live) {
+function addLogRow(e, live, append) {
   const tb = el('logRows'), tr = document.createElement('tr');
   if (live) tr.className = 'row-flash';
   const u = e.usage || {};
   const usageStr = [u.input != null ? 'in ' + u.input : '', u.output != null ? 'out ' + u.output : '', u.cacheRead ? 'cR ' + u.cacheRead : ''].filter(Boolean).join(' ');
-  tr.innerHTML = `<td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono" title="${esc(e.path)}">${esc((e.path || '').slice(0, 40))}</td><td class="${stClass(e.status)}">${e.status}</td><td>${e.ms}ms</td><td class="mono">${esc(e.model || '')}</td><td class="mono">${usageStr}</td><td>${esc(e.client || '')}</td>`;
-  tb.insertBefore(tr, tb.firstChild);
+  const src = [e.ip || '', e.ua ? e.ua.slice(0, 24) : ''].filter(Boolean).join(' · ');
+  tr.innerHTML = `<td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono" title="${esc(e.path)}">${esc((e.path || '').slice(0, 36))}</td><td class="${stClass(e.status)}">${e.status}</td><td>${e.ms}ms</td><td class="mono">${esc(e.model || '')}</td><td class="mono">${usageStr}</td><td>${esc(e.client || '')}</td><td class="mono" style="font-size:11px" title="${esc((e.ip || '') + ' ' + (e.ua || ''))}">${esc(src)}</td>`;
+  if (append) tb.appendChild(tr);
+  else tb.insertBefore(tr, tb.firstChild);
   while (tb.children.length > 300) tb.removeChild(tb.lastChild);
+}
+
+// ── 设置:本地 AI 订阅 / 上游凭证 ──
+function onUpAuthChange() {
+  const isOauth = el('upAuth').value === 'oauth';
+  show('upOauthRows', isOauth);
+  show('upKeyRows', !isOauth);
+}
+async function loadUpstream() {
+  try {
+    const d = await (await api('/upstream')).json();
+    el('upAuth').value = d.upstreamAuth || 'oauth';
+    el('upCredPath').value = d.oauthCredentialsPath === d.defaultCredentialsPath ? '' : (d.oauthCredentialsPath || '');
+    el('upCredPath').placeholder = '留空 = ' + (d.defaultCredentialsPath || '~/.claude/.credentials.json');
+    el('upBaseUrl').value = d.upstreamBaseUrl || '';
+    el('upProxy').value = d.upstreamProxy || '';
+    onUpAuthChange();
+    const c = d.credentials || {};
+    const bits = [];
+    bits.push(`当前:<b>${d.upstreamAuth === 'oauth' ? '订阅 OAuth' : '静态密钥'}</b>`);
+    if (d.upstreamAuth === 'oauth') {
+      bits.push(c.ok
+        ? `凭证正常 · 订阅 <b>${esc(c.subscriptionType || '?')}</b> · token ${c.expired ? '已过期(将自动刷新)' : (c.expiresInMin != null ? c.expiresInMin + ' 分钟后到期' : '?')} · ${c.hasRefresh ? '可自动刷新' : '<span class="st-5">无 refreshToken,过期后需重新登录</span>'}`
+        : `<span class="st-5">凭证不可用:${esc(c.error || '')}</span>`);
+    } else {
+      bits.push(d.hasApiKey ? `API Key ${esc(d.apiKeyMask)}` : (d.hasAuthToken ? `Auth Token ${esc(d.authTokenMask)}` : '<span class="st-5">未配置密钥</span>'));
+    }
+    bits.push(`连接:${esc(d.proxyDescribe || '')}`);
+    if (!d.canManage) bits.push('<span class="st-4">环境变量配置模式,不能在线修改</span>');
+    el('upCurrent').innerHTML = bits.join(' · ');
+    for (const id of ['upAuth', 'upCredPath', 'upBaseUrl', 'upProxy', 'upApiKey', 'upAuthToken']) el(id).disabled = !d.canManage;
+  } catch (e) {}
+}
+async function probeCreds() {
+  el('upProbeMsg').textContent = '检测中…';
+  const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ path: el('upCredPath').value.trim() }) });
+  const d = await r.json();
+  el('upProbeMsg').innerHTML = d.ok
+    ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono" style="font-size:11px">${esc(d.file)}</span>`
+    : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono" style="font-size:11px">${esc(d.file || '')}</span>`;
+}
+async function saveUpstream() {
+  el('upMsg').className = 'ok-msg';
+  el('upMsg').textContent = '保存中…';
+  const body = {
+    upstreamAuth: el('upAuth').value,
+    oauthCredentialsPath: el('upCredPath').value.trim(),
+    upstreamBaseUrl: el('upBaseUrl').value.trim(),
+    upstreamProxy: el('upProxy').value.trim(),
+  };
+  if (el('upApiKey').value) body.upstreamApiKey = el('upApiKey').value;
+  if (el('upAuthToken').value) body.upstreamAuthToken = el('upAuthToken').value;
+  const r = await api('/upstream', { method: 'POST', body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { el('upMsg').className = 'err-msg'; el('upMsg').textContent = '失败:' + (d.error || '未知'); return; }
+  el('upMsg').textContent = '✅ 已保存并生效';
+  el('upApiKey').value = ''; el('upAuthToken').value = '';
+  loadUpstream();
+  refreshOverview();
+}
+
+// ── 清理日志 ──
+const pruneDlg = el('pruneDlg');
+function onPruneMode() {
+  const m = el('pruneMode').value;
+  show('pruneDaysRow', m === 'days');
+  show('pruneFromRow', m === 'range');
+  show('pruneToRow', m === 'range');
+}
+async function doPrune() {
+  const m = el('pruneMode').value;
+  let body = {};
+  if (m === 'days') body = { days: Number(el('pruneDays').value) || 0 };
+  else if (m === 'range') {
+    const f = el('pruneFrom').value, t = el('pruneTo').value;
+    if (!f || !t) { el('pruneMsg').textContent = '请填写起止时间'; return; }
+    body = { from: new Date(f).getTime(), to: new Date(t).getTime() };
+  } else body = { before: Date.now() + 60_000 }; // 全部
+  if (!confirm('确认删除?此操作不可撤销。')) return;
+  el('pruneMsg').textContent = '删除中…';
+  const r = await api('/logs/prune', { method: 'POST', body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok) { el('pruneMsg').textContent = '失败:' + (d.error || '未知'); return; }
+  el('pruneMsg').textContent = `✅ 已删除 ${d.removedEntries} 条(${d.removedBlocks} 个块)`;
+  reloadLogs(0);
 }
 
 async function boot() {

@@ -10,6 +10,7 @@ Anthropic API 反向代理。让**其他电脑**上的 Claude Code 把请求发�
   - `apiKey`:用静态 `sk-ant-` 密钥(走官方或中转网关)。
 - **Web 管理台**(`/admin`):账号密码登录,概览(流量折线图/客户端环形图)、客户端令牌在线生成与吊销、实时日志。详见下文「Web 管理台」。
 - **零第三方依赖**:仅需 Node.js ≥ 18,含管理台图表(纯内联 SVG)在内均无外部依赖/CDN。
+- **一条命令部署**:镜像自动发布到 GHCR,`docker compose up -d` 即用(多架构 amd64/arm64),首启自动生成配置与令牌。详见下文「快速部署」。
 
 ```
 ┌────────── 远端电脑 ──────────┐         ┌────────── 服务器(本机)────────────┐
@@ -18,6 +19,266 @@ Anthropic API 反向代理。让**其他电脑**上的 Claude Code 把请求发�
 │ ANTHROPIC_AUTH_TOKEN=客户端令牌│  SSE 流 │ (订阅 OAuth 自动刷新 + 流式回传 + 用量日志) │ ◀───────
 └──────────────────────────────┘ ◀────── └─────────────────────────────────────┘
 ```
+
+---
+
+# 🚀 快速部署(Docker Compose + GHCR,推荐)
+
+镜像由 GitHub Actions 在**打版本标签时**构建并发布到 **GHCR(GitHub Container Registry)**:`ghcr.io/shimmerjordan/cc-trans`。
+部署只需**下载一个 compose 文件 + 一条命令**,不用 clone、不用本地构建。**首次启动自动生成配置、客户端令牌和管理员密码。**
+
+支持 `linux/amd64` 与 `linux/arm64`(x86 服务器、树莓派、ARM 云主机、Apple Silicon 都能直接跑)。
+
+### 前置条件
+
+1. 装好 **Docker**(23+,自带 compose)。
+2. **订阅模式必备**:在这台宿主机上用 Claude Code 登录过订阅 —— 即 `~/.claude/.credentials.json` 存在。
+   ```bash
+   claude   # 登录一次(Pro/Max/Team),之后 cc-trans 会转发这份登录态并自动刷新 token
+   ls ~/.claude/.credentials.json   # 确认文件在
+   ```
+   > 没有订阅、想用官方 API Key / 第三方网关?也可以 —— 部署完到管理台「设置 → 本地 AI 订阅」切成静态密钥模式即可。
+
+### 三步部署
+
+```bash
+mkdir -p ~/cc-trans && cd ~/cc-trans
+
+# 1. 下载 compose 文件
+curl -fsSL -O https://raw.githubusercontent.com/shimmerjordan/cc-trans/main/docker-compose.yml
+
+# 2. 拉镜像并启动(镜像已预构建,秒级)
+docker compose up -d
+
+# 3. 看首启日志 —— 客户端令牌和管理员密码都在里面(请立刻保存)
+docker compose logs
+```
+
+> 镜像是公开的,**不需要 `docker login`**。若提示 `denied`/`unauthorized`,说明包还是私有状态,见下方「维护者:首次发布后把包设为 Public」。
+
+### 手动 pull(不用 compose 也行)
+
+```bash
+docker pull ghcr.io/shimmerjordan/cc-trans:latest
+
+docker run -d --name cc-trans -p 8787:8787 \
+  -v "$PWD/data:/app/data" \
+  -v "$HOME/.claude:/home/node/.claude" \
+  -e CC_TRANS_CONFIG=/app/data/config.json \
+  -e CC_TRANS_OAUTH_CREDENTIALS=/home/node/.claude/.credentials.json \
+  --restart unless-stopped \
+  ghcr.io/shimmerjordan/cc-trans:latest
+```
+
+可用 tag:`latest`(最新正式版)、`0.2.0` / `0.2`(精确版本 / 次版本线)、`sha-<短提交号>`(精确到某次提交)。
+
+### 从源码构建(改了代码 / 需要上游代理)
+
+```bash
+git clone https://github.com/shimmerjordan/cc-trans.git && cd cc-trans
+docker compose -f docker-compose.build.yml up -d --build
+```
+
+### 首启日志里你会看到
+
+```
+  ┌────────────────────────────────────────────────────────────┐
+  │ cc-trans 首次启动:已生成客户端令牌(请立刻保存!)
+  │   cct-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx      ← 远端要用这个
+  └────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │  管理台初始账号: admin
+  │  管理台初始密码: adm-xxxxxxxxxxxx                          ← 登录管理台用这个
+  └──────────────────────────────────────────────────────────┘
+```
+
+### 验证与使用
+
+```bash
+curl http://localhost:8787/health          # 期望 ok:true,并显示订阅类型/到期时间
+```
+
+打开管理台:**http://<你的服务器IP>:8787/admin**(账号 `admin` + 上面的随机密码,登录后可在「设置」里改)。
+
+远端电脑接入:
+
+```bash
+export ANTHROPIC_BASE_URL="http://<你的服务器IP>:8787"
+export ANTHROPIC_AUTH_TOKEN="cct-首启日志里的令牌"
+claude          # 正常使用;工作目录/环境都在远端这台机器
+```
+
+### 常用运维命令
+
+```bash
+docker compose logs -f                       # 实时日志
+docker compose restart                       # 重启
+docker compose down                          # 停止
+docker compose pull && docker compose up -d  # 升级到最新镜像(GHCR)
+```
+
+> 从源码构建的部署改用:`docker compose -f docker-compose.build.yml up -d --build`
+
+### 数据与配置在哪
+
+所有状态都在 **`./data`** 这一个目录里(compose 已挂载),删容器不丢:
+
+| 文件 | 内容 |
+| --- | --- |
+| `data/config.json` | 配置(令牌、管理员密码、上游设置)—— 管理台里的改动都写在这 |
+| `data/metrics.json` | 累计/每日/按客户端统计与成本 |
+| `data/models.json` | 从上游拉取的模型列表 |
+| `data/logs/<日期>/<小时>.jsonl` | 请求日志分块(可在管理台分页查看/按时间段删除,默认保留 14 天) |
+
+### 部署常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| `denied` / `unauthorized` 拉不到镜像 | GHCR 包还是私有。**维护者**按下一节把包设为 Public;或**使用者**先登录:`echo <你的GitHub PAT(read:packages)> \| docker login ghcr.io -u <你的GitHub用户名> --password-stdin` |
+| 日志提示「订阅模式但没找到凭证」 | 宿主机没 `claude` 登录,或 `~/.claude` 没挂进容器。先 `claude` 登录;compose 默认挂载 `${HOME}/.claude`,用 root/其他用户跑时确认这个路径对。 |
+| 想启用上游代理(HTTP/SOCKS5) | 预构建镜像不含 undici。改用源码构建:把 `docker-compose.build.yml` 里 `WITH_UNDICI` 改成 `"1"`,`docker compose -f docker-compose.build.yml up -d --build`,再到管理台「设置 → 上游代理」填地址。 |
+| 源码构建时 Docker Hub 拉不动基础镜像 | 改 `docker-compose.build.yml` 里的 `NODE_IMAGE`(如 `docker.m.daocloud.io/library/node:22-alpine`)后重新 build。 |
+| 端口冲突(8787 被占) | 不用改文件:`CC_TRANS_HOST_PORT=9787 docker compose up -d`。 |
+| 想换成 systemd 裸机部署 | 见下方「一键安装」。 |
+
+---
+
+# 🧪 本地测试与部署
+
+三种由轻到重的本地方式,按你要验证什么来选。
+
+## A. 改代码 / 最快开发循环(纯 Node,不用 Docker)
+
+```bash
+git clone https://github.com/shimmerjordan/cc-trans.git && cd cc-trans
+
+cp config.example.json config.json
+node src/server.js gen-token          # 生成一个客户端令牌,填进 config.json 的 clientTokens
+# 再把 config.json 里 "adminEnabled" 改成 true(管理台;密码首启自动生成并打印)
+
+npm run dev                           # node --watch,改代码自动重启
+```
+
+```bash
+curl http://localhost:8787/health     # 自检
+open http://localhost:8787/admin      # 管理台(账号 admin + 日志里打印的随机密码)
+```
+
+> 订阅模式要求本机 `~/.claude/.credentials.json` 存在(先 `claude` 登录);没有订阅就把 `upstreamAuth` 改成 `apiKey` 并填 `upstreamApiKey`。
+
+## B. 跑自动化测试(不需要真凭证、不碰你的订阅)
+
+```bash
+npm test        # 四套件共 89 项,全部打本地 mock 上游
+```
+
+| 套件 | 覆盖 |
+| --- | --- |
+| `test/smoke.mjs` | 鉴权、凭证注入、转发、SSE 流式、用量嗅探 |
+| `test/overrides.mjs` | 参数下发、动态模型列表(上游拉取/持久化/规则推断) |
+| `test/features.mjs` | CC 身份伪装(默认开 + 显式关)、限流/并发/UA/白名单、成本、OpenAI 兼容端点 |
+| `test/admin2.mjs` | tab URL 路由、订阅配置热应用、日志分页与清理、异常来源标注 |
+
+单跑某一套件:`node test/features.mjs`。
+
+对着**真实服务**做端到端自检(会真的打上游、消耗额度):
+
+```bash
+CC_TRANS_URL=http://localhost:8787 CC_TRANS_TOKEN=cct-你的令牌 npm run test:client
+```
+
+## C. 本地 Docker 部署(和 GHCR 镜像等价)
+
+从源码构建并跑起来:
+
+```bash
+docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker-compose.build.yml logs -f      # 首启令牌 + 管理员密码在这
+```
+
+**本机已有 cc-trans 在跑(systemd 或另一个容器)时会撞 8787 端口**,换个宿主机端口即可:
+
+```bash
+CC_TRANS_HOST_PORT=18787 docker compose -f docker-compose.build.yml up -d --build
+curl http://localhost:18787/health
+```
+
+Docker Hub 拉不动基础镜像时加镜像源:
+
+```bash
+docker compose -f docker-compose.build.yml build \
+  --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:22-alpine
+```
+
+## D. 验证「用户拿到的那份 compose」(镜像还没发布时)
+
+默认 `docker-compose.yml` 是从 GHCR 拉镜像的,本地想先验证这份文件本身:先把本地构建的镜像**打成 GHCR 的名字**,再用 `--pull never` 阻止它去拉远端。
+
+```bash
+# 1. 本地构建,打成 GHCR 镜像名
+docker build -t ghcr.io/shimmerjordan/cc-trans:latest .
+#   (拉不动基础镜像时加 --build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:22-alpine)
+
+# 2. 用用户那份 compose 起来,但不联网拉镜像
+CC_TRANS_HOST_PORT=18787 docker compose up -d --pull never
+docker compose logs
+```
+
+> 不加 `--pull never` 会因为 compose 里的 `pull_policy: always` 去 GHCR 拉,镜像未发布时报 `denied`。
+
+验证完清理:
+
+```bash
+docker compose down
+rm -rf data                                          # 清掉测试生成的配置/指标/日志
+docker rmi ghcr.io/shimmerjordan/cc-trans:latest      # 删掉本地假镜像,避免以后遮住真镜像
+```
+
+## E. 发布新版本(打 Tag 触发)
+
+镜像**只在打版本标签时**发布,平时推 `main` 不会动 `latest`:
+
+```bash
+# 1.(推荐)先把 package.json 版本号对齐,提交推送
+npm version 0.2.0 --no-git-tag-version
+git add -A && git commit -m "release: v0.2.0" && git push
+
+# 2. 打标签触发发布
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+产出的镜像 tag:`0.2.0`、`0.2`、`latest`、`sha-<短提交号>`。
+预发布标签(如 `v0.3.0-rc.1`)只产出 `0.3.0-rc.1` + `sha-xxx`,**不会动 `latest`**。
+
+只想验证流水线本身、不发正式版:Actions 页 → 该 workflow → **Run workflow**,只产出 `sha-<短提交号>` 标签,不影响 `latest`。
+
+---
+
+### 维护者:镜像发布与首次公开(一次性)
+
+镜像由 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml) 发布 —— **打 `v*` 标签**触发(见上方「E. 发布新版本」),或在 Actions 页手动 **Run workflow**(只出 `sha-` 标签)。平时推 `main` 不发布镜像。用仓库自带的 `GITHUB_TOKEN` 推送,**不需要配任何 secret**。
+
+⚠️ **GHCR 包首次推送时默认是私有的**(不继承仓库的 public 属性),必须手动公开一次,之后所有人才能免登录 pull:
+
+1. 打开仓库主页 → 右侧栏 **Packages** → 点 `cc-trans`
+2. 右下角 **Package settings**(⚙)
+3. 拉到底部 **Danger Zone** → **Change visibility** → 选 **Public** → 输入包名确认
+
+顺手建议:在同一页把包 **Link** 到本仓库(Connect repository),这样包页面会显示源码与 README。
+
+发布结果可在 Actions 运行摘要里看到具体 tag;镜像地址:
+
+```
+ghcr.io/shimmerjordan/cc-trans:latest         # 最新正式版(打 v* 标签时更新)
+ghcr.io/shimmerjordan/cc-trans:0.2.0          # 精确版本
+ghcr.io/shimmerjordan/cc-trans:0.2            # 次版本线
+ghcr.io/shimmerjordan/cc-trans:sha-abc1234    # 精确提交(手动 Run workflow 也会产出)
+```
+
+---
+
+# 裸机部署(Node.js)
 
 ## 1. 安装
 
@@ -118,10 +379,11 @@ http://<本机IP>:8787/admin
 
 - **概览**:分「服务信息」「订阅用量」「流量统计」三节;订阅用量含 5 小时 / 7 天窗口的已用/剩余进度条(优先取与 Claude Code `/usage` 同源的订阅用量接口,取不到时回落到最近一次转发响应里的 `anthropic-ratelimit-*` 限额头);流量含总请求(累计)/今日请求/错误/成功率/**累计 token 消耗**(输入/输出/缓存读写),以及**折线图**(最近 30 分钟每分钟请求数)、**环形图**(请求按客户端分布)和**柱状图**(最近 14 天每日请求数)。
 - **客户端**:每个令牌的请求数、错误数、输入/输出/缓存 token 累计、最近活跃;一键**生成新令牌**(明文只显示一次,自动写回 config.json)、**吊销令牌**(立即失效);每个客户端可单独**参数下发**(见下)。
-- **模型/参数**:内置 Claude 模型目录(各模型的 temperature/thinking/effort 支持情况与订阅门禁说明),可一键**从上游拉取订阅实际可用的模型列表**——发现目录外新模型即提示,到「客户端」页下发给对应客户端就是手动升级;附「可传入参数说明」。
+- **模型/参数**:模型列表**不写死在代码里** —— 一键「从上游拉取并更新列表」即用订阅**实际可用的模型**替换列表并持久化到 `data/models.json`(重启保留),提示本次新增/移除了哪些;也可手动补/移除单个模型 id。各模型的 temperature/thinking/effort 规则由 **模型 id 自动推断**(上游出了新模型如 `claude-opus-4-9` 也能立刻识别到正确规则,无需改代码;完全不认识的 id 会标注「?规则推断」并按最保守规则处理)。附「可传入参数说明」。
 - **参数下发(按客户端)**:请求转发前自动改写该客户端的 `/v1/messages` 请求体,支持:**强制模型**(把客户端请求的模型改写为指定模型)、**thinking 覆盖**(adaptive/disabled,Fable 5 自动降级为移除)、**effort 注入**(`output_config.effort`)、**注入 Claude Code system 前缀**(非 Haiku 模型过订阅门禁,已有前缀则不动)、**清洗新模型不支持的参数**(Opus 4.7+/Sonnet 5/Fable 5 上删除 temperature/top_p/top_k、`thinking:enabled`→`adaptive`,避免 400)。全部默认关闭(纯透传);对合规请求(真实 Claude Code)开启也是无操作;给自研客户端接订阅时建议开启后两项。改动写回 config.json 并立即生效,日志会打印每次改写摘要。
-- **实时日志**:SSE 实时推送每条请求(方法/路径/状态/耗时/模型/用量/客户端),含 401、429 等异常。
-- **设置**:修改管理台密码。
+- **实时日志**:分块持久化 + **分页浏览**(倒序、关键字/仅异常过滤)+ **按时间段删除**(N 天前 / 时间区间 / 全部)+ 自动过期;第一页可实时追加(SSE)。每行带来源 IP/UA。
+- **设置**:**本地 AI 订阅配置**(订阅 OAuth ↔ 静态密钥切换、凭证路径检测、上游地址、代理,保存即热应用)+ 修改管理台密码。
+- **每个页面一个 URL**:`/admin/overview`、`/admin/clients`、`/admin/models`、`/admin/logs`、`/admin/settings`,可直达/刷新/收藏/前进后退。
 
 设计与安全:
 - 挂在同端口的 `/admin`,与 `/v1/*` 代理流量互不干扰;账号密码登录,与客户端令牌无关。
@@ -132,10 +394,15 @@ http://<本机IP>:8787/admin
 
 ## 进阶能力(借鉴 claude-relay-service)
 
-以下能力均**默认关闭 / 不影响现有透传流量**,按需在 config.json 的 `clientTokens[].overrides` 或管理台「客户端 → 参数」里逐客户端开启,改完立即生效。
+下列能力在 config.json 的 `clientTokens[].overrides` 或管理台「客户端 → 参数」里逐客户端配置,改完立即生效。
+
+> **订阅兼容三项(身份伪装 / system 前缀注入 / 新模型参数清洗)对所有客户端默认开启** —— 让任意客户端(含自研)接订阅开箱即稳。想对某个客户端关掉,在管理台取消勾选即可(存为显式 `false` 覆盖默认)。其余能力(限流、白名单等)默认关闭。
+> 其中前两项只在**订阅 OAuth** 模式下生效:apiKey 模式(官方密钥/第三方网关)往用户 `system` 里塞 "You are Claude Code" 只会白改提示词、毫无收益,因此自动跳过。
 
 ### 兼容性:Claude Code 身份伪装(`spoofClaudeCode`)
-订阅 OAuth 门禁不只看 `system` 前缀,还看整套 Claude Code 客户端指纹。开启后 cc-trans 转发时把请求头补成完整 Claude Code 身份:`User-Agent: claude-cli/…`、`x-app: cli`、`accept-encoding: identity`,以及 `anthropic-beta` 四件套(`oauth-2025-04-20` + `claude-code-20250219` + `interleaved-thinking-2025-05-14` + `fine-grained-tool-streaming-2025-05-14`;Haiku 用精简集)。**自研客户端(非真 Claude Code)走订阅时建议开启,配合 `injectClaudeCodeSystem` + `stripUnsupported` 显著减少脱敏 429/门禁。** 对真实 Claude Code 流量为无操作。
+订阅 OAuth 门禁不只看 `system` 前缀,还看整套 Claude Code 客户端指纹。开启后 cc-trans 转发时把请求头补成完整 Claude Code 身份:`User-Agent: claude-cli/…`、`x-app: cli`、`accept-encoding: identity`,以及 `anthropic-beta` 四件套(`oauth-2025-04-20` + `claude-code-20250219` + `interleaved-thinking-2025-05-14` + `fine-grained-tool-streaming-2025-05-14`;Haiku 用精简集)。**已默认开启**(与 `injectClaudeCodeSystem` + `stripUnsupported` 一起),显著减少自研客户端走订阅时的脱敏 429/门禁。对真实 Claude Code 流量为无操作。
+
+> 实测要点:门禁对 system 前缀是**块级精确匹配** —— 必须是 `[{前缀块}, {你的内容块}]` 两个独立块,把前缀和内容拼在同一个字符串里会被拒。cc-trans 的注入已按此实现。
 
 ### 安全:限流 / 并发 / 客户端限制 / 模型白名单(逐令牌)
 - `rateLimitRequests` + `rateLimitWindowSec`:滑动窗口请求数上限,超限返回带 `Retry-After` 的 429。
@@ -165,18 +432,31 @@ export OPENAI_API_KEY="cct-你的客户端令牌"
 ### 健康检查
 `GET /health`(或 `/healthz`,无需令牌)返回:存活、版本、运行时长、上游/代理/凭证状态、订阅 token 到期分钟、内存 RSS、数据目录占用。供 Docker/systemd/k8s 探针与运维用。
 
-### 日志与磁盘控制
-默认日志走 stdout(交给 journald / docker 轮转)。需要独立文件日志时配 `logFile` + `logMaxBytes` + `logMaxFiles`:cc-trans 自动按大小轮转、只保留 N 个,控制磁盘占用。指标文件 `data/metrics.json` 本身有界(每日聚合最多保留 62 天)。
+### 请求日志:分块存储 + 分页 + 按时间段删除
+请求日志按 **日期/小时分块**持久化到 `<data>/logs/<日期>/<小时>.jsonl`(追加写,不建索引):
 
-## Docker 部署
+- **分页查询**:管理台「实时日志」页分页浏览(每页 100 条,倒序),支持按关键字(路径/模型/客户端/IP/UA)、仅异常(≥400)过滤;第一页仍可实时追加新请求(可关)。
+- **按时间段删除**:「清理日志」支持三种方式 —— 删除早于 N 天前的 / 删除指定时间区间 / 清空全部。整块命中就删文件,部分命中则重写该块。删日志**不影响**累计统计数字。
+- **自动过期**:超过 `logRetentionDays`(默认 14 天)的日期目录自动删除,启动时清一次、之后每 6 小时清一次,磁盘占用可控。
+- 页脚实时显示存储概况(块数 / 天数 / MB / 保留天数)。
 
-```bash
-cp config.example.json config.json   # 填好配置(订阅模式确保本机已 claude 登录)
-docker compose up -d --build          # restart=unless-stopped 即开机自启;含健康检查 + 日志轮转
-docker compose logs -f
-```
+进程日志(stdout)另有一套:默认交给 journald / docker 轮转;需要独立文件日志时配 `logFile` + `logMaxBytes` + `logMaxFiles`(按大小轮转,只留 N 个)。指标文件 `metrics.json` 本身有界(每日聚合最多 62 天)。
 
-compose 已挂载 `config.json`、`data/`、`~/.claude`(订阅凭证,读写以自动刷新);日志用 json-file 限制单文件 10MB、最多 5 个。需要上游代理时把 compose 里 `WITH_UNDICI` 改成 `"1"` 重新 build。
+### 异常请求来源标注
+未授权尝试(未携带令牌 / 令牌不匹配)会在「客户端」页的**异常来源**表里单列,并标注**来源 IP、User-Agent、最近请求路径**;多个来源 IP 会带计数(悬停看明细)。反代场景自动读 `X-Forwarded-For` / `X-Real-IP` 取真实来源。已配置客户端的「错误」数字也可悬停查看最近一次异常的状态码、时间与来源。
+
+### 管理台 URL(每个页面一个地址)
+`/admin/overview`、`/admin/clients`、`/admin/models`、`/admin/logs`、`/admin/settings` —— 可直接访问、刷新、收藏、前进/后退,标签页切换会同步地址栏。`/admin` 等价于概览。
+
+### 设置里配置本地 AI 订阅
+管理台「设置 → 本地 AI 订阅」可在线完成(**保存即热应用,不用重启**):
+
+- 切换鉴权方式:**订阅 OAuth**(用本机 Claude 登录态)↔ **静态密钥**(官方 API Key / 第三方网关)
+- 改订阅凭证文件路径,并可「检测」某路径是否可用(显示订阅类型、token 到期、能否自动刷新)
+- 改上游地址、上游代理
+- 切换到订阅模式前会先校验凭证可用,不可用则拒绝保存并保持原状(不会把服务改坏)
+
+密钥只以掩码回显,明文不出服务端;想清空已存密钥填 `__clear__` 保存。
 
 ## 一键安装
 
@@ -315,7 +595,9 @@ cc-trans/
 │   ├── limits.js          # 内存态限流 / 并发控制
 │   ├── openai_compat.js   # OpenAI /v1/chat/completions ↔ Anthropic 翻译(含 SSE 流式)
 │   ├── upstream.js        # 上游连接层:连接池 + 可选代理(HTTP/HTTPS/SOCKS5)
-│   ├── logger.js          # 可选滚动文件日志(自动轮转)+ 目录占用统计
+│   ├── logger.js          # 可选滚动进程日志(自动轮转)+ 目录占用统计
+│   ├── logstore.js        # 请求日志分块存储:按日期/小时分块 + 分页查询 + 按时间删除 + 自动过期
+│   ├── model_store.js     # 模型列表持久化(上游拉取结果)+ 版本排序/latest 标记
 │   ├── metrics.js         # 指标:累计/每日/按客户端聚合(持久化)+ 成本 + 实时订阅
 │   ├── admin.js           # Web 管理台后端:登录鉴权 + API + 托管页面
 │   └── admin-ui.html      # 管理台前端(单文件,原生 JS,零外部依赖)
@@ -325,11 +607,15 @@ cc-trans/
 │   └── uninstall-service.sh
 ├── test/
 │   ├── smoke.mjs          # mock 上游的端到端单测
-│   ├── overrides.mjs      # 参数下发 / 模型目录测试
-│   ├── features.mjs       # 身份伪装 / 限流 / 成本 / OpenAI 兼容测试
+│   ├── overrides.mjs      # 参数下发 / 动态模型列表测试
+│   ├── features.mjs       # 身份伪装(默认开)/ 限流 / 成本 / OpenAI 兼容测试
+│   ├── admin2.mjs         # tab URL 路由 / 订阅配置热应用 / 日志分页与清理 / 异常来源标注
 │   └── client.mjs         # 客户端自检(npm run test:client)
-├── Dockerfile             # 容器镜像(零依赖;WITH_UNDICI=1 才装 undici 供代理用)
-├── docker-compose.yml     # 一键 docker 部署(自启 + 健康检查 + 日志轮转)
+├── .github/workflows/docker-publish.yml  # CI:打 v* 标签时构建多架构镜像并发布到 GHCR
+├── Dockerfile             # 容器镜像(零依赖;WITH_UNDICI=1 才装 undici 供代理用;NODE_IMAGE 可换镜像源)
+├── deploy/docker-entrypoint.sh  # 容器首启引导:自动生成 config.json + 客户端令牌 + 管理员密码
+├── docker-compose.yml     # 主部署:从 GHCR 拉预构建镜像(下载这一个文件即可)
+├── docker-compose.build.yml     # 备用:从源码本地构建(改代码 / 需要代理支持时)
 ├── install.sh             # 一键安装(引导配置 + systemd/docker)
 ├── config.example.json    # 配置模板
 └── config.json            # 实际配置(.gitignore 忽略,含令牌/密钥)

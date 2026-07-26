@@ -1,0 +1,99 @@
+# 构建镜像并发布到 GHCR(GitHub Container Registry)。
+# 发布地址: ghcr.io/<owner>/cc-trans
+#
+# 触发:
+#   1) 打版本标签(推荐):git tag v0.2.0 && git push origin v0.2.0
+#      → 发布 0.2.0 / 0.2 / latest / sha-xxxxxxx
+#   2) 手动运行(Actions 页 Run workflow):只发 sha-xxxxxxx,不动 latest —— 适合验证流水线本身
+#   平时推 main 【不会】发布镜像,避免每次提交都动 latest。
+#
+# 用仓库自带的 GITHUB_TOKEN 推送,不需要配任何 secret。
+#
+# ⚠️ 首次发布后需手动把包设为 Public(GHCR 包默认私有),否则别人 pull 要先 docker login:
+#    仓库右侧 Packages → cc-trans → 右下 Package settings(⚙) → Danger Zone → Change visibility → Public
+name: Publish Docker image to GHCR
+
+on:
+  push:
+    tags: ['v*'] # 只在打版本标签时发布
+  workflow_dispatch: # 手动跑一次(只产出 sha- 标签,不影响 latest)
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # owner/cc-trans
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # 推送到 GHCR 必需
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 多架构构建(amd64 + arm64):树莓派 / ARM 云主机 / Apple Silicon 也能直接用。
+      # 镜像里只 COPY 源码、不编译原生依赖,所以 QEMU 交叉构建很快。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 生成 tag:
+      #   打 v1.2.3       → 1.2.3、1.2、latest、sha-xxxxxxx
+      #   打 v1.2.3-rc.1  → 1.2.3-rc.1、sha-xxxxxxx(预发布不动 latest)
+      #   手动运行(无 tag)→ 只有 sha-xxxxxxx(semver 不产出,latest=auto 因此不加)
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=cc-trans
+            org.opencontainers.image.description=零依赖 Anthropic API 反向代理(转发本机 Claude 订阅)+ Web 管理台
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 复用上次构建缓存,加快后续发布
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 供应链溯源证明(可选能力;失败不影响镜像已发布)
+      - name: Attest build provenance
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          echo "### 镜像已发布 🎉" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "拉取部署:\`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY

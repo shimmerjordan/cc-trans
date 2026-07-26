@@ -15,7 +15,7 @@ export function dayKey(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export function createMetrics({ maxRecent = 500, persistFile = null, log = () => {} } = {}) {
+export function createMetrics({ maxRecent = 500, persistFile = null, logStore = null, log = () => {} } = {}) {
   const startedAt = Date.now();
   let since = startedAt; // 累计统计起点(持久化后跨重启)
   let totals = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
@@ -115,11 +115,36 @@ export function createMetrics({ maxRecent = 500, persistFile = null, log = () =>
     bumpAggregate(c, e, u);
     c.lastSeen = e.ts;
     c.lastStatus = e.status;
+    // 来源标注(异常请求排查用):记录最近一次的来源 IP / UA / 路径
+    if (e.ip) c.lastIp = e.ip;
+    if (e.ua) c.lastUa = e.ua;
+    if (e.path) c.lastPath = e.path;
+    if (isError(e.status)) {
+      c.lastErrorAt = e.ts;
+      c.lastErrorStatus = e.status;
+      if (e.ip) c.lastErrorIp = e.ip;
+      if (e.ua) c.lastErrorUa = e.ua;
+      if (e.path) c.lastErrorPath = e.path;
+      // 来源 IP 计数(便于看清异常请求集中来自谁)
+      if (e.ip) {
+        c.errorIps = c.errorIps || {};
+        c.errorIps[e.ip] = (c.errorIps[e.ip] || 0) + 1;
+        // 控制体积:只留 top 10
+        const keys = Object.keys(c.errorIps);
+        if (keys.length > 10) {
+          const sorted = keys.sort((a, b) => c.errorIps[b] - c.errorIps[a]).slice(0, 10);
+          const trimmed = {};
+          for (const k of sorted) trimmed[k] = c.errorIps[k];
+          c.errorIps = trimmed;
+        }
+      }
+    }
 
     dirty = true;
 
     recent.push(e);
     if (recent.length > maxRecent) recent.shift();
+    if (logStore) logStore.append(e); // 分块持久化(供分页查询/按时间删除)
 
     for (const cb of subscribers) {
       try {

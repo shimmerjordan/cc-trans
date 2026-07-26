@@ -17,7 +17,8 @@ const TOK_CONC = 'cct-conc';
 const TOK_UA = 'cct-ua';
 const TOK_WL = 'cct-wl';
 const TOK_OAI = 'cct-oai';
-const TOK_PLAIN = 'cct-plain';
+const TOK_PLAIN = 'cct-plain'; // 无任何 overrides —— 应吃到全局默认(伪装/注入/清洗默认开)
+const TOK_OFF = 'cct-off'; // 显式关闭三项 —— 验证三态可覆盖默认
 
 fs.writeFileSync(CFG, JSON.stringify({
   port: PORT, host: '127.0.0.1',
@@ -34,6 +35,7 @@ fs.writeFileSync(CFG, JSON.stringify({
     { token: TOK_WL, name: 'wl', overrides: { allowedModels: ['claude-haiku-4-5-20251001'] } },
     { token: TOK_OAI, name: 'oai' },
     { token: TOK_PLAIN, name: 'plain' },
+    { token: TOK_OFF, name: 'off', overrides: { spoofClaudeCode: false, injectClaudeCodeSystem: false, stripUnsupported: false } },
   ],
 }, null, 2));
 fs.writeFileSync(path.join(TMP, 'creds.json'), JSON.stringify({
@@ -92,9 +94,19 @@ async function main() {
     ck('A spoof: anthropic-beta 含 claude-code-20250219 与 oauth', /claude-code-20250219/.test(lastHeaders['anthropic-beta'] || '') && /oauth-2025-04-20/.test(lastHeaders['anthropic-beta'] || ''), lastHeaders['anthropic-beta']);
     ck('A spoof: accept-encoding=identity', (lastHeaders['accept-encoding'] || '') === 'identity');
 
-    // 无伪装的普通令牌:UA 保持客户端原样(不是 claude-cli)
-    await msg(TOK_PLAIN, {}, { 'user-agent': 'my-app/1.0' });
-    ck('普通令牌不改 UA', lastHeaders['user-agent'] === 'my-app/1.0', lastHeaders['user-agent']);
+    // 默认开启:没配任何 overrides 的普通令牌,也应吃到伪装 + 注入 + 清洗
+    await msg(TOK_PLAIN, { temperature: 0.7, system: '我的助手' }, { 'user-agent': 'my-app/1.0' });
+    ck('默认开启: 普通令牌 UA 也被伪装', /^claude-cli\//.test(lastHeaders['user-agent'] || ''), lastHeaders['user-agent']);
+    let pb = JSON.parse(lastBody);
+    ck('默认开启: 普通令牌注入 CC 前缀', Array.isArray(pb.system) && pb.system[0].text.startsWith('You are Claude Code'), JSON.stringify(pb.system));
+    ck('默认开启: 普通令牌清洗 temperature(新家族)', !('temperature' in pb));
+
+    // 三态:显式 false 覆盖全局默认 —— UA 保持客户端原样、不注入前缀、不清洗
+    await msg(TOK_OFF, { temperature: 0.7, system: '我的助手' }, { 'user-agent': 'my-app/1.0' });
+    ck('显式关闭: UA 保持原样', lastHeaders['user-agent'] === 'my-app/1.0', lastHeaders['user-agent']);
+    pb = JSON.parse(lastBody);
+    ck('显式关闭: 不注入前缀', pb.system === '我的助手', JSON.stringify(pb.system));
+    ck('显式关闭: 不清洗 temperature', pb.temperature === 0.7);
 
     // B 限流:第 3 次应 429
     const r1 = await msg(TOK_RL); const r2 = await msg(TOK_RL); const r3 = await msg(TOK_RL);
@@ -126,9 +138,11 @@ async function main() {
     const oai = await oaiRes.json();
     ck('D OpenAI非流式: 结构正确', oai.object === 'chat.completion' && oai.choices[0].message.content === 'pong' && oai.choices[0].finish_reason === 'stop', JSON.stringify(oai).slice(0, 120));
     ck('D OpenAI非流式: usage 映射', oai.usage.prompt_tokens === 10 && oai.usage.completion_tokens === 5);
-    // 请求体已翻译:system 提到顶层
+    // 请求体已翻译:OpenAI 的 system 消息提到 Anthropic 顶层 system;默认注入使其成为 [CC前缀, 原文] 块
     const tb = JSON.parse(lastBody);
-    ck('D 翻译: system 提到顶层', tb.system === '你是助手' && tb.messages[0].role === 'user');
+    ck('D 翻译: system 提到顶层(并按默认注入 CC 前缀)',
+      Array.isArray(tb.system) && tb.system[0].text.startsWith('You are Claude Code') && tb.system[1].text === '你是助手' && tb.messages[0].role === 'user',
+      JSON.stringify(tb.system));
 
     // D OpenAI 兼容:流式
     const stRes = await fetch(base + '/v1/chat/completions', {

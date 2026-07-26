@@ -2,11 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { CATALOG, CATALOG_VERSION } from './models.js';
+import { CATALOG, CATALOG_VERSION, DEFAULT_OVERRIDES } from './models.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(__dirname, 'admin-ui.html');
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 会话 12 小时
+
+// 每个 tab 对应一个 URL:这些路径都返回单页应用本体(前端据 pathname 选中对应 tab)
+export const TABS = ['overview', 'clients', 'models', 'logs', 'settings'];
+const TAB_PATHS = new Set(TABS.map((t) => '/' + t));
 
 function sendJson(res, status, obj) {
   const data = Buffer.from(JSON.stringify(obj));
@@ -34,7 +38,9 @@ function idOf(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 12);
 }
 
-export function createAdmin({ prefix, credentials, config, oauth, metrics, tokenAdmin, maskToken, log }) {
+export function createAdmin({ prefix, credentials, config, getOauth, metrics, tokenAdmin, modelStore, logStore, upstreamAdmin, maskToken, log }) {
+  // oauth provider 可被管理台热重建 —— 每次用时通过 getOauth() 取当前实例,别缓存
+  const oauthNow = () => (typeof getOauth === 'function' ? getOauth() : null);
   const sessions = new Map(); // sessionToken -> expiresAt
   let ui = '';
   try {
@@ -65,8 +71,8 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
   }
 
   function statusPayload() {
-    let upstreamCred = config.upstreamAuth;
     let oauthExpiresInMin = null;
+    const oauth = oauthNow();
     if (oauth) {
       try {
         const info = oauth.peek ? oauth.peek() : null;
@@ -102,6 +108,7 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
   const USAGE_TTL_MS = 10 * 60 * 1000;
   let usageCache = { ts: 0, data: null };
   async function fetchSubscriptionUsage(force = false) {
+    const oauth = oauthNow();
     if (!oauth) return { available: false, reason: '非订阅 OAuth 模式' };
     if (!force && usageCache.data && Date.now() - usageCache.ts < USAGE_TTL_MS) return usageCache.data;
     try {
@@ -131,8 +138,10 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
     const u = new URL(req.url, 'http://localhost');
     const sub = u.pathname.slice(prefix.length) || '/';
 
-    // 页面(无需登录,页面本身不含敏感数据;数据接口才鉴权)
-    if ((sub === '/' || sub === '') && req.method === 'GET') {
+    // 页面(无需登录,页面本身不含敏感数据;数据接口才鉴权)。
+    // 每个 tab 一个 URL:/admin、/admin/overview、/admin/clients、/admin/models、/admin/logs、/admin/settings
+    // 都返回同一份单页,前端按 pathname 决定初始 tab(刷新/收藏/后退都能保持)。
+    if (req.method === 'GET' && (sub === '/' || sub === '' || TAB_PATHS.has(sub.replace(/\/+$/, '')))) {
       const body = Buffer.from(ui, 'utf8');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
       return res.end(body);
@@ -171,6 +180,25 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       return sendJson(res, 200, { ...data, cachedAt: usageCache.ts || null });
     }
 
+    // 本地 AI 订阅 / 上游凭证:读当前状态
+    if (sub === '/api/upstream' && req.method === 'GET') {
+      return sendJson(res, 200, upstreamAdmin ? upstreamAdmin.read() : { canManage: false });
+    }
+
+    // 探测某个凭证文件路径是否可用(前端"检测"按钮)
+    if (sub === '/api/upstream/probe' && req.method === 'POST') {
+      const b = await readJson(req);
+      return sendJson(res, 200, upstreamAdmin ? upstreamAdmin.probe(b.path) : { ok: false, error: '不可用' });
+    }
+
+    // 保存并热应用上游设置(切换订阅/密钥、凭证路径、上游地址、代理)
+    if (sub === '/api/upstream' && req.method === 'POST') {
+      if (!upstreamAdmin) return sendJson(res, 400, { ok: false, error: '不可用' });
+      const b = await readJson(req);
+      const r = await upstreamAdmin.apply(b);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
     if (sub === '/api/password' && req.method === 'POST') {
       const b = await readJson(req);
       const r = credentials.changePassword(b.oldPassword || '', b.newPassword || '');
@@ -190,7 +218,14 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       }));
       const configuredNames = new Set(tokenAdmin.list().map((t) => t.name));
       const others = snap.clients.filter((c) => !configuredNames.has(c.name));
-      return sendJson(res, 200, { canManage: tokenAdmin.canManage(), tokens, others });
+      return sendJson(res, 200, {
+        canManage: tokenAdmin.canManage(),
+        tokens,
+        others,
+        // 全局默认下发(前端据此把"未设置"显示为默认开启)
+        defaults: DEFAULT_OVERRIDES,
+        subscriptionMode: !!oauthNow(),
+      });
     }
 
     if (sub === '/api/tokens' && req.method === 'POST') {
@@ -212,15 +247,17 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       return sendJson(res, 200, { ok: true, overrides: saved });
     }
 
-    // 模型目录(内置)+ 参数规则说明
+    // 模型列表(来自上游拉取的持久化结果;未拉取过则内置种子)+ 按 id 推断的参数规则
     if (sub === '/api/models' && req.method === 'GET') {
-      return sendJson(res, 200, { catalogVersion: CATALOG_VERSION, catalog: CATALOG });
+      const l = modelStore.list();
+      return sendJson(res, 200, { catalogVersion: CATALOG_VERSION, ...l, catalog: l.models });
     }
 
-    // 从上游拉取实际可用模型列表(手动"检查更新");OAuth 订阅或静态密钥均尝试
+    // 从上游拉取实际可用模型列表 → 替换并持久化(手动"更新列表")
     if (sub === '/api/models/refresh' && req.method === 'POST') {
       try {
         const headers = { 'anthropic-version': '2023-06-01' };
+        const oauth = oauthNow();
         if (oauth) {
           headers['authorization'] = `Bearer ${await oauth.getAccessToken()}`;
           headers['anthropic-beta'] = oauth.beta;
@@ -233,16 +270,32 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
         const text = await r.text();
         if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 160)}`);
         const j = JSON.parse(text);
-        const known = new Set(CATALOG.map((m) => m.id));
-        const live = (j.data || []).map((m) => ({
-          id: m.id,
-          displayName: m.display_name || m.id,
-          inCatalog: known.has(m.id),
-        }));
-        return sendJson(res, 200, { ok: true, fetchedAt: Date.now(), live });
+        const entries = (j.data || []).map((m) => ({ id: m.id, displayName: m.display_name || m.id }));
+        if (!entries.length) throw new Error('上游返回空列表');
+        const { models, added, removed } = modelStore.replaceFromUpstream(entries);
+        log(`模型列表已从上游更新: 共 ${models.length} 个${added.length ? `,新增 ${added.join(', ')}` : ''}${removed.length ? `,移除 ${removed.join(', ')}` : ''}`);
+        return sendJson(res, 200, { ok: true, fetchedAt: Date.now(), models, added, removed });
       } catch (err) {
         return sendJson(res, 200, { ok: false, error: err.message });
       }
+    }
+
+    // 手动补一个模型(上游 /v1/models 不可用时的兜底)
+    if (sub === '/api/models/add' && req.method === 'POST') {
+      const b = await readJson(req);
+      const r = modelStore.addManual(b.id);
+      if (!r) return sendJson(res, 400, { error: '模型 id 不能为空' });
+      log(`模型列表手动新增: ${b.id}`);
+      return sendJson(res, 200, { ok: true, models: r.models, added: r.added });
+    }
+
+    // 从列表移除某个模型
+    if (sub === '/api/models/remove' && req.method === 'POST') {
+      const b = await readJson(req);
+      const r = modelStore.remove(String(b.id || ''));
+      if (!r) return sendJson(res, 404, { error: '列表中没有该模型' });
+      log(`模型列表移除: ${b.id}`);
+      return sendJson(res, 200, { ok: true, models: r.models });
     }
 
     if (sub === '/api/tokens/revoke' && req.method === 'POST') {
@@ -255,9 +308,49 @@ export function createAdmin({ prefix, credentials, config, oauth, metrics, token
       return sendJson(res, ok ? 200 : 404, { ok });
     }
 
+    // 日志查询:有分块存储时走持久化分页;否则回落内存态最近日志
     if (sub === '/api/logs' && req.method === 'GET') {
-      const limit = Math.min(Number(u.searchParams.get('limit')) || 200, 500);
-      return sendJson(res, 200, { logs: metrics.recentLogs(limit) });
+      const q = u.searchParams;
+      const limit = Math.min(Number(q.get('limit')) || 100, 500);
+      const offset = Math.max(0, Number(q.get('offset')) || 0);
+      if (!logStore || !logStore.enabled) {
+        const all = metrics.recentLogs(500);
+        const page = all.slice().reverse().slice(offset, offset + limit);
+        return sendJson(res, 200, { logs: page, total: all.length, offset, limit, persisted: false });
+      }
+      const filter = {
+        offset,
+        limit,
+        client: q.get('client') || undefined,
+        status: q.get('status') || undefined,
+        errorsOnly: q.get('errorsOnly') === '1',
+        q: q.get('q') || undefined,
+        from: q.get('from') ? Number(q.get('from')) : undefined,
+        to: q.get('to') ? Number(q.get('to')) : undefined,
+      };
+      const r = logStore.query(filter);
+      return sendJson(res, 200, { ...r, offset, limit, persisted: true, stats: logStore.stats() });
+    }
+
+    // 日志存储概况(块数/占用/保留天数)
+    if (sub === '/api/logs/stats' && req.method === 'GET') {
+      return sendJson(res, 200, logStore ? logStore.stats() : { enabled: false });
+    }
+
+    // 按时间段删除日志:{ before } 或 { from, to }(毫秒时间戳);也支持 days=N 删更早的
+    if (sub === '/api/logs/prune' && req.method === 'POST') {
+      if (!logStore || !logStore.enabled) return sendJson(res, 400, { error: '当前未启用日志分块存储(需 config.json 模式)' });
+      const b = await readJson(req);
+      let before = b.before != null ? Number(b.before) : null;
+      if (before == null && b.days != null) before = Date.now() - Number(b.days) * 86400_000;
+      const from = b.from != null ? Number(b.from) : null;
+      const to = b.to != null ? Number(b.to) : null;
+      if (before == null && (from == null || to == null)) {
+        return sendJson(res, 400, { error: '需要 before / days,或 from + to' });
+      }
+      const r = logStore.prune({ before, from, to });
+      log(`管理台清理日志: ${JSON.stringify({ before, from, to })} → 删除 ${r.removedEntries} 条 / ${r.removedBlocks} 块`);
+      return sendJson(res, 200, { ok: true, ...r, stats: logStore.stats() });
     }
 
     if (sub === '/api/logs/stream' && req.method === 'GET') {

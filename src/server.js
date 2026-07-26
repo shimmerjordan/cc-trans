@@ -5,12 +5,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { loadConfig, cleanToken } from './config.js';
-import { createOAuthProvider } from './oauth.js';
+import { createOAuthProvider, defaultCredentialsPath, inspectCredentials } from './oauth.js';
 import { createMetrics } from './metrics.js';
 import { createAdmin } from './admin.js';
 import {
   applyOverrides,
   normalizeOverrides,
+  effectiveOverrides,
   clientAllowed,
   modelAllowed,
   claudeCodeBetas,
@@ -20,6 +21,8 @@ import { createLimiter } from './limits.js';
 import { initUpstream } from './upstream.js';
 import { handleOpenAiCompat } from './openai_compat.js';
 import { createFileLogger, dirSize } from './logger.js';
+import { createModelStore } from './model_store.js';
+import { createLogStore } from './logstore.js';
 
 function generateClientToken() {
   return 'cct-' + crypto.randomBytes(24).toString('base64url');
@@ -92,22 +95,47 @@ let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.nam
 const tokenMap = new Map(clientTokens.map((t) => [t.token, t]));
 
 // 订阅 OAuth provider(仅 oauth 模式启用)
-const oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+// let:管理台「上游订阅」可在线切换鉴权方式/凭证路径并热重建,无需重启
+let oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+
+// 状态目录:显式 dataDir 优先(Docker 里指到挂载卷),否则 config.json 同级 data/;
+// 纯环境变量配置模式(无 config.json)则为 null —— 全部退化为内存态。
+const dataDir = config.dataDir
+  ? path.resolve(config.dataDir)
+  : config.__file
+    ? path.join(path.dirname(config.__file), 'data')
+    : null;
+
+// 请求日志分块持久化(<dataDir>/logs/<日期>/<小时>.jsonl),支持分页查询/按时间段删除/自动过期
+const logStore = createLogStore({
+  dir: dataDir ? path.join(dataDir, 'logs') : null,
+  retentionDays: config.logRetentionDays,
+  log,
+});
+if (logStore.enabled) {
+  logStore.sweepRetention();
+  setInterval(() => logStore.sweepRetention(), 6 * 3600_000).unref(); // 每 6 小时清一次过期块
+}
 
 // 指标采集:有 config.json 时把累计/每日聚合持久化到旁边的 data/metrics.json(纯环境变量模式则内存态)
 const metrics = createMetrics({
-  persistFile: config.__file ? path.join(path.dirname(config.__file), 'data', 'metrics.json') : null,
+  persistFile: dataDir ? path.join(dataDir, 'metrics.json') : null,
+  logStore,
   log,
 });
+
+// 模型列表存储:上游拉取结果持久化到 <dataDir>/models.json(列表不写死在代码里)
+const modelStore = createModelStore({ persistFile: dataDir ? path.join(dataDir, 'models.json') : null, log });
 
 // 按客户端限流/并发(内存态)
 const limiter = createLimiter();
 setInterval(() => limiter.sweep(), 300_000).unref();
 
 // 上游连接层(连接池 + 可选代理)。默认直连用内置 fetch;配代理时按需加载 undici。
-const upstream = await initUpstream(config, log);
-const upstreamFetch = upstream.fetch;
-const upstreamDispatcher = upstream.dispatcher;
+// let:管理台改代理后可热重建。
+let upstream = await initUpstream(config, log);
+let upstreamFetch = upstream.fetch;
+let upstreamDispatcher = upstream.dispatcher;
 
 // 原子地把若干字段写回 config.json(保留其它字段/注释)
 function patchConfigFile(patch) {
@@ -127,6 +155,103 @@ function persistClientTokens() {
       ...(t.overrides && Object.keys(t.overrides).length ? { overrides: t.overrides } : {}),
     })),
   });
+}
+
+// ── 上游订阅/凭证的在线配置(管理台「设置 → 本地 AI 订阅」)────────────────
+// 支持:切换鉴权方式(订阅 OAuth / 静态密钥)、改凭证文件路径、上游地址、代理。
+// 保存后写回 config.json 并【热应用】(重建 OAuth provider 与连接层),无需重启。
+const upstreamAdmin = {
+  canManage: () => !!config.__file,
+  // 当前状态(密钥只回掩码,明文不出服务端)
+  read() {
+    const out = {
+      upstreamAuth: config.upstreamAuth,
+      upstreamBaseUrl: config.upstreamBaseUrl,
+      oauthCredentialsPath: config.oauthCredentialsPath,
+      upstreamProxy: config.upstreamProxy || '',
+      hasApiKey: !!config.upstreamApiKey,
+      hasAuthToken: !!config.upstreamAuthToken,
+      apiKeyMask: config.upstreamApiKey ? maskToken(config.upstreamApiKey) : '',
+      authTokenMask: config.upstreamAuthToken ? maskToken(config.upstreamAuthToken) : '',
+      proxyDescribe: upstream.describe,
+      canManage: !!config.__file,
+      defaultCredentialsPath: defaultCredentialsPath(),
+    };
+    // 订阅凭证探测:文件在不在、订阅类型、到期、能否自动刷新
+    out.credentials = inspectLocalCredentials(config.oauthCredentialsPath);
+    return out;
+  },
+  // 探测任意路径的凭证(前端"检测"按钮用)
+  probe(p) {
+    return inspectLocalCredentials(p || config.oauthCredentialsPath);
+  },
+  async apply(patch) {
+    if (!config.__file) return { ok: false, error: '当前用环境变量配置,无法在线修改;请改用 config.json' };
+    const next = {};
+    if (patch.upstreamAuth === 'oauth' || patch.upstreamAuth === 'apiKey') next.upstreamAuth = patch.upstreamAuth;
+    if (typeof patch.upstreamBaseUrl === 'string' && patch.upstreamBaseUrl.trim()) {
+      next.upstreamBaseUrl = patch.upstreamBaseUrl.trim().replace(/\/+$/, '');
+    }
+    if (typeof patch.oauthCredentialsPath === 'string') next.oauthCredentialsPath = patch.oauthCredentialsPath.trim();
+    if (typeof patch.upstreamProxy === 'string') next.upstreamProxy = patch.upstreamProxy.trim();
+    // 密钥:留空=不改;传 "__clear__"=清空
+    for (const [k, field] of [['upstreamApiKey', 'upstreamApiKey'], ['upstreamAuthToken', 'upstreamAuthToken']]) {
+      if (typeof patch[k] === 'string' && patch[k] !== '') {
+        next[field] = patch[k] === '__clear__' ? '' : cleanToken(patch[k]);
+      }
+    }
+
+    const targetAuth = next.upstreamAuth || config.upstreamAuth;
+    const targetCredPath = next.oauthCredentialsPath ?? config.oauthCredentialsPath;
+    const targetKey = next.upstreamApiKey ?? config.upstreamApiKey;
+    const targetToken = next.upstreamAuthToken ?? config.upstreamAuthToken;
+
+    // 生效前校验:订阅模式要有可用凭证;apiKey 模式要有密钥
+    if (targetAuth === 'oauth') {
+      const info = inspectLocalCredentials(targetCredPath || defaultCredentialsPath());
+      if (!info.ok) return { ok: false, error: `订阅凭证不可用:${info.error}(请先在本机 \`claude\` 登录,或改用 apiKey 模式)` };
+    } else if (!targetKey && !targetToken) {
+      return { ok: false, error: 'apiKey 模式需要填 upstreamApiKey 或 upstreamAuthToken 之一' };
+    }
+
+    // 写回 config.json(只写用户显式改动的字段)
+    try {
+      patchConfigFile(next);
+    } catch (err) {
+      return { ok: false, error: '写回 config.json 失败: ' + err.message };
+    }
+    // 热应用到运行时
+    Object.assign(config, next);
+    if (next.oauthCredentialsPath === '') config.oauthCredentialsPath = defaultCredentialsPath();
+    const proxyChanged = 'upstreamProxy' in next;
+    oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+    if (proxyChanged) {
+      upstream = await initUpstream(config, log);
+      upstreamFetch = upstream.fetch;
+      upstreamDispatcher = upstream.dispatcher;
+    }
+    log(`管理台更新上游设置: ${JSON.stringify({ ...next, upstreamApiKey: next.upstreamApiKey ? '(已改)' : undefined, upstreamAuthToken: next.upstreamAuthToken ? '(已改)' : undefined })} → 已热应用`);
+    return { ok: true, state: upstreamAdmin.read() };
+  },
+};
+
+// 读取并体检某个订阅凭证文件(不抛异常)
+function inspectLocalCredentials(p) {
+  const file = p || defaultCredentialsPath();
+  try {
+    const info = inspectCredentials(file);
+    const left = info.expiresAt ? Math.round((info.expiresAt - Date.now()) / 60000) : null;
+    return {
+      ok: true,
+      file,
+      subscriptionType: info.subscriptionType || null,
+      expiresInMin: left,
+      expired: left != null && left <= 0,
+      hasRefresh: !!info.hasRefresh,
+    };
+  } catch (err) {
+    return { ok: false, file, error: err.message };
+  }
 }
 
 // 定长防时序比较
@@ -203,7 +328,19 @@ const adminCredentials = {
 };
 
 const admin = adminOn
-  ? createAdmin({ prefix: ADMIN_PREFIX, credentials: adminCredentials, config, oauth, metrics, tokenAdmin, maskToken, log })
+  ? createAdmin({
+      prefix: ADMIN_PREFIX,
+      credentials: adminCredentials,
+      config,
+      getOauth: () => oauth, // 取当前实例(管理台可热切换订阅/密钥模式)
+      metrics,
+      tokenAdmin,
+      modelStore,
+      logStore,
+      upstreamAdmin,
+      maskToken,
+      log,
+    })
   : null;
 
 // 不向上游转发的请求头(逐跳头 + 客户端凭证,凭证由本机替换)
@@ -308,9 +445,9 @@ function readBody(req) {
 
 // 请求体改写管道:全局 modelMap + 客户端参数下发(强制模型/thinking/effort/门禁前缀/新模型参数清洗)。
 // 仅处理 /v1/messages* 的 JSON 体;无任何改写规则时原样透传(保持字节保真)。
-function applyBodyTransforms(bodyBuffer, req, clientEntry) {
+function applyBodyTransforms(bodyBuffer, req, ov) {
   const map = config.modelMap || {};
-  const ov = (clientEntry && clientEntry.overrides) || {};
+  ov = ov || {};
   const pathOnly = (req.url || '').split('?')[0];
   const ct = String(req.headers['content-type'] || '');
   // effectiveModel:实际发往上游的模型 id(供白名单/成本/身份 beta 判定);model:日志展示串。
@@ -406,6 +543,16 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// 取来源 IP:优先反代头(X-Forwarded-For 首个),否则 socket 远端地址。用于标注异常请求来源。
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) return String(xff).split(',')[0].trim();
+  const real = req.headers['x-real-ip'];
+  if (real) return String(real).trim();
+  const raw = req.socket?.remoteAddress || '';
+  return raw.replace(/^::ffff:/, ''); // IPv4-mapped IPv6 归一
+}
+
 function recordMetric(req, started, status, clientName, usage, model, effectiveModel) {
   metrics.record({
     ts: started,
@@ -417,6 +564,8 @@ function recordMetric(req, started, status, clientName, usage, model, effectiveM
     costModel: effectiveModel || model, // 用实际发往上游的模型 id 算成本
     usage: usage || {},
     client: clientName,
+    ip: clientIp(req),
+    ua: String(req.headers['user-agent'] || '').slice(0, 200),
   });
 }
 
@@ -454,7 +603,8 @@ async function handleProxy(req, res, started) {
   }
   const clientEntry = tokenMap.get(token);
   const clientName = clientEntry.name;
-  const ov = clientEntry.overrides || {};
+  // 全局默认(CC 伪装/注入/清洗默认开,伪装与注入仅订阅模式)+ 该客户端显式设置(可显式关闭)
+  const ov = effectiveOverrides(clientEntry.overrides, { subscription: !!oauth });
 
   // ── B 安全:客户端 UA 限制 ──
   if (ov.allowedClient && !clientAllowed(ov.allowedClient, req.headers['user-agent'])) {
@@ -495,7 +645,7 @@ async function handleProxy(req, res, started) {
   }
 
   const bodyBuffer = req.method === 'GET' || req.method === 'HEAD' ? Buffer.alloc(0) : await readBody(req);
-  const { body, model, effectiveModel, changes } = applyBodyTransforms(bodyBuffer, req, clientEntry);
+  const { body, model, effectiveModel, changes } = applyBodyTransforms(bodyBuffer, req, ov);
   if (changes.length) log(`参数下发 [${clientName}]: ${changes.join(', ')}`);
 
   // ── B 安全:模型白名单(针对实际发往上游的模型)──
@@ -763,9 +913,9 @@ function buildHealth() {
       h.oauth = { error: '凭证读取异常' };
     }
   }
-  if (config.__file) {
+  if (dataDir) {
     try {
-      const d = dirSize(path.join(path.dirname(config.__file), 'data'));
+      const d = dirSize(dataDir);
       h.dataDir = { bytes: d.bytes, mb: Math.round((d.bytes / 1048576) * 100) / 100, files: d.files };
     } catch {
       /* ignore */
@@ -857,6 +1007,7 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     log(`收到 ${sig},关闭中…`);
     metrics.flush();
+    logStore.flush();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

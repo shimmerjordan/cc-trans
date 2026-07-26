@@ -16,10 +16,12 @@ const DEFAULTS = {
   clientTokens: [],
   modelMap: {},
   upstreamProxy: '', // 上游代理:http://、https://、socks5://(留空=直连)
+  dataDir: '', // 状态目录(指标/模型列表/日志块)。留空=config.json 同级的 data/;Docker 里指到挂载卷
   logBody: false,
   logFile: '', // 可选:把日志同时写到文件并自动轮转(留空=只 stdout,交给 journald/docker 轮转)
   logMaxBytes: 10 * 1024 * 1024, // 单个日志文件上限,超过就轮转
   logMaxFiles: 5, // 保留的轮转文件数(超出删最旧,控制磁盘占用)
+  logRetentionDays: 14, // 请求日志分块(data/logs)保留天数,超过自动删除(0=不自动删)
   adminEnabled: false,
   adminUser: 'admin',
   adminPassword: '',
@@ -103,10 +105,14 @@ export function loadConfig() {
     ),
     modelMap: file.modelMap || DEFAULTS.modelMap,
     upstreamProxy: process.env.CC_TRANS_UPSTREAM_PROXY || file.upstreamProxy || DEFAULTS.upstreamProxy,
+    dataDir: process.env.CC_TRANS_DATA_DIR || file.dataDir || DEFAULTS.dataDir,
     logBody: parseBool(process.env.CC_TRANS_LOG_BODY) ?? file.logBody ?? DEFAULTS.logBody,
     logFile: process.env.CC_TRANS_LOG_FILE || file.logFile || DEFAULTS.logFile,
     logMaxBytes: Number(process.env.CC_TRANS_LOG_MAX_BYTES || file.logMaxBytes || DEFAULTS.logMaxBytes),
     logMaxFiles: Number(process.env.CC_TRANS_LOG_MAX_FILES || file.logMaxFiles || DEFAULTS.logMaxFiles),
+    logRetentionDays: Number(
+      process.env.CC_TRANS_LOG_RETENTION_DAYS ?? file.logRetentionDays ?? DEFAULTS.logRetentionDays,
+    ),
     adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
     adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,
     adminPassword: process.env.CC_TRANS_ADMIN_PASSWORD || file.adminPassword || DEFAULTS.adminPassword,

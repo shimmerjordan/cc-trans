@@ -5,7 +5,10 @@ data
 .gitignore
 config.json
 test
-deploy
 README.md
 .DS_Store
 .env
+# 注意:deploy/ 不能整体忽略 —— Dockerfile 需要 deploy/docker-entrypoint.sh
+deploy/*.service
+deploy/install-service.sh
+deploy/uninstall-service.sh
