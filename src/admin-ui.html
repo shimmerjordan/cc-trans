@@ -14,92 +14,10 @@
      场景决定的:这台管理台跟终端、编辑器并排开着,多数排查发生在
      夜里,所以深色是一等公民而非附赠;白天用系统亮色。
      ───────────────────────────────────────────────────────────────── */
-  :root {
-    /* 间距(4 的等比) */
-    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
-    /* 字号(1.15~1.25 步进,product register:固定 rem 而非 clamp) */
-    --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-base: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
-    /* 圆角 / 层级 / 动效 */
-    --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-full: 999px;
-    --z-sticky: 10; --z-backdrop: 40; --z-modal: 50; --z-toast: 60;
-    --dur-1: 120ms; --dur-2: 200ms;
-    --ease: cubic-bezier(.22, 1, .36, 1); /* ease-out-quint:无弹跳 */
-    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-
-    /* 亮色:中性色带一点主色色相偏色(chroma .004~.008),不是纯灰也不是奶油色 */
-    --bg: oklch(.975 .004 275);
-    --card: oklch(1 0 0);
-    --surface-2: oklch(.985 .005 275);   /* 表头 / 工具条 / 代码块 */
-    --ink: oklch(.25 .02 272);
-    --muted: oklch(.52 .022 272);         /* 对 --card 5.6:1,正文可用 */
-    --faint: oklch(.63 .02 272);          /* 仅图表刻度等非正文,≥3:1 */
-    --line: oklch(.915 .007 275);
-    --line-strong: oklch(.86 .01 275);
-    --accent: oklch(.52 .21 277);         /* 保留原 indigo 身份 */
-    --accent-hover: oklch(.47 .21 277);
-    --accent-soft: oklch(.95 .03 277);    /* 选中/悬停底 */
-    --accent-ink: oklch(1 0 0);
-    --ok: oklch(.53 .14 162); --ok-soft: oklch(.95 .04 162);
-    --warn: oklch(.56 .14 68); --warn-soft: oklch(.95 .05 75);
-    --err: oklch(.54 .21 25); --err-soft: oklch(.95 .04 25);
-    --nav-bg: oklch(.24 .03 272); --nav-ink: oklch(.97 .005 275);
-    --sh-1: 0 1px 2px oklch(.25 .02 272 / .06);
-    --sh-2: 0 12px 32px oklch(.25 .02 272 / .18), 0 2px 6px oklch(.25 .02 272 / .08);
-    /* 图表分类色(与状态色区分开,顺序稳定) */
-    --c1: oklch(.55 .2 277); --c2: oklch(.58 .13 162); --c3: oklch(.65 .15 68); --c4: oklch(.58 .19 25);
-    --c5: oklch(.6 .12 220); --c6: oklch(.55 .19 305); --c7: oklch(.6 .19 350); --c8: oklch(.6 .14 130);
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) { color-scheme: dark;
-      --bg: oklch(.18 .012 272);
-      --card: oklch(.225 .014 272);
-      --surface-2: oklch(.26 .015 272);
-      --ink: oklch(.95 .006 275);
-      --muted: oklch(.73 .016 275);       /* 对 --card 5.2:1 */
-      --faint: oklch(.6 .015 275);
-      --line: oklch(.31 .014 272);
-      --line-strong: oklch(.4 .016 272);
-      --accent: oklch(.72 .15 277);       /* 暗底提亮降饱和,免刺眼 */
-      --accent-hover: oklch(.78 .14 277);
-      --accent-soft: oklch(.3 .05 277);
-      --accent-ink: oklch(.17 .02 277);
-      --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
-      --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
-      --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
-      --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
-      --sh-1: 0 1px 2px oklch(0 0 0 / .3);
-      --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
-      --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
-      --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
-    }
-  }
-  /* 手动选深色:与上面同一套值(CSS 不能变量化整段规则,只能重复一次) */
-  :root[data-theme="dark"] { color-scheme: dark;
-    --bg: oklch(.18 .012 272);
-    --card: oklch(.225 .014 272);
-    --surface-2: oklch(.26 .015 272);
-    --ink: oklch(.95 .006 275);
-    --muted: oklch(.73 .016 275);
-    --faint: oklch(.6 .015 275);
-    --line: oklch(.31 .014 272);
-    --line-strong: oklch(.4 .016 272);
-    --accent: oklch(.72 .15 277);
-    --accent-hover: oklch(.78 .14 277);
-    --accent-soft: oklch(.3 .05 277);
-    --accent-ink: oklch(.17 .02 277);
-    --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
-    --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
-    --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
-    --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
-    --sh-1: 0 1px 2px oklch(0 0 0 / .3);
-    --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
-    --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
-    --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
-  }
-
+  /*__TOKENS__*/
   * { box-sizing: border-box; }
+  /* 设了 display 的元素会覆盖默认的 [hidden]{display:none},必须显式兜住 */
+  [hidden] { display: none !important; }
   body {
     margin: 0; font: var(--fs-base)/1.55 var(--sans);
     background: var(--bg); color: var(--ink);
@@ -128,6 +46,14 @@
   }
   header button:hover:not(:disabled) { background: oklch(1 0 0 / .18); border-color: oklch(1 0 0 / .28); }
   .icon-btn { padding: var(--s2); line-height: 0; min-width: 36px; display: inline-flex; justify-content: center; }
+  /* 顶栏里的链接按钮:视觉与 header button 一致 */
+  header .chat-link {
+    background: oklch(1 0 0 / .1); border: 1px solid oklch(1 0 0 / .16); color: var(--nav-ink);
+    border-radius: var(--r-sm); padding: 7px var(--s3); min-height: 34px; font-size: var(--fs-md);
+    display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+  }
+  header .chat-link:hover { background: oklch(1 0 0 / .18); border-color: oklch(1 0 0 / .28); }
   .icon-btn svg { width: 16px; height: 16px; }
 
   /* ── 按钮:default / hover / active / focus / disabled / busy ── */
@@ -151,37 +77,63 @@
   button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
   button.sm { min-height: 28px; padding: 3px var(--s2); font-size: var(--fs-sm); }
 
-  main { max-width: 1120px; margin: var(--s5) auto var(--s7); padding: 0 var(--s4); }
+  main { max-width: var(--w-wide); margin: var(--s5) auto var(--s7); padding: 0 var(--s4); }
 
-  /* ── Tab(触控目标 ≥44px 高) ── */
+  /* 并排区块。两列等分,窄屏退化单列 —— 定义一次,别在每处重写 grid。
+     不用 align-items:start:并排卡片底边不齐看着很散,等高更整。 */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  .grid-2 > .block { margin-bottom: 0; }
+
+  /* ── Tab(触控目标 ≥44px 高) ──
+     间距分工:gap 负责【相邻标签之间看得见的空隙】,padding 只负责下划线/悬浮块
+     贴着文字的那点余量。之前反过来了 —— gap 4px、左右各 16px padding,于是下划线
+     宽 60px 而文字只 28px,两个标签的高亮块几乎接在一起,整排糊成一团。 */
   .tabs {
-    display: flex; gap: var(--s1); margin-bottom: var(--s5);
+    display: flex; gap: var(--s6); margin-bottom: var(--s5);
     border-bottom: 1px solid var(--line); flex-wrap: wrap;
   }
   .tabs button {
     border: 0; background: none; border-radius: var(--r-sm) var(--r-sm) 0 0;
-    padding: var(--s3) var(--s4); min-height: 44px; color: var(--muted);
+    padding: var(--s3); min-height: 44px; color: var(--muted);
     border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .15s ease-out, border-color .15s ease-out, background-color .15s ease-out;
   }
+  @media (prefers-reduced-motion: reduce) { .tabs button { transition: none; } }
   .tabs button:hover:not(.active) { background: var(--surface-2); color: var(--ink); }
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
 
   /* ── 区块 ── */
-  section.block {
+  .block {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
     padding: var(--s5); margin-bottom: var(--s4); box-shadow: var(--sh-1);
   }
-  section.block > h2 {
+  .block > h2, .block > summary > h2 {
     font-size: var(--fs-base); font-weight: 600; margin: 0 0 var(--s4);
     color: var(--ink); display: flex; align-items: center; gap: var(--s2);
   }
-  section.block > h2::before {
+  .block > h2::before, .block > summary > h2::before {
     content: ""; width: 3px; height: 14px; background: var(--accent);
     border-radius: var(--r-full); flex: none;
   }
   /* 标题右侧带操作:靠 margin-left:auto 把按钮推到右边(不能用
      space-between —— 那会把 ::before 那根竖条也推离标题文字) */
-  section.block > h2.with-action > button { margin-left: auto; font-weight: 400; }
+  .block > h2.with-action > button { margin-left: auto; font-weight: 400; }
+
+  /* 可折叠区块(概览页底部的服务信息)。用原生 details:无 JS、可键盘操作、
+     浏览器自带 open 状态语义。 */
+  details.fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--s2); }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  /* 指示器紧跟标题,不用 flex:1 推到最右 —— main 宽 1800px 时那会离标题
+     几百 px 远,读起来是两个无关元素 */
+  details.fold > summary > h2 { margin: 0; }
+  details.fold > summary::after {
+    content: ""; flex: none; width: 7px; height: 7px; margin-right: 2px;
+    border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+    transform: rotate(-45deg); transition: transform var(--dur-1) var(--ease);
+  }
+  details.fold[open] > summary::after { transform: rotate(45deg); }
+  details.fold[open] > summary { margin-bottom: var(--s4); }
+  details.fold > summary:hover > h2 { color: var(--accent); }
 
   .dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--s2) var(--s5); margin: 0; }
   .dl dt { color: var(--muted); }
@@ -199,8 +151,6 @@
   .metric .n.err { color: var(--err); }
 
   /* ── 图表 ── */
-  .charts { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--s5); margin-top: var(--s5); }
-  .chart h3 { font-size: var(--fs-sm); color: var(--muted); font-weight: 600; margin: 0 0 var(--s2); }
   .chart svg { width: 100%; height: auto; display: block; }
   .chart .grid-line { stroke: var(--line); }
   .chart .tick { fill: var(--faint); font-size: 10px; }
@@ -215,6 +165,26 @@
   .legend .val { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 
   /* ── 用量条 ── */
+  /* ── 存储占用 ──
+     一条按比例分段的横条 + 一张明细表。不用卡片网格:九个类别做成九张卡
+     只会变成一堵墙,而这里真正要回答的是"谁占得多、哪些能删"。 */
+  .sto-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s2) var(--s5); margin-bottom: var(--s3); }
+  .sto-head .big { font-size: var(--fs-xl); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .sto-head .sub { color: var(--muted); font-size: var(--fs-md); }
+  .sto-head .sub b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  /* 分段条:各段宽度按占比,合起来正好 100% */
+  .sto-bar { display: flex; height: 10px; border-radius: var(--r-full); overflow: hidden; background: var(--surface-2); border: 1px solid var(--line); }
+  .sto-bar i { display: block; height: 100%; min-width: 2px; }
+  .sto-legend { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); margin-top: var(--s3); font-size: var(--fs-sm); color: var(--muted); }
+  .sto-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sto-legend i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .sto-tbl { width: 100%; margin-top: var(--s4); }
+  .sto-tbl td { vertical-align: top; }
+  .sto-tbl .n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .sto-tbl .desc { color: var(--muted); font-size: var(--fs-sm); }
+  .sto-tbl tr.dim td:first-child, .sto-tbl tr.dim .n { color: var(--muted); }
+  .sto-tbl .act { text-align: right; white-space: nowrap; }
+
   .ubar + .ubar { margin-top: var(--s4); }
   .ubar .row1 { display: flex; justify-content: space-between; gap: var(--s3); font-size: var(--fs-md); margin-bottom: 5px; }
   .ubar .row1 .rst { color: var(--muted); white-space: nowrap; }
@@ -271,11 +241,45 @@
   #catalogRows td:nth-child(2), #catalogRows td:nth-child(3), #catalogRows td:nth-child(5) { white-space: nowrap; }
   td.sm-cell { font-size: var(--fs-sm); }
   .xs { font-size: var(--fs-xs); font-weight: 400; }
-  .dl.md { font-size: var(--fs-md); }
+  /* 配额单元格:用量条比纯数字更容易一眼看出"谁快满了" */
+  .qcell { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
+  .qrow { display: flex; align-items: center; gap: var(--s2); }
+  .qlbl { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .qbar { flex: 1; height: 4px; min-width: 40px; max-width: 90px; border-radius: var(--r-full); background: var(--surface-2); overflow: hidden; }
+  .qbar i { display: block; height: 100%; background: var(--accent); }
+  .qbar i.warn { background: var(--warn); }
+  .qbar i.err { background: var(--err); }
+  /* 参数速查:一格一个参数,状态用左侧色条 + 标签表达,比 dl 密排好扫 */
+  .param-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: var(--s3); }
+  .param { border: 1px solid var(--line); border-radius: var(--r-sm); padding: var(--s3) var(--s4); background: var(--surface-2); }
+  .param .pname { font-weight: 600; font-size: var(--fs-md); margin-bottom: var(--s2); }
+  .param .pval { margin-bottom: var(--s2); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .param .pval .mono { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; font-size: var(--fs-sm); }
+  .param .pnote { font-size: var(--fs-sm); color: var(--muted); line-height: 1.6; }
+  .param.must { border-color: color-mix(in oklch, var(--accent) 40%, var(--line)); }
+  .param.danger { border-color: color-mix(in oklch, var(--err) 45%, var(--line)); background: color-mix(in oklch, var(--err-soft) 60%, var(--surface-2)); }
+  .param.warn-card { border-color: color-mix(in oklch, var(--warn) 45%, var(--line)); background: color-mix(in oklch, var(--warn-soft) 55%, var(--surface-2)); }
+  .tag.err { color: var(--err); background: var(--err-soft); }
+  /* 分段控件:用于"跟随系统/亮色/深色"这类互斥少量选项 */
+  /* 分段控件:不能让它被 grid 的 1fr 拉伸(那样边框会横穿到很右边、
+     按钮却只占左边一小段,看着极不对称)。宽度按内容,按钮等宽。 */
+  .seg { display: inline-flex; width: fit-content; justify-self: start;
+         border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; min-height: 32px; font-size: var(--fs-md);
+                min-width: 5.5em; justify-content: center; }
+  .seg button + button { border-left: 1px solid var(--line-strong); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 550; }
+  .dl.md { font-size: var(--fs-md); max-width: var(--w-read); }  /* 参数说明是长文本 */
   .ov-badge { font-size: var(--fs-xs); color: var(--accent); }
   .tag { font-size: var(--fs-xs); padding: 1px 6px; border-radius: var(--r-full); white-space: nowrap; }
   .tag.ok { color: var(--ok); background: var(--ok-soft); }
   .tag.warn { color: var(--warn); background: var(--warn-soft); }
+  .tag.acc { color: var(--accent); background: var(--accent-soft); }
+  /* 管理员那行是合成行(凭证不在 config.users 里):底色标一下,它和下面
+     可增删的普通账号不是一类东西。
+     用 accent-soft 兑淡而不是 surface-2 —— 后者在亮色下只比卡片底深 1.5%,肉眼看不出,
+     等于没标。禁止用左侧色条(那是廉价做法),整行浅色带才是表格里的正确写法。 */
+  tr.row-admin > td { background: color-mix(in oklch, var(--accent-soft) 55%, transparent); }
 
   /* 空状态:教下一步,不只是"暂无" */
   .empty { padding: var(--s7) var(--s5); text-align: center; color: var(--muted); }
@@ -297,8 +301,11 @@
   .toolbar { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
   .toolbar .grow { flex: 1; min-width: 0; }
   .muted { color: var(--muted); }
-  .note { color: var(--muted); font-size: var(--fs-sm); margin: var(--s3) 0 0; }
+  /* 连续文字限在可读行长内:main 现在最宽 1800px,不限的话说明段落
+     会变成一行 150+ 字符,眼睛回行很费劲。 */
+  .note { color: var(--muted); font-size: var(--fs-sm); margin: var(--s3) 0 0; max-width: var(--w-read); }
   .note-tight { margin-top: var(--s2); }
+  .block > h2 + .muted { max-width: var(--w-read); }
 
   /* ── 表单控件:input / select 同一套视觉(此前 .input 类根本没定义,
         所有 select 都在用原生外观,和输入框对不上) ── */
@@ -393,9 +400,9 @@
 
   /* ── 响应式:结构性收敛,不做流体字号 ── */
   @media (max-width: 760px) {
-    .charts { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
     main { padding: 0 var(--s3); margin-top: var(--s4); }
-    section.block { padding: var(--s4); }
+    .block { padding: var(--s4); }
     .dl { grid-template-columns: 1fr; gap: var(--s1) 0; }
     .dl dt { margin-top: var(--s2); font-size: var(--fs-sm); }
     .form-row { grid-template-columns: 1fr; gap: var(--s1); }
@@ -404,14 +411,17 @@
     /* pills 独占第二行:否则它 flex:1 会把标题和按钮挤到两边、自己竖排成 4 行 */
     header .pills { flex-basis: 100%; order: 3; }
     header .title { flex: 1; }
-    /* tab 条保持单行、横向滑动(比折行更像移动端的标准做法) */
-    .tabs { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+    /* tab 条保持单行、横向滑动(比折行更像移动端的标准做法)。
+       窄屏收一档间距:桌面的 24px 在这里只会让更多标签滑出屏幕外。 */
+    .tabs { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; gap: var(--s4); }
     .tabs::-webkit-scrollbar { display: none; }
     .tabs button { flex: none; }
     #genBtn { width: 100%; justify-content: center; }
     /* 表格里的小按钮桌面 28px 够用(WCAG 2.5.8 要求 24×24),
        触屏上手指按不准,放大到 36px */
     button.sm { min-height: 36px; padding: var(--s1) var(--s3); }
+    /* 用量条:窄屏塞不下"标签 + 重置时间"一行,横排会把百分比挤到下一行去 */
+    .ubar .row1 { flex-direction: column; gap: 2px; }
   }
 
   /* 动效是增强项:关掉后一切照常可用 */
@@ -446,40 +456,62 @@
     <button class="icon-btn" id="themeBtn" onclick="cycleTheme()" title="切换主题" aria-label="切换主题">
       <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
     </button>
+    <a class="chat-link" href="/admin/chat" title="网页聊天(管理员可用全部设备)">💬 聊天</a>
     <button id="logoutBtn" onclick="logout()">退出</button>
   </header>
   <main>
     <div class="tabs">
       <button data-tab="overview" class="active" onclick="switchTab('overview')">概览</button>
       <button data-tab="clients" onclick="switchTab('clients')">客户端</button>
+      <button data-tab="users" onclick="switchTab('users')">用户</button>
       <button data-tab="models" onclick="switchTab('models')">模型/参数</button>
       <button data-tab="logs" onclick="switchTab('logs')">实时日志</button>
       <button data-tab="settings" onclick="switchTab('settings')">设置</button>
     </div>
 
+    <!-- 顺序按「会变的数据优先」排:关键数字 → 用量/分布 → 趋势图 → 静态服务信息(折叠)。
+         静态信息里最常看的订阅类型与运行时长已常驻顶栏 pills,折叠不折损可见性。 -->
     <section id="tab-overview">
-      <section class="block">
-        <h2>服务信息</h2>
-        <dl class="dl" id="svcInfo"></dl>
-      </section>
-      <section class="block" id="usageBlock">
-        <h2 class="with-action">
-          订阅用量
-          <button class="sm" id="usageRefreshBtn" onclick="refreshUsage()">刷新</button>
-        </h2>
-        <div id="usageBars"><div class="skeleton sk-line" style="width:60%"></div><div class="skeleton sk-line" style="width:45%"></div></div>
-        <p class="note" id="usageNote"></p>
-      </section>
       <section class="block">
         <h2>流量统计</h2>
         <div class="metrics" id="trafficNums"></div>
-        <div class="charts">
-          <div class="chart"><h3>最近 30 分钟 · 每分钟请求数</h3><div id="lineChart"></div></div>
-          <div class="chart"><h3>请求按客户端分布</h3><div id="donutChart"></div></div>
-        </div>
-        <div class="chart" style="margin-top:var(--s5)"><h3>最近 14 天 · 每日请求数</h3><div id="dailyChart"></div></div>
         <p class="note" id="statNote"></p>
       </section>
+      <div class="grid-2">
+        <section class="block" id="usageBlock">
+          <h2 class="with-action">
+            订阅用量
+            <button class="sm" id="usageRefreshBtn" onclick="refreshUsage()">刷新</button>
+          </h2>
+          <div id="usageBars"><div class="skeleton sk-line" style="width:60%"></div><div class="skeleton sk-line" style="width:45%"></div></div>
+          <p class="note" id="usageNote"></p>
+        </section>
+        <section class="block">
+          <h2>请求按客户端分布</h2>
+          <div class="chart"><div id="donutChart"></div></div>
+        </section>
+      </div>
+      <div class="grid-2">
+        <section class="block">
+          <h2>最近 30 分钟 · 每分钟请求数</h2>
+          <div class="chart"><div id="lineChart"></div></div>
+        </section>
+        <section class="block">
+          <h2>最近 14 天 · 每日请求数</h2>
+          <div class="chart"><div id="dailyChart"></div></div>
+        </section>
+      </div>
+      <section class="block" id="storageBlock">
+        <h2 class="with-action">
+          存储占用
+          <button class="sm" id="stoRefreshBtn" onclick="loadStorage(true)">刷新</button>
+        </h2>
+        <div id="storageBody"><div class="skeleton sk-line" style="width:55%"></div><div class="skeleton sk-line" style="width:80%"></div></div>
+      </section>
+      <details class="block fold" open>
+        <summary><h2>服务信息</h2></summary>
+        <dl class="dl" id="svcInfo"></dl>
+      </details>
     </section>
 
     <section id="tab-clients" hidden>
@@ -489,7 +521,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>设备名</th><th>令牌(掩码)</th><th class="num">请求数</th><th class="num">错误</th><th class="num">输入/输出 token</th><th class="num">成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
+          <thead><tr><th>设备名</th><th>归属用户</th><th>令牌(掩码)</th><th class="num">请求数</th><th class="num">错误</th><th class="num">输入/输出 token</th><th class="num">成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
           <tbody id="clientRows"></tbody>
         </table>
       </div>
@@ -500,6 +532,20 @@
           <table><thead><tr><th>类型</th><th class="num">请求数</th><th class="num">最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
         </div>
       </div>
+    </section>
+
+    <section id="tab-users" hidden>
+      <div class="toolbar">
+        <span class="grow muted" id="userHint"></span>
+        <button class="primary" id="addUserBtn" onclick="openUser()">+ 创建用户</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>用户名</th><th>分配的设备</th><th>配额</th><th>权限</th><th>状态</th><th>创建时间</th><th>最近登录</th><th></th></tr></thead>
+          <tbody id="userRows"></tbody>
+        </table>
+      </div>
+      <p class="note">用户在 <span class="mono" id="userPortalUrl">/u</span> 用自己的账号登录,只能看到这里分配给他的设备用量,并可反复取回该设备的令牌明文(每次取回都会在服务日志留一条 <span class="mono">[audit]</span>)。用户密码用 scrypt 哈希存储,管理员也看不到明文。<br>第一行的<b>管理员</b>账号从 <span class="mono">/admin</span> 登录,凭证存在 <span class="mono">config.json</span> 的 <span class="mono">adminUser</span>/<span class="mono">adminPassword</span>,<b>不可删除或禁用</b>,也不受配额限制;登录名可在「设置」里改,但不能和这张表里的普通账号重名。</p>
     </section>
 
     <section id="tab-models" hidden>
@@ -521,15 +567,42 @@
         <p class="note">列表来自<b>上游实际可用模型</b>(拉取后持久化到 <span class="mono">data/models.json</span>,重启保留);参数规则按模型 id 自动推断,上游出新模型也能识别。</p>
       </section>
       <section class="block">
-        <h2>可传入参数说明(经订阅 OAuth 转发)</h2>
-        <dl class="dl md">
-          <dt>必备</dt><dd><span class="mono">model</span> + <span class="mono">max_tokens</span> + <span class="mono">messages</span>(<span class="mono">system</span>/<span class="mono">tools</span> 可选)</dd>
-          <dt class="mono">thinking</dt><dd>新家族只认 <span class="mono">{"type":"adaptive"}</span>;Opus 4.7+/Sonnet 5 可 <span class="mono">disabled</span>;<b>Fable 5 不接受 disabled(只能省略)</b>;老模型用 <span class="mono">enabled + budget_tokens</span></dd>
-          <dt class="mono">output_config.effort</dt><dd><span class="mono">low / medium / high / xhigh / max</span>,控制思考深度与 token 消耗;4.6+ 支持(4.6 无 xhigh),Sonnet 4.5 / Haiku 4.5 <b>不支持</b>,默认 high</dd>
-          <dt class="mono">temperature</dt><dd>⚠️ <b>Opus 4.7/4.8、Sonnet 5、Fable 5 已移除</b> temperature / top_p / top_k,传了直接 400;老模型(4.6 及更早、Haiku)仍可用</dd>
-          <dt>订阅门禁</dt><dd>⚠️ 非 Haiku 模型的请求 <span class="mono">system</span> 必须以 <span class="mono">You are Claude Code, ...</span> 开头,否则被上游拒(表现为脱敏的 400/429 "Error");Haiku 豁免。可在客户端参数里开「自动注入前缀」解决</dd>
-          <dt>流式</dt><dd><span class="mono">stream: true</span> 正常透传;长输出(&gt;16K tokens)建议流式</dd>
-        </dl>
+        <h2>请求参数速查</h2>
+        <p class="note" style="margin-top:0">下面是经本服务转发时,各参数的实际可用性。<b>红色是会直接 400 的坑</b>,灰色是可选项。改动客户端参数下发在「客户端」页。</p>
+
+        <div class="param-grid">
+          <div class="param must">
+            <div class="pname">必填三件套</div>
+            <div class="pval"><span class="mono">model</span> <span class="mono">max_tokens</span> <span class="mono">messages</span></div>
+            <div class="pnote"><span class="mono">system</span> 与 <span class="mono">tools</span> 可选。<span class="mono">stream:true</span> 正常透传,输出超过 ~16K token 建议开。</div>
+          </div>
+
+          <div class="param danger">
+            <div class="pname">temperature / top_p / top_k</div>
+            <div class="pval"><span class="tag err">新家族已移除</span></div>
+            <div class="pnote"><b>Opus 4.7 / 4.8 / 5、Sonnet 5、Fable 5 传了直接 400。</b>老模型(4.6 及更早、Haiku)仍可用。<br />客户端开「清洗不支持的参数」可自动删掉它们,不必改客户端代码。</div>
+          </div>
+
+          <div class="param">
+            <div class="pname mono">thinking</div>
+            <div class="pval"><span class="mono">{"type":"adaptive"}</span></div>
+            <div class="pnote">新家族只认 <span class="mono">adaptive</span>。Opus 4.7+ / Sonnet 5 也接受 <span class="mono">disabled</span>;<b>Fable 5 不接受 <span class="mono">disabled</span></b>(只能省略)。老模型用 <span class="mono">enabled + budget_tokens</span>。</div>
+          </div>
+
+          <div class="param">
+            <div class="pname mono">output_config.effort</div>
+            <div class="pval"><span class="mono">low</span> <span class="mono">medium</span> <span class="mono">high</span> <span class="mono">xhigh</span> <span class="mono">max</span></div>
+            <div class="pnote">控制思考深度,直接影响耗时与 token 消耗,默认 <span class="mono">high</span>。4.6+ 支持(4.6 无 <span class="mono">xhigh</span>);<b>Sonnet 4.5 / Haiku 4.5 不支持</b>。各模型的实际支持情况见上方目录表的 effort 列。</div>
+          </div>
+
+          <div class="param warn-card">
+            <div class="pname">订阅门禁(最容易踩)</div>
+            <div class="pval"><span class="tag warn">system 必须以固定前缀开头</span></div>
+            <div class="pnote">非 Haiku 模型的 <span class="mono">system</span> 必须以 <span class="mono">You are Claude Code, Anthropic's official CLI for Claude.</span> 开头,而且必须是<b>独立的第一个 block</b>(不是拼进同一段字符串)。不满足时上游返回脱敏的 <span class="mono">400/429 "Error"</span>——报错本身看不出原因,很容易误判成限流。<br />Haiku 豁免。客户端开「自动注入前缀」即可,已有前缀则不改动。</div>
+          </div>
+        </div>
+
+        <p class="note">自研客户端接订阅时,把「注入前缀 / 伪装 Claude Code / 清洗参数」三项都开着最稳——它们对合规请求是无操作。</p>
       </section>
     </section>
 
@@ -542,6 +615,13 @@
         <select id="logErrOnly" aria-label="状态过滤" onchange="reloadLogs(0)">
           <option value="">全部状态</option>
           <option value="1">仅异常(≥400)</option>
+        </select>
+        <select id="logPerPage" aria-label="每页行数" onchange="onPerPage()" title="每页行数">
+          <option value="25">25 行/页</option>
+          <option value="50">50 行/页</option>
+          <option value="100" selected>100 行/页</option>
+          <option value="200">200 行/页</option>
+          <option value="500">500 行/页</option>
         </select>
         <button onclick="reloadLogs(0)">查询</button>
         <button class="ghost" onclick="clearLogs()">清屏</button>
@@ -596,11 +676,24 @@
         <p class="note">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
       </section>
       <section class="block">
-        <h2>修改管理台密码</h2>
+        <h2>外观</h2>
+        <div class="form-row"><label>主题</label>
+          <div class="seg" id="themeSeg">
+            <button type="button" data-t="auto" onclick="applyTheme('auto')">跟随系统</button>
+            <button type="button" data-t="light" onclick="applyTheme('light')">亮色</button>
+            <button type="button" data-t="dark" onclick="applyTheme('dark')">深色</button>
+          </div>
+        </div>
+        <p class="note">选择记在本浏览器。顶栏右上的图标按钮也能循环切换。</p>
+      </section>
+      <section class="block" id="acctBlock">
+        <h2>管理台账号</h2>
+        <div class="form-row"><label for="acctUser">登录名</label><input id="acctUser" autocomplete="username" placeholder="admin" /></div>
         <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
-        <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 6 位" /></div>
+        <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="留空 = 不改密码" /></div>
         <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
-        <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+        <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="saveAccount()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+        <p class="note" id="acctNote">登录名和密码都要<b>验当前密码</b>才能改,只想改一样就把另一样留着不动。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。</p>
       </section>
     </section>
   </main>
@@ -686,6 +779,43 @@
   <div class="dlg-actions"><button onclick="ovDlg.close()">取消</button> <button class="primary" onclick="saveOverrides()">保存</button></div>
 </dialog>
 
+<dialog id="userDlg">
+  <h3 id="userDlgTitle">创建用户</h3>
+  <div class="form-row"><label for="uName">用户名</label><input id="uName" placeholder="2~32 位,字母数字与 . _ -" /></div>
+  <div class="form-row" id="uPwRow"><label for="uPw">初始密码</label>
+    <div class="stack">
+      <input id="uPw" class="grow-1" placeholder="至少 8 位" />
+      <button class="sm" onclick="genPw()">随机生成</button>
+    </div>
+  </div>
+  <div class="form-row"><label>分配设备</label>
+    <div id="uTokens" class="stack" style="flex-direction:column;align-items:stretch;gap:var(--s1)"></div>
+  </div>
+  <p class="note">用户只能看到被勾选设备的用量与令牌。不勾也可以先建账号,之后再分配。</p>
+  <h4>配额(与该用户名下所有设备共享一份;留空或 0 = 不限制)</h4>
+  <div class="form-row"><label for="uQWindow">统计窗口</label>
+    <select id="uQWindow"></select>
+  </div>
+  <div class="form-row"><label for="uQTokens">token 上限</label>
+    <div class="stack">
+      <input id="uQTokens" type="number" min="0" step="100000" placeholder="0 = 不限" style="width:150px" />
+      <span class="muted xs">输入+输出之和,<b>不含缓存读</b>(缓存读量大且极便宜,拿它限额没意义)</span>
+    </div>
+  </div>
+  <div class="form-row"><label for="uQCost">花费上限</label>
+    <div class="stack">
+      <span class="muted">$</span>
+      <input id="uQCost" type="number" min="0" step="1" placeholder="0 = 不限" style="width:110px" />
+      <span class="muted xs">按模型定价估算的美元数(含缓存折算)</span>
+    </div>
+  </div>
+  <h4>权限</h4>
+  <div id="uPerms" class="stack" style="flex-direction:column;align-items:stretch;gap:var(--s1)"></div>
+  <p class="note">跨用户隔离是<b>硬边界</b>(任何人都只能看到自己被分配的设备,看不到别人的统计与日志)。这里是在此之上进一步收窄:关掉哪项,对应功能就对他不可用。</p>
+  <div id="uMsg" class="err-msg" style="text-align:left"></div>
+  <div class="dlg-actions"><button onclick="userDlg.close()">取消</button> <button class="primary" id="uSaveBtn" onclick="saveUser()">创建</button></div>
+</dialog>
+
 <dialog id="genDlg">
   <h3>生成客户端令牌</h3>
   <div id="genForm">
@@ -702,7 +832,7 @@
 
 <script>
 // 每个 tab 一个 URL:/admin/<tab>。PREFIX 需剥掉路径里的 tab 段,才能拼出正确的 /api。
-const TABS = ['overview', 'clients', 'models', 'logs', 'settings'];
+const TABS = ['overview', 'clients', 'users', 'models', 'logs', 'settings'];
 const PREFIX = (() => {
   let p = location.pathname.replace(/\/+$/, '') || '/admin';
   const last = p.split('/').pop();
@@ -736,6 +866,8 @@ function applyTheme(t) {
   const btn = el('themeBtn');
   if (btn) { el('themeIcon').innerHTML = THEME_ICONS[t]; btn.title = THEME_LABELS[t]; btn.setAttribute('aria-label', THEME_LABELS[t]); }
   // 图表颜色全部走 CSS 变量(见 COLORS / .chart 规则),换主题自动跟随,不需要重画
+  const seg = el('themeSeg');
+  if (seg) seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
 }
 function cycleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[currentTheme()]); }
 
@@ -786,7 +918,7 @@ el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); 
 
 function enterApp() {
   show('loginView', false); show('appView', true);
-  refreshOverview(); refreshClients();
+  refreshOverview(); refreshClients(); loadStorage();
   clearInterval(statusTimer);
   statusTimer = setInterval(() => { if (curTab === 'overview') refreshOverview(); if (curTab === 'clients') refreshClients(); }, 5000);
   startLogs();
@@ -808,12 +940,13 @@ function switchTab(t, opts = {}) {
   if (location.pathname !== url && !opts.noPush) {
     try { history[opts.replace ? 'replaceState' : 'pushState']({ tab: t }, '', url); } catch { /* file:// 等场景忽略 */ }
   }
-  document.title = `cc-trans · ${({ overview: '概览', clients: '客户端', models: '模型/参数', logs: '实时日志', settings: '设置' })[t]}`;
-  if (t === 'overview') refreshOverview();
+  document.title = `cc-trans · ${({ overview: '概览', clients: '客户端', users: '用户', models: '模型/参数', logs: '实时日志', settings: '设置' })[t]}`;
+  if (t === 'overview') { refreshOverview(); loadStorage(); }
   if (t === 'clients') refreshClients();
+  if (t === 'users') loadUsers();
   if (t === 'models') loadModels();
   if (t === 'logs') reloadLogs(0);
-  if (t === 'settings') loadUpstream();
+  if (t === 'settings') { loadUpstream(); loadAccount(); }
 }
 window.addEventListener('popstate', () => switchTab(tabFromPath(), { noPush: true }));
 
@@ -825,6 +958,99 @@ function stClass(s) { return 'st st-' + Math.floor((s || 0) / 100); }
 function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : n < 1e9 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e9).toFixed(2) + 'B'; }
 function fmtUsd(n) { n = n || 0; if (n === 0) return '$0'; if (n < 0.01) return '$' + n.toFixed(4); if (n < 1) return '$' + n.toFixed(3); if (n < 100) return '$' + n.toFixed(2); return '$' + Math.round(n).toLocaleString(); }
 function localDay(ts) { const d = new Date(ts); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
+function fmtBytes(n) {
+  const b = Number(n) || 0;
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+// ── 存储占用 ──
+// 扫盘要 stat 整个数据目录 + 读全部会话找孤儿图片,比其它接口贵得多,
+// 所以【不放进概览 5 秒一次的轮询】,只在进概览、点刷新、清理完之后拉。
+let LAST_STORAGE = null;
+async function loadStorage(manual = false) {
+  const body = el('storageBody');
+  const btn = el('stoRefreshBtn');
+  if (manual) { btn.disabled = true; btn.textContent = '扫描中…'; }
+  try {
+    const d = await (await api('/storage')).json();
+    LAST_STORAGE = d;
+    if (!d.enabled) {
+      body.innerHTML = '<p class="note" style="margin:0">当前未启用数据目录(用环境变量配置时不落盘),没有可统计的存储。</p>';
+      return;
+    }
+    const shown = d.categories.filter((c) => c.bytes > 0 || c.files > 0);
+    const disk = d.disk
+      ? `磁盘剩余 <b>${fmtBytes(d.disk.free)}</b> / ${fmtBytes(d.disk.total)}(已用 ${d.disk.usedPct}%)`
+      : '';
+    const reclaim = d.reclaimableBytes
+      ? `可回收 <b>${fmtBytes(d.reclaimableBytes)}</b>`
+      : '暂无可回收的数据';
+
+    // 分段条:只画占比 ≥0.5% 的段,碎渣合并进最后一段,否则一堆 1px 看不清也没意义
+    const total = d.totalBytes || 1;
+    const segs = shown.filter((c) => c.bytes / total >= 0.005);
+    const rest = shown.reduce((a, c) => a + c.bytes, 0) - segs.reduce((a, c) => a + c.bytes, 0);
+    const bar = segs.map((c, i) => `<i style="width:${((c.bytes / total) * 100).toFixed(2)}%;background:${COLORS[i % COLORS.length]}" title="${esc(c.name)} ${fmtBytes(c.bytes)}"></i>`).join('')
+      + (rest > 0 ? `<i style="width:${((rest / total) * 100).toFixed(2)}%;background:var(--muted)" title="其余零碎 ${fmtBytes(rest)}"></i>` : '');
+    const legend = segs.map((c, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(c.name)} ${fmtBytes(c.bytes)}</span>`).join('');
+
+    const rows = d.categories.map((c) => {
+      const empty = !c.bytes && !c.files;
+      return `<tr class="${empty ? 'dim' : ''}">
+        <td><b>${esc(c.name)}</b><div class="desc">${esc(c.desc || '')}</div></td>
+        <td class="n">${fmtBytes(c.bytes)}</td>
+        <td class="n">${c.files} 个</td>
+        <td class="desc">${esc(c.note || '')}</td>
+        <td class="act">${cleanBtn(c)}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `
+      <div class="sto-head">
+        <span class="big">${fmtBytes(d.totalBytes)}</span>
+        <span class="sub">${d.totalFiles} 个文件 · <span class="mono">${esc(d.dataDir)}</span></span>
+        <span class="sub">${reclaim}</span>
+        <span class="sub" style="margin-left:auto">${disk}</span>
+      </div>
+      <div class="sto-bar">${bar}</div>
+      <div class="sto-legend">${legend}</div>
+      <div class="table-wrap"><table class="sto-tbl">
+        <thead><tr><th>类别</th><th class="n">大小</th><th class="n">文件</th><th>说明</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <p class="note">各类之和恒等于数据目录实测总量(认不出的都归「其它」)—— 对不上就说明有东西没被统计到。清理只删列出来的那些,不碰配置与令牌。</p>`;
+  } catch (e) {
+    body.innerHTML = '<p class="note" style="margin:0">存储信息读取失败。</p>';
+  } finally {
+    if (manual) { btn.disabled = false; btn.textContent = '刷新'; }
+  }
+}
+
+function cleanBtn(c) {
+  if (!c.clean) return '';
+  // 日志清理已经有一套完整的对话框(N 天 / 区间 / 全部),不在这儿再造一个
+  if (c.clean === 'dialog') return `<button class="sm" onclick="switchTab('logs');setTimeout(()=>pruneDlg.showModal(),300)">${esc(c.cleanLabel)}</button>`;
+  const cls = c.danger ? 'sm danger' : 'sm';
+  return `<button class="${cls}" onclick="pruneStorage('${esc(c.key)}','${esc(c.clean)}')">${esc(c.cleanLabel)}</button>`;
+}
+
+async function pruneStorage(key, mode) {
+  const c = (LAST_STORAGE && LAST_STORAGE.categories.find((x) => x.key === key)) || {};
+  const gain = c.reclaimable != null ? fmtBytes(c.reclaimable) : fmtBytes(c.bytes);
+  // askConfirm 用 textContent 填正文,这里给纯文本(塞 HTML 会原样显示出来)。
+  // 确认语由服务端按类别给,别拿 note 硬拼 —— note 是名词短语,拼出来读不通顺。
+  const body = `${c.confirm || '清理「' + (c.name || key) + '」'},约可释放 ${gain}。此操作不可撤销。`;
+  if (!(await askConfirm(`清理「${c.name || key}」`, body, '确认清理'))) return;
+  const r = await api('/storage/prune', { method: 'POST', body: JSON.stringify({ key, mode }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) return toast('清理失败:' + (d.error || '未知'), 'err');
+  toast(`${d.message},释放 ${fmtBytes(d.freed)}`);
+  if (d.storage) { LAST_STORAGE = d.storage; }
+  loadStorage();
+}
 
 async function refreshOverview() {
   try {
@@ -1052,12 +1278,16 @@ async function refreshClients() {
     el('genBtn').disabled = !d.canManage;
     el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
-      <td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.tokenMask)}</td><td class="num">${fmtNum(s.requests)}</td>
+      <td><b>${esc(t.name)}</b></td>
+      <td>${(t.owners || []).length
+        ? (t.owners || []).map((o) => `<span class="tag ok">${esc(o)}</span>`).join(' ')
+        : '<span class="muted">未分配</span>'}</td>
+      <td class="mono">${esc(t.tokenMask)}</td><td class="num">${fmtNum(s.requests)}</td>
       <td class="num ${s.errors ? 'st-5' : ''}">${errCell(s)}</td><td class="num">${fmtNum(s.inTokens)} / ${fmtNum(s.outTokens)}</td>
       <td class="num" title="按模型定价估算">${fmtUsd(s.cost)}</td>
       <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
       <td class="act">${d.canManage ? `<button class="sm" onclick="openOverrides('${t.id}')">参数</button> <button class="sm danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('')
-      || `<tr><td colspan="9"><div class="empty"><b>还没有客户端令牌</b><span class="sub">${d.canManage ? '点右上「+ 生成客户端令牌」为第一台设备发一个,填到远端的 ANTHROPIC_AUTH_TOKEN 即可接入。' : '当前用环境变量配置令牌,请在 config.json 或环境变量里添加。'}</span></div></td></tr>`;
+      || `<tr><td colspan="10"><div class="empty"><b>还没有客户端令牌</b><span class="sub">${d.canManage ? '点右上「+ 生成客户端令牌」为第一台设备发一个,填到远端的 ANTHROPIC_AUTH_TOKEN 即可接入。' : '当前用环境变量配置令牌,请在 config.json 或环境变量里添加。'}</span></div></td></tr>`;
     const others = d.others || [];
     show('othersWrap', others.length > 0);
     el('otherRows').innerHTML = others.map((c) => `<tr>
@@ -1069,6 +1299,195 @@ async function refreshClients() {
       <td class="mono trunc" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
       <td>${ago(c.lastSeen)}</td></tr>`).join('');
   } catch (e) {}
+}
+
+// ── 用户页 ──
+let USER_TOKENS = []; // 可分配的令牌清单(掩码)
+let LAST_USERS = []; // 最近一次拉取的用户列表(编辑对话框要回填当前绑定)
+let PERM_META = {}, PERM_DEFAULTS = {}; // 权限项与默认值,由服务端下发(前端不写死)
+let QUOTA_WINDOWS = { month: '每月' };
+let EDIT_USER = null; // null = 创建模式
+async function loadUsers() {
+  try {
+    const d = await (await api('/users')).json();
+    USER_TOKENS = d.tokens || [];
+    LAST_USERS = d.users || [];
+    PERM_META = d.permMeta || {};
+    PERM_DEFAULTS = d.permDefaults || {};
+    QUOTA_WINDOWS = d.quotaWindows || QUOTA_WINDOWS;
+    el('addUserBtn').disabled = !d.canManage;
+    el('userHint').textContent = d.canManage ? '' : '当前用环境变量配置,无法在线管理用户(改用 config.json 即可)';
+    el('userPortalUrl').textContent = location.origin + '/u';
+    ADMIN_ACCT = d.admin || ADMIN_ACCT;
+    const rows = (d.users || []).map((u) => {
+      // 令牌被吊销后这里会留下 name=null 的悬空项,明确标出来而不是静静消失
+      const devs = u.tokens.length
+        ? u.tokens.map((t) => t.name ? `<span class="tag ok">${esc(t.name)}</span>` : `<span class="tag warn" title="令牌已被吊销">已失效</span>`).join(' ')
+        : '<span class="muted">未分配</span>';
+      return `<tr>
+        <td><b>${esc(u.name)}</b>${u.note ? ` <span class="muted xs">${esc(u.note)}</span>` : ''}</td>
+        <td>${devs}</td>
+        <td>${quotaCell(u)}</td>
+        <td>${(() => {
+          const off = Object.keys(PERM_META).filter((k) => u.perms && u.perms[k] === false);
+          return off.length
+            ? off.map((k) => `<span class="tag warn" title="已关闭">✗ ${esc(PERM_META[k])}</span>`).join(' ')
+            : '<span class="muted">全部</span>';
+        })()}</td>
+        <td>${u.disabled ? '<span class="st-4">已禁用</span>' : '<span class="st-2">正常</span>'}</td>
+        <td class="muted">${u.createdAt ? new Date(u.createdAt).toLocaleDateString('zh-CN') : '—'}</td>
+        <td class="muted">${u.lastLoginAt ? ago(u.lastLoginAt) : '从未登录'}</td>
+        <td class="act">${d.canManage ? `
+          <button class="sm" onclick="openUser('${esc(u.name)}')">编辑</button>
+          <button class="sm" onclick="resetUserPw('${esc(u.name)}')">重置密码</button>
+          <button class="sm" onclick="toggleUser('${esc(u.name)}', ${!u.disabled})">${u.disabled ? '启用' : '禁用'}</button>
+          <button class="sm danger" onclick="removeUser('${esc(u.name)}')">删除</button>` : ''}</td></tr>`;
+    }).join('') || `<tr><td colspan="8"><div class="empty"><b>还没有普通用户账号</b><span class="sub">创建一个账号并分配设备后,对方就能在 ${esc(location.origin)}/u 登录查看自己的用量、随时取回令牌。</span></div></td></tr>`;
+    el('userRows').innerHTML = adminRow(d.admin) + rows;
+  } catch (e) {}
+}
+
+// 管理员行:合成的,永远排在第一行。没有删除/禁用/编辑按钮 —— 不是"藏起来了",
+// 而是这行的凭证在 adminUser/adminPassword,删了就没人能进管理台。
+function adminRow(a) {
+  if (!a) return '';
+  const dev = a.deviceCount
+    ? `<span class="tag acc" title="管理员可把聊天用量记到任意一台设备">全部设备 · ${a.deviceCount}</span>`
+    : '<span class="muted">还没有令牌</span>';
+  return `<tr class="row-admin">
+    <td><b>${esc(a.name)}</b> <span class="tag acc">管理员</span></td>
+    <td>${dev}</td>
+    <td><span class="muted">不限</span></td>
+    <td><span class="muted">全部</span></td>
+    <td><span class="st-2">正常</span></td>
+    <td class="muted">—</td>
+    <td class="muted">${a.lastLoginAt ? ago(a.lastLoginAt) : '本次启动后未登录'}</td>
+    <td class="act">${a.canManage
+      ? '<button class="sm" onclick="gotoAccount()">改登录名 / 密码</button>'
+      : '<span class="muted xs">环境变量配置,不可在线改</span>'}</td></tr>`;
+}
+
+// 配额单元格:不限就一个字,有限额则显示"已用/上限"并用条形量化(一眼看出谁快满了)
+function quotaCell(u) {
+  const q = u.quota || {};
+  const used = u.used || {};
+  if (q.unlimited) return '<span class="muted">不限</span>';
+  const label = (QUOTA_WINDOWS && QUOTA_WINDOWS[q.window]) || q.window;
+  const parts = [];
+  if (q.tokens) {
+    const pct = Math.min(100, Math.round(((used.tokens || 0) / q.tokens) * 100));
+    parts.push(`<div class="qrow"><span class="qlbl">${fmtNum(used.tokens)} / ${fmtNum(q.tokens)} tok</span>
+      <span class="qbar"><i style="width:${pct}%" class="${pct >= 90 ? 'err' : pct >= 70 ? 'warn' : ''}"></i></span></div>`);
+  }
+  if (q.costUsd) {
+    const pct = Math.min(100, Math.round(((used.cost || 0) / q.costUsd) * 100));
+    parts.push(`<div class="qrow"><span class="qlbl">${fmtUsd(used.cost)} / ${fmtUsd(q.costUsd)}</span>
+      <span class="qbar"><i style="width:${pct}%" class="${pct >= 90 ? 'err' : pct >= 70 ? 'warn' : ''}"></i></span></div>`);
+  }
+  return `<div class="qcell"><span class="muted xs">${esc(label)}</span>${parts.join('')}</div>`;
+}
+
+const userDlg = el('userDlg');
+function randomPw(n = 14) {
+  const cs = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return [...crypto.getRandomValues(new Uint32Array(n))].map((x) => cs[x % cs.length]).join('');
+}
+function genPw() { el('uPw').value = randomPw(); }
+function openUser(name) {
+  EDIT_USER = name || null;
+  el('userDlgTitle').textContent = EDIT_USER ? `编辑用户 · ${EDIT_USER}` : '创建用户';
+  el('uSaveBtn').textContent = EDIT_USER ? '保存' : '创建';
+  el('uName').value = EDIT_USER || '';
+  el('uName').disabled = !!EDIT_USER; // 用户名是主键,不支持改名(要改就删了重建)
+  el('uMsg').textContent = '';
+  show('uPwRow', !EDIT_USER); // 编辑模式改密走「重置密码」,避免误改
+  if (!EDIT_USER) el('uPw').value = randomPw();
+  // 当前绑定
+  let bound = new Set();
+  if (EDIT_USER) {
+    const row = (LAST_USERS || []).find((x) => x.name === EDIT_USER);
+    bound = new Set((row ? row.tokenIds : []) || []);
+  }
+  // 配额:窗口选项由服务端下发
+  el('uQWindow').innerHTML = Object.entries(QUOTA_WINDOWS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+  const q0 = (EDIT_USER ? ((LAST_USERS || []).find((x) => x.name === EDIT_USER) || {}).quota : null) || { window: 'month', tokens: 0, costUsd: 0 };
+  el('uQWindow').value = q0.window || 'month';
+  el('uQTokens').value = q0.tokens || '';
+  el('uQCost').value = q0.costUsd || '';
+
+  // 权限:编辑时回填该用户的,创建时用默认
+  const row0 = EDIT_USER ? (LAST_USERS || []).find((x) => x.name === EDIT_USER) : null;
+  const curPerms = (row0 && row0.perms) || PERM_DEFAULTS;
+  el('uPerms').innerHTML = Object.entries(PERM_META)
+    .map(([k, label]) => `<label class="check"><input type="checkbox" data-perm="${k}" ${curPerms[k] ? 'checked' : ''} /> ${esc(label)}</label>`)
+    .join('');
+  el('uTokens').innerHTML = USER_TOKENS.length
+    ? USER_TOKENS.map((t) => `<label class="check"><input type="checkbox" value="${t.id}" ${bound.has(t.id) ? 'checked' : ''} /> ${esc(t.name)} <span class="muted mono xs">${esc(t.tokenMask)}</span></label>`).join('')
+    : '<span class="muted">还没有客户端令牌,先去「客户端」页生成一个</span>';
+  userDlg.showModal();
+  if (!EDIT_USER) el('uName').focus();
+}
+async function saveUser() {
+  const name = el('uName').value.trim();
+  const tokenIds = [...el('uTokens').querySelectorAll('input[type=checkbox]:checked')].map((c) => c.value);
+  const perms = {};
+  el('uPerms').querySelectorAll('input[data-perm]').forEach((c) => { perms[c.dataset.perm] = c.checked; });
+  const quota = {
+    window: el('uQWindow').value,
+    tokens: Number(el('uQTokens').value) || 0,
+    costUsd: Number(el('uQCost').value) || 0,
+  };
+  el('uMsg').textContent = '';
+  if (EDIT_USER) {
+    const r1 = await api('/users/tokens', { method: 'POST', body: JSON.stringify({ name: EDIT_USER, tokenIds }) });
+    const d1 = await r1.json();
+    if (!r1.ok || !d1.ok) { el('uMsg').textContent = d1.error || '保存失败'; return; }
+    const r2 = await api('/users/perms', { method: 'POST', body: JSON.stringify({ name: EDIT_USER, perms }) });
+    const d2 = await r2.json();
+    if (!r2.ok || !d2.ok) { el('uMsg').textContent = d2.error || '权限保存失败'; return; }
+    const r3 = await api('/users/quota', { method: 'POST', body: JSON.stringify({ name: EDIT_USER, quota }) });
+    const d3 = await r3.json();
+    if (!r3.ok || !d3.ok) { el('uMsg').textContent = d3.error || '配额保存失败'; return; }
+    userDlg.close(); loadUsers(); toast(`已更新 ${EDIT_USER} 的设备、权限与配额`);
+    return;
+  }
+  const password = el('uPw').value;
+  const r = await api('/users', { method: 'POST', body: JSON.stringify({ name, password, tokenIds, perms, quota }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { el('uMsg').textContent = d.error || '创建失败'; return; }
+  userDlg.close();
+  loadUsers();
+  // 初始密码只在这一刻能看到(服务端只存哈希),所以用可复制的对话框而不是一闪而过的 toast
+  el('newToken').textContent = `${name} / ${password}`;
+  show('genForm', false); show('genResult', true);
+  el('genResult').querySelector('p').innerHTML = `用户 <b>${esc(name)}</b> 已创建。下面是<b>账号 / 初始密码</b>(服务端只存哈希,<b>只显示这一次</b>),发给对方后让他在 <span class="mono">${esc(location.origin)}/u</span> 登录:`;
+  genDlg.showModal();
+}
+async function resetUserPw(name) {
+  const pw = randomPw();
+  if (!await askConfirm('重置密码', `为 ${name} 生成一个新的随机密码?旧密码立即失效。`, '重置')) return;
+  const r = await api('/users/password', { method: 'POST', body: JSON.stringify({ name, password: pw }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '重置失败', 'err'); return; }
+  el('newToken').textContent = `${name} / ${pw}`;
+  show('genForm', false); show('genResult', true);
+  el('genResult').querySelector('p').innerHTML = `<b>${esc(name)}</b> 的新密码(<b>只显示这一次</b>):`;
+  genDlg.showModal();
+}
+async function toggleUser(name, disabled) {
+  const r = await api('/users/disable', { method: 'POST', body: JSON.stringify({ name, disabled }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '操作失败', 'err'); return; }
+  loadUsers();
+  toast(`${name} 已${disabled ? '禁用(其登录会话立即失效)' : '启用'}`);
+}
+async function removeUser(name) {
+  if (!await askConfirm('删除用户', `删除用户 ${name}?他将立即无法登录用户端。客户端令牌本身不受影响。`, '删除')) return;
+  const r = await api('/users/remove', { method: 'POST', body: JSON.stringify({ name }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '删除失败', 'err'); return; }
+  loadUsers();
+  toast(`已删除用户 ${name}`);
 }
 
 // ── 模型/参数页 ──
@@ -1215,18 +1634,53 @@ async function revoke(id, name, mask) {
   else toast('吊销失败:' + (d.error || '未找到'), 'err');
 }
 
-async function changePw() {
-  el('pwMsg').textContent = ''; el('pwMsg').className = 'ok-msg';
+// 管理台账号:登录名 + 密码。都验当前密码,任填其一(留空 = 不动那一项)
+let ADMIN_ACCT = null;
+async function loadAccount() {
+  try {
+    const d = await (await api('/account')).json();
+    ADMIN_ACCT = d;
+    el('acctUser').value = d.user || '';
+    // 环境变量配的账号改不了(写不回文件,重启就丢)—— 直接把表单锁掉并说清原因
+    ['acctUser', 'oldPw', 'newPw', 'newPw2'].forEach((k) => { el(k).disabled = !d.canManage; });
+    el('acctBlock').querySelector('button.primary').disabled = !d.canManage;
+    if (!d.canManage) el('acctNote').innerHTML = '当前用<b>环境变量</b>配置管理台账号,无法在线修改(改了也写不回 <span class="mono">config.json</span>,重启就丢)。改用 config.json 即可在这里改。';
+  } catch (e) {}
+}
+async function saveAccount() {
+  const msg = el('pwMsg');
+  msg.textContent = ''; msg.className = 'ok-msg';
+  const username = el('acctUser').value.trim();
   const oldPassword = el('oldPw').value, newPassword = el('newPw').value;
-  if (newPassword !== el('newPw2').value) { el('pwMsg').className = 'err-msg'; el('pwMsg').textContent = '两次新密码不一致'; return; }
-  const r = await api('/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) });
+  const fail = (t) => { msg.className = 'err-msg'; msg.textContent = t; };
+  if (!oldPassword) return fail('请填当前密码');
+  if (newPassword !== el('newPw2').value) return fail('两次新密码不一致');
+  const r = await api('/account', { method: 'POST', body: JSON.stringify({ username, oldPassword, newPassword }) });
   const d = await r.json();
-  if (r.ok && d.ok) { el('pwMsg').textContent = '✅ 密码已修改'; el('oldPw').value = el('newPw').value = el('newPw2').value = ''; }
-  else { el('pwMsg').className = 'err-msg'; el('pwMsg').textContent = '失败:' + (d.error || '未知'); }
+  if (!r.ok || !d.ok) return fail('失败:' + (d.error || '未知'));
+  const done = [d.renamed ? `登录名已改为 ${d.user}` : '', d.passwordChanged ? '密码已修改' : ''].filter(Boolean).join('、');
+  msg.textContent = '✅ ' + done;
+  el('oldPw').value = el('newPw').value = el('newPw2').value = '';
+  if (d.user) el('acctUser').value = d.user;
+  loadUsers(); // 用户列表里的管理员行要跟着改名
+}
+
+// 从「用户」页跳过来改账号:定位到设置页并把光标放在登录名上
+function gotoAccount() {
+  switchTab('settings');
+  const f = el('acctUser');
+  f.focus(); f.select();
+  el('acctBlock').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // ── 实时日志(分块持久化 + 分页)──
-const LOG_PAGE = 100;
+let LOG_PAGE = 100; // 每页行数,可在工具条切换(记在 localStorage)
+try { const v = Number(localStorage.getItem('cc-log-page')); if ([25, 50, 100, 200, 500].includes(v)) LOG_PAGE = v; } catch {}
+function onPerPage() {
+  LOG_PAGE = Number(el('logPerPage').value) || 100;
+  try { localStorage.setItem('cc-log-page', String(LOG_PAGE)); } catch {}
+  reloadLogs(0); // 换页长后从第一页重新开始,否则 offset 会指到奇怪的位置
+}
 let logOffset = 0;
 let logTotal = 0;
 

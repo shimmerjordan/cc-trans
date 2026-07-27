@@ -3,13 +3,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CATALOG, CATALOG_VERSION, DEFAULT_OVERRIDES } from './models.js';
+import { PERMS, DEFAULT_PERMS, QUOTA_WINDOWS, effectiveQuota } from './users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(__dirname, 'admin-ui.html');
+const TOKENS_FILE = path.join(__dirname, 'ui-tokens.css'); // 与用户端共享的设计令牌
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 会话 12 小时
 
 // 每个 tab 对应一个 URL:这些路径都返回单页应用本体(前端据 pathname 选中对应 tab)
-export const TABS = ['overview', 'clients', 'models', 'logs', 'settings'];
+export const TABS = ['overview', 'clients', 'users', 'models', 'logs', 'settings'];
 const TAB_PATHS = new Set(TABS.map((t) => '/' + t));
 
 function sendJson(res, status, obj) {
@@ -38,13 +40,17 @@ function idOf(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 12);
 }
 
-export function createAdmin({ prefix, credentials, config, getOauth, metrics, tokenAdmin, modelStore, logStore, upstreamAdmin, maskToken, log }) {
+export function createAdmin({ prefix, credentials, config, getOauth, metrics, tokenAdmin, users, chat, chatUi, modelStore, logStore, storage, upstreamAdmin, maskToken, log }) {
   // oauth provider 可被管理台热重建 —— 每次用时通过 getOauth() 取当前实例,别缓存
   const oauthNow = () => (typeof getOauth === 'function' ? getOauth() : null);
   const sessions = new Map(); // sessionToken -> expiresAt
   let ui = '';
   try {
     ui = fs.readFileSync(UI_FILE, 'utf8');
+    // 设计令牌与用户端(/u)共享同一份文件,替换页面里的占位符 —— 不要在页面里
+    // 再复制一份令牌,那是漂移的来源
+    // 替换函数,不用替换串 —— 后者会把 CSS 里的 $& 之类当特殊模式
+    ui = ui.replace('/*__TOKENS__*/', () => fs.readFileSync(TOKENS_FILE, 'utf8'));
   } catch (err) {
     log(`⚠️ 管理台页面读取失败 ${UI_FILE}: ${err.message}`);
   }
@@ -147,6 +153,14 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       return res.end(body);
     }
 
+    // 管理员聊天页(与 /u/chat 同一份 HTML,前端按路径推导 API 前缀)。
+    // 管理员本就能看全部令牌,所以他的"可用设备"= 全部令牌。
+    if (req.method === 'GET' && sub.replace(/\/+$/, '') === '/chat') {
+      const body = Buffer.from(chatUi || '', 'utf8');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+      return res.end(body);
+    }
+
     // 元信息(无需鉴权):供登录页显示默认用户名
     if (sub === '/api/meta' && req.method === 'GET') {
       return sendJson(res, 200, { service: 'cc-trans', user: credentials.user });
@@ -168,6 +182,19 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       if (!authed(req, u)) return sendJson(res, 401, { error: '未登录或会话过期' });
     } else {
       return sendJson(res, 404, { error: 'not found' });
+    }
+
+    // 管理员聊天:内部主体 __admin__,设备 = 全部令牌,权限全开。
+    // 会话存在 chats/__admin__/,与普通用户目录互不相干(用户名是保留字,占不到)。
+    if (sub.startsWith('/api/chat')) {
+      if (!chat) return sendJson(res, 404, { error: '聊天未启用' });
+      const me = {
+        name: '__admin__',
+        tokenIds: tokenAdmin.list().map((t) => idOf(t.token)),
+        perms: { chat: true, logs: true, cost: true, revealToken: true },
+        isAdmin: true,
+      };
+      return chat.handle(sub.slice('/api/chat'.length) || '/', req, res, me);
     }
 
     if (sub === '/api/status' && req.method === 'GET') {
@@ -199,6 +226,24 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       return sendJson(res, r.ok ? 200 : 400, r);
     }
 
+    if (sub === '/api/account' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        user: credentials.user,
+        canManage: credentials.canManage ? credentials.canManage() : false,
+        lastLoginAt: credentials.lastLoginAt ? credentials.lastLoginAt() : 0,
+      });
+    }
+
+    // 管理台账号:登录名 + 密码在一个接口里改(都是凭证,都验当前密码,任填其一)
+    if (sub === '/api/account' && req.method === 'POST') {
+      const b = await readJson(req);
+      const r = credentials.changeAccount
+        ? credentials.changeAccount({ username: b.username, oldPassword: b.oldPassword || '', newPassword: b.newPassword || '' })
+        : credentials.changePassword(b.oldPassword || '', b.newPassword || '');
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    // 老路径:只改密码。保留是因为它是已发布过的接口
     if (sub === '/api/password' && req.method === 'POST') {
       const b = await readJson(req);
       const r = credentials.changePassword(b.oldPassword || '', b.newPassword || '');
@@ -211,6 +256,7 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       // 配置里的令牌:只暴露 掩码 + 稳定 id(明文永不出服务端)
       const tokens = tokenAdmin.list().map((t) => ({
         id: idOf(t.token),
+        owners: users ? users.list().filter((u) => (u.tokenIds || []).includes(idOf(t.token))).map((u) => u.name) : [],
         name: t.name,
         tokenMask: maskToken(t.token),
         overrides: t.overrides || {},
@@ -228,11 +274,98 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       });
     }
 
+    // ── 用户账号(普通用户登录用;数据层在 users.js,与用户端 /u 共用)──
+    if (sub === '/api/users' && req.method === 'GET') {
+      // 附上每个用户绑定令牌的名字,前端不用自己拼
+      const byId = new Map(tokenAdmin.list().map((t) => [idOf(t.token), t]));
+      const list = users.list().map((u) => {
+        const names = (u.tokenIds || []).map((id) => (byId.get(id) ? byId.get(id).name : null)).filter(Boolean);
+        return {
+          ...u,
+          tokens: (u.tokenIds || []).map((id) => ({
+            id,
+            name: byId.get(id) ? byId.get(id).name : null, // null = 令牌已被吊销
+          })),
+          // 该用户名下令牌在配额窗口内的已用量(共享一份额度)
+          used: names.length ? metrics.usageFor(names, u.quota.window) : { tokens: 0, cost: 0, requests: 0 },
+        };
+      });
+      return sendJson(res, 200, {
+        canManage: users.canManage(),
+        permMeta: PERMS,
+        permDefaults: DEFAULT_PERMS,
+        quotaWindows: QUOTA_WINDOWS,
+        users: list,
+        // 管理员不在 config.users 里(凭证是 adminUser/adminPassword),但必须出现在这张表上:
+        // 否则"系统里有哪些账号"这个问题在唯一该回答它的地方缺了一行。
+        // 它是合成行 —— 不可删除、不可禁用、不受配额限制、设备=全部令牌。
+        admin: {
+          name: credentials.user,
+          isAdmin: true,
+          canManage: credentials.canManage ? credentials.canManage() : false,
+          lastLoginAt: credentials.lastLoginAt ? credentials.lastLoginAt() : 0,
+          deviceCount: tokenAdmin.list().length,
+        },
+        // 可分配的令牌清单(掩码)
+        tokens: tokenAdmin.list().map((t) => ({ id: idOf(t.token), name: t.name, tokenMask: maskToken(t.token) })),
+      });
+    }
+
+    if (sub === '/api/users' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '当前用环境变量配置,无法在线管理用户;请改用 config.json' });
+      const b = await readJson(req);
+      const r = users.create({ name: b.name, password: b.password, tokenIds: b.tokenIds || [], note: b.note, perms: b.perms, quota: b.quota });
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/password' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.setPassword(b.name, b.password);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/tokens' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.setTokens(b.name, b.tokenIds || []);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/quota' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.setQuota(b.name, b.quota || {});
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/perms' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.setPerms(b.name, b.perms || {});
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/disable' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.setDisabled(b.name, !!b.disabled);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (sub === '/api/users/remove' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.remove(b.name);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
     if (sub === '/api/tokens' && req.method === 'POST') {
       if (!tokenAdmin.canManage()) return sendJson(res, 400, { error: '当前用环境变量配置令牌,无法在线增删;请改用 config.json' });
       const b = await readJson(req);
       const name = String(b.name || '').trim() || 'client';
       const entry = tokenAdmin.add(name);
+      if (entry.error) return sendJson(res, 400, { error: entry.error });
       log(`管理台新增客户端令牌: ${name} (${maskToken(entry.token)})`);
       return sendJson(res, 200, { name: entry.name, token: entry.token }); // 明文只在创建时返回一次
     }
@@ -351,6 +484,24 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       const r = logStore.prune({ before, from, to });
       log(`管理台清理日志: ${JSON.stringify({ before, from, to })} → 删除 ${r.removedEntries} 条 / ${r.removedBlocks} 块`);
       return sendJson(res, 200, { ok: true, ...r, stats: logStore.stats() });
+    }
+
+    // ── 存储占用与清理 ──
+    // 扫盘比其它接口贵(要 stat 整个数据目录 + 读全部会话找孤儿图片),
+    // 所以概览页 5 秒一次的轮询【不带】它,只在进页面/点刷新/清理完之后拉。
+    if (sub === '/api/storage' && req.method === 'GET') {
+      if (!storage || !storage.enabled) return sendJson(res, 200, { enabled: false });
+      const withOrphans = u.searchParams.get('orphans') !== '0';
+      return sendJson(res, 200, storage.scan({ withOrphans }));
+    }
+
+    if (sub === '/api/storage/prune' && req.method === 'POST') {
+      if (!storage || !storage.enabled) return sendJson(res, 400, { error: '当前未启用数据目录' });
+      const b = await readJson(req);
+      const r = storage.prune(String(b.key || ''), String(b.mode || ''));
+      if (!r.ok) return sendJson(res, 400, r);
+      log(`管理台清理存储: ${b.key}/${b.mode} → ${r.message}`);
+      return sendJson(res, 200, { ...r, storage: storage.scan() });
     }
 
     if (sub === '/api/logs/stream' && req.method === 'GET') {

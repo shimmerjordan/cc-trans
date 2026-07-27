@@ -113,7 +113,13 @@ export function createLogStore({ dir = null, retentionDays = 14, log = () => {} 
     if (!f) return true;
     if (f.from && e.ts < f.from) return false;
     if (f.to && e.ts > f.to) return false;
-    if (f.client && e.client !== f.client) return false;
+    // client 支持数组:用户端要一次查自己绑定的【多个】令牌,
+    // 若只支持单值就得多次查询再合并,分页会算不对
+    if (f.client) {
+      if (Array.isArray(f.client)) {
+        if (!f.client.includes(e.client)) return false;
+      } else if (e.client !== f.client) return false;
+    }
     if (f.errorsOnly && !(e.status === 0 || e.status >= 400)) return false;
     if (f.status && Number(e.status) !== Number(f.status)) return false;
     if (f.q) {

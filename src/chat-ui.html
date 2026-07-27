@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cc-trans · 聊天</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%234f46e5'/%3E%3Ctext x='8' y='12' font-size='10' fill='white' text-anchor='middle' font-family='monospace'%3Ec%3C/text%3E%3C/svg%3E" />
+<style>
+  /*__TOKENS__*/
+
+  * { box-sizing: border-box; }
+  /* 必须在所有 display 规则之前:给元素设了 display:grid/flex 会【覆盖】浏览器
+     默认的 [hidden]{display:none},于是 hidden 的容器照样参与布局。
+     这曾让登录容器和 Artifacts 面板同时挤在页面里。 */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; font: var(--fs-base)/1.6 var(--sans);
+    background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+  :focus:not(:focus-visible) { outline: none; }
+
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line-strong);
+    background: var(--card); color: var(--ink); border-radius: var(--r-sm);
+    padding: 6px var(--s3); min-height: 32px; display: inline-flex; align-items: center; gap: 6px;
+    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 550; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.ghost { background: none; border-color: transparent; color: var(--muted); }
+  button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+  button.sm { min-height: 26px; padding: 2px var(--s2); font-size: var(--fs-sm); }
+  button.icon { padding: 6px; min-width: 32px; justify-content: center; }
+  button.icon svg { width: 15px; height: 15px; }
+  select, input, textarea {
+    font: inherit; font-size: var(--fs-md); color: var(--ink);
+    background: var(--card); border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm); padding: 5px var(--s2); min-height: 30px; max-width: 100%;
+  }
+  select { appearance: none; padding-right: 24px; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 11px center, right 6px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+  }
+  select:disabled { opacity: .6; cursor: not-allowed; background: var(--surface-2); }
+
+  /* ── 三栏骨架 ──
+     grid-template-rows: minmax(0,1fr) + 子项 min-height:0 是必须的:
+     默认 auto 行高会被"消息流"的内容撑到远超视口(实测 1732px vs 视口 1000px),
+     结果输入框被挤出屏幕、iframe 高度也跟着算错。 */
+  .app { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+  .app > * { min-height: 0; }
+  .app.with-panel { grid-template-columns: 260px 1fr minmax(360px, 38%); }
+  .app.rail { grid-template-columns: 0 1fr; }
+  .app.rail.with-panel { grid-template-columns: 0 1fr minmax(360px, 38%); }
+
+  /* ── 左栏:会话列表 ── */
+  aside {
+    background: var(--nav-bg); color: var(--nav-ink); display: flex; flex-direction: column;
+    min-width: 0; overflow: hidden; border-right: 1px solid oklch(0 0 0 / .2);
+  }
+  aside .top { padding: var(--s3); display: flex; gap: var(--s2); align-items: center; }
+  aside .brand { font-weight: 650; font-size: var(--fs-md); flex: 1; letter-spacing: .2px; white-space: nowrap; }
+  aside button { background: oklch(1 0 0 / .1); border-color: oklch(1 0 0 / .14); color: var(--nav-ink); }
+  aside button:hover:not(:disabled) { background: oklch(1 0 0 / .2); border-color: oklch(1 0 0 / .3); }
+  .new-chat { margin: 0 var(--s3) var(--s3); }
+  .new-chat button { width: 100%; justify-content: center; }
+  .sessions { flex: 1; overflow-y: auto; padding: 0 var(--s2) var(--s3); }
+  .sess {
+    display: flex; align-items: center; gap: 6px; padding: 7px var(--s2);
+    border-radius: var(--r-sm); cursor: pointer; color: oklch(1 0 0 / .72);
+    font-size: var(--fs-md); white-space: nowrap;
+  }
+  .sess:hover { background: oklch(1 0 0 / .08); color: var(--nav-ink); }
+  .sess.active { background: oklch(1 0 0 / .14); color: var(--nav-ink); }
+  .sess .t { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .sess .acts { display: none; gap: 2px; }
+  .sess:hover .acts, .sess.active .acts { display: flex; }
+  .sess .acts button { padding: 2px 5px; min-height: 0; font-size: var(--fs-xs); background: none; border: 0; color: oklch(1 0 0 / .6); }
+  .sess .acts button:hover { color: var(--nav-ink); background: oklch(1 0 0 / .16); }
+  /* 底栏:身份一行、操作一行。之前挤在一行会把"admin(管理员) · 0/200 对话"
+     和两个按钮压成折行,窄栏里必然溢出 */
+  aside .foot {
+    padding: var(--s3); border-top: 1px solid oklch(1 0 0 / .1);
+    font-size: var(--fs-xs); color: oklch(1 0 0 / .55);
+    display: flex; flex-direction: column; gap: var(--s2); min-width: 0;
+  }
+  aside .foot .me { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  aside .foot .me b { color: oklch(1 0 0 / .82); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  aside .foot .me span { flex: none; }
+  /* 只有快撞会话上限时才变色 —— 平时这里就是个中性的条数。
+     不能用 var(--warn):那是给亮底调的深琥珀,放到左栏这块【固定深色】上只有
+     3.46:1(11px 小字要 4.5:1)。左栏一律走"深底上的亮色",和旁边的
+     oklch(1 0 0 / .55) 同一套。 */
+  aside .foot .me span.near-cap { color: oklch(.85 .15 80); }
+  aside .foot .acts { display: flex; gap: var(--s2); align-items: center; }
+  aside .foot .acts a, aside .foot .acts button {
+    flex: 1; justify-content: center; text-align: center;
+    font-size: var(--fs-xs); padding: 4px var(--s2); min-height: 26px;
+    border-radius: var(--r-sm); text-decoration: none;
+    background: oklch(1 0 0 / .08); border: 1px solid oklch(1 0 0 / .12); color: oklch(1 0 0 / .78);
+    display: inline-flex; align-items: center;
+  }
+  aside .foot .acts a:hover, aside .foot .acts button:hover { background: oklch(1 0 0 / .18); color: var(--nav-ink); }
+
+  /* ── 中栏 ── */
+  main { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .bar {
+    display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4);
+    border-bottom: 1px solid var(--line); background: var(--card); flex-wrap: wrap; min-height: 48px;
+  }
+  .bar .grow { flex: 1; min-width: 0; }
+  .bar label { font-size: var(--fs-sm); color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+  .lock-note { font-size: var(--fs-xs); color: var(--warn); }
+
+  .stream { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; scroll-behavior: smooth; }
+  .stream-inner { max-width: 780px; margin: 0 auto; padding: var(--s6) var(--s4) var(--s4); }
+
+  .msg { margin-bottom: var(--s6); }
+  .msg.user { display: flex; justify-content: flex-end; }
+  .msg.user .bubble {
+    background: var(--accent-soft); border: 1px solid color-mix(in oklch, var(--accent) 24%, transparent);
+    border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
+    padding: var(--s3) var(--s4); max-width: min(86%, 620px); overflow-wrap: anywhere;
+  }
+  .msg.assistant .who { font-size: var(--fs-xs); color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: var(--s2); }
+  .msg.assistant .body { overflow-wrap: anywhere; }
+  .msg .imgs { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+  .msg .imgs img { max-height: 160px; border-radius: var(--r-sm); border: 1px solid var(--line); }
+  .msg .meta { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--s2); display: flex; gap: var(--s3); flex-wrap: wrap; align-items: center; }
+  .msg .err { color: var(--err); font-size: var(--fs-md); background: var(--err-soft); border: 1px solid color-mix(in oklch, var(--err) 30%, transparent); border-radius: var(--r-sm); padding: var(--s2) var(--s3); margin-top: var(--s2); }
+
+  /* 思考过程:默认折叠,像 claude.ai 那样可展开看 */
+  .think { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); margin-bottom: var(--s3); }
+  .think > summary { cursor: pointer; padding: 6px var(--s3); font-size: var(--fs-sm); color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+  .think > summary::-webkit-details-marker { display: none; }
+  .think > summary::before { content: "✦"; color: var(--accent); }
+  .think .tbody { padding: 0 var(--s3) var(--s3); font-size: var(--fs-md); color: var(--muted); white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
+
+  .typing::after {
+    content: ""; display: inline-block; width: 7px; height: 15px; margin-left: 3px;
+    background: var(--accent); vertical-align: text-bottom; animation: caret 1s steps(2) infinite;
+  }
+  @keyframes caret { 50% { opacity: 0; } }
+
+  /* ── Markdown 排版 ── */
+  .body h1, .body h2, .body h3, .body h4 { margin: var(--s5) 0 var(--s2); line-height: 1.3; }
+  .body h1 { font-size: 1.4em; } .body h2 { font-size: 1.25em; } .body h3 { font-size: 1.1em; } .body h4 { font-size: 1em; }
+  .body p { margin: 0 0 var(--s3); }
+  .body ul, .body ol { margin: 0 0 var(--s3); padding-left: 1.5em; }
+  .body li { margin: 3px 0; }
+  .body li > ul, .body li > ol { margin: 3px 0; }
+  .body blockquote { margin: 0 0 var(--s3); padding: 2px var(--s4); border-left: 2px solid var(--line-strong); color: var(--muted); }
+  .body code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  .body hr { border: 0; border-top: 1px solid var(--line); margin: var(--s5) 0; }
+  .body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .body .md-table-wrap { overflow-x: auto; margin: 0 0 var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); }
+  .body .md-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
+  .body .md-table th, .body .md-table td { border-bottom: 1px solid var(--line); padding: 6px var(--s3); }
+  .body .md-table th { background: var(--surface-2); color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .body .md-table tr:last-child td { border-bottom: 0; }
+  .body .md-task { display: inline-flex; align-items: center; gap: 6px; }
+  .body del { color: var(--muted); }
+
+  .code-block { margin: 0 0 var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; background: var(--surface-2); }
+  .code-head { display: flex; align-items: center; gap: var(--s2); padding: 4px var(--s3); background: var(--card); border-bottom: 1px solid var(--line); }
+  .code-lang { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); flex: 1; }
+  .code-block pre { margin: 0; padding: var(--s3); overflow-x: auto; }
+  .code-block code { font-family: var(--mono); font-size: var(--fs-md); background: none; border: 0; padding: 0; white-space: pre; }
+  .hl-com { color: var(--muted); font-style: italic; }
+  .hl-str { color: var(--ok); }
+  .hl-num { color: var(--warn); }
+  .hl-kw  { color: var(--accent); font-weight: 550; }
+  .hl-fn  { color: var(--c6); }
+  .hl-tag { color: var(--c7); }
+
+  /* ── 输入区 ── */
+  .composer { border-top: 1px solid var(--line); background: var(--card); padding: var(--s3) var(--s4) var(--s4); }
+  .composer-inner { max-width: 780px; margin: 0 auto; }
+  .drop {
+    border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--card);
+    padding: var(--s2) var(--s2) var(--s2) var(--s3); transition: border-color var(--dur-1) var(--ease);
+  }
+  .drop:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent); }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop textarea {
+    width: 100%; border: 0; background: none; resize: none; padding: var(--s2) 0;
+    min-height: 24px; max-height: 40vh; font-size: var(--fs-base); line-height: 1.55; box-shadow: none !important;
+  }
+  .drop textarea:focus-visible { outline: none; }
+  .pending { display: flex; gap: var(--s2); flex-wrap: wrap; padding: var(--s2) 0 0; }
+  .pending .thumb { position: relative; }
+  .pending img { height: 56px; border-radius: var(--r-sm); border: 1px solid var(--line); display: block; }
+  .pending .x {
+    position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--err); color: #fff; border: 0; font-size: 11px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; padding: 0; min-height: 0;
+  }
+  .send-row { display: flex; align-items: center; gap: var(--s2); padding-top: var(--s2); }
+  .send-row .hint { flex: 1; font-size: var(--fs-xs); color: var(--muted); }
+
+  /* ── 右栏:Artifacts ── */
+  .panel { background: var(--card); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+  .panel .phead { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); }
+  .panel .ptitle { flex: 1; font-size: var(--fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel .ptabs { display: flex; gap: 2px; padding: var(--s2) var(--s3) 0; flex-wrap: wrap; }
+  .panel .ptabs button { font-size: var(--fs-xs); }
+  .panel .ptabs button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  /* iframe 用绝对定位填满可视区:height:100% 在 flex+overflow:auto 的父级里
+     会按内容高算,导致预览内容被推到面板下方 */
+  .panel .pbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
+  .panel iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+  .panel .src { margin: 0; padding: var(--s3); font-family: var(--mono); font-size: var(--fs-md); white-space: pre; overflow: auto; }
+  .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; min-height: 26px; font-size: var(--fs-sm); }
+  .seg button.on { background: var(--accent); color: var(--accent-ink); }
+
+  .art-open { margin-left: auto; }
+
+  .empty { padding: 18vh var(--s5) 0; text-align: center; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); font-size: var(--fs-xl); margin-bottom: var(--s2); font-weight: 600; }
+  .empty .sub { font-size: var(--fs-md); max-width: 46ch; margin: 0 auto; }
+  .chips { display: flex; gap: var(--s2); justify-content: center; flex-wrap: wrap; margin-top: var(--s5); }
+  .chips button { font-size: var(--fs-md); border-radius: var(--r-full); }
+
+  .login { max-width: 360px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s7) var(--s6); box-shadow: var(--sh-2); }
+  .login h1 { font-size: var(--fs-xl); margin: 0 0 var(--s1); text-align: center; }
+  .login p { color: var(--muted); margin: 0 0 var(--s5); font-size: var(--fs-md); text-align: center; }
+  .login input { width: 100%; margin-bottom: var(--s3); min-height: 38px; }
+  .login button { width: 100%; justify-content: center; min-height: 38px; }
+  .err-msg { color: var(--err); font-size: var(--fs-md); min-height: 18px; margin-top: var(--s2); text-align: center; }
+
+  .toasts { position: fixed; right: var(--s4); bottom: var(--s4); z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7))); }
+  .toast { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--sh-2); padding: var(--s3) var(--s4); font-size: var(--fs-md); display: flex; gap: var(--s2); animation: tin var(--dur-2) var(--ease); }
+  .toast.err { border-color: color-mix(in oklch, var(--err) 40%, var(--line)); }
+  @keyframes tin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  @media (max-width: 900px) {
+    .app, .app.with-panel { grid-template-columns: 1fr; }
+    aside { position: fixed; inset: 0 auto 0 0; width: 270px; z-index: var(--z-modal); transform: translateX(-100%); transition: transform var(--dur-2) var(--ease); }
+    aside.open { transform: none; }
+    .app.with-panel .panel { position: fixed; inset: 0; z-index: var(--z-modal); }
+    .stream-inner { padding: var(--s4) var(--s3); }
+    .composer { padding: var(--s2) var(--s3) var(--s3); }
+    .hide-sm { display: none !important; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    .stream { scroll-behavior: auto; }
+  }
+</style>
+<script>
+  try {
+    const t = localStorage.getItem('cc-trans-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch {}
+</script>
+</head>
+<body>
+
+<div id="loginView" class="login" hidden>
+  <h1>cc-trans 聊天</h1>
+  <p id="loginHint">用你的账号登录</p>
+  <input id="user" type="text" placeholder="用户名" autocomplete="username" />
+  <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
+  <button class="primary" onclick="doLogin()">登录</button>
+  <div id="loginErr" class="err-msg"></div>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside id="side">
+    <div class="top">
+      <span class="brand">cc-trans</span>
+      <button class="icon" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
+        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+      </button>
+    </div>
+    <div class="new-chat"><button class="primary" onclick="newChat()">＋ 新对话</button></div>
+    <div class="sessions" id="sessions"></div>
+    <div class="foot">
+      <div class="me"><b id="whoName"></b><span id="whoMeta"></span></div>
+      <div class="acts">
+        <a href="#" id="homeLink">返回</a>
+        <button onclick="logout()">退出</button>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="bar">
+      <button class="icon ghost" onclick="toggleSide()" title="会话列表" aria-label="会话列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <label>模型
+        <select id="model" onchange="onModelChange()"></select>
+      </label>
+      <label id="thinkWrap">思考
+        <select id="thinking">
+          <option value="">默认</option>
+          <option value="adaptive">adaptive</option>
+          <option value="disabled">关闭</option>
+        </select>
+      </label>
+      <label id="effortWrap">深度
+        <select id="effort">
+          <option value="">默认</option>
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="xhigh">xhigh</option>
+          <option value="max">max</option>
+        </select>
+      </label>
+      <label class="hide-sm" id="devWrap" title="这次对话的用量记到哪台设备名下(与该设备的额度共享)">记账到
+        <select id="device" onchange="onDeviceChange()"></select>
+      </label>
+      <span class="grow"></span>
+      <span class="lock-note" id="lockNote"></span>
+      <button class="ghost hide-sm" id="panelBtn" onclick="togglePanel()" hidden>Artifacts</button>
+    </div>
+
+    <div class="stream" id="stream">
+      <div class="stream-inner" id="msgs"></div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-inner">
+        <div class="drop" id="drop">
+          <textarea id="input" rows="1" placeholder="给 Claude 发消息…(Enter 发送,Shift+Enter 换行,可直接粘贴或拖入图片)"></textarea>
+          <div class="pending" id="pending"></div>
+          <div class="send-row">
+            <button class="icon ghost" onclick="pickFile()" title="添加图片" aria-label="添加图片">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            </button>
+            <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onchange="onFiles(this.files)" />
+            <span class="hint" id="hint"></span>
+            <button id="stopBtn" onclick="stopGen()" hidden>■ 停止</button>
+            <button id="regenBtn" class="ghost" onclick="regen()" hidden>↻ 重新生成</button>
+            <button class="primary" id="sendBtn" onclick="send()">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="panel" id="panel" hidden>
+    <div class="phead">
+      <span class="ptitle" id="pTitle">Artifacts</span>
+      <div class="seg" id="pMode">
+        <button class="on" data-mode="preview" onclick="setPanelMode('preview')">预览</button>
+        <button data-mode="src" onclick="setPanelMode('src')">源码</button>
+      </div>
+      <button class="sm" onclick="copyArtifact()">复制</button>
+      <button class="sm" onclick="downloadArtifact()">下载</button>
+      <button class="icon ghost" onclick="togglePanel(false)" aria-label="关闭">✕</button>
+    </div>
+    <div class="ptabs" id="pTabs"></div>
+    <div class="pbody" id="pBody"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+/*__MD__*/
+</script>
+
+<script>
+// 同一份页面服务两个入口:/u/chat(普通用户)与 /admin/chat(管理员)。
+// API 前缀从路径推导,别硬编码 —— 否则要么维护两份页面,要么管理员用不了。
+const IS_ADMIN = location.pathname.startsWith('/admin');
+const API = IS_ADMIN ? '/admin/api' : '/u/api';
+const SESS_KEY = IS_ADMIN ? 'cc-trans-admin' : 'cc-trans-user';
+const HOME = IS_ADMIN ? '/admin/overview' : '/u/devices';
+let SESSION = sessionStorage.getItem(SESS_KEY) || '';
+let ME = null, META = null;
+let curId = null;          // 当前会话 id
+let messages = [];         // 当前会话消息
+let pendingImgs = [];      // 待发送图片 [{id, mime, url}]
+let abortCtl = null;       // 进行中的生成
+let artifacts = [], artIndex = 0, panelMode = 'preview';
+
+const el = (id) => document.getElementById(id);
+const show = (id, on) => { el(id).hidden = !on; };
+
+function toast(msg, kind = 'ok') {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.textContent = msg;
+  el('toasts').appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+// ── 主题(与其它页共享 localStorage 键)──
+const ICONS = {
+  auto: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  light: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  dark: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+};
+function curTheme() { return document.documentElement.dataset.theme || 'auto'; }
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { t === 'auto' ? localStorage.removeItem('cc-trans-theme') : localStorage.setItem('cc-trans-theme', t); } catch {}
+  el('themeIcon').innerHTML = ICONS[t];
+}
+function toggleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[curTheme()]); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}), authorization: 'Bearer ' + SESSION } });
+  if (r.status === 401) { toLogin(); throw new Error('unauthorized'); }
+  return r;
+}
+function toLogin() {
+  SESSION = ''; sessionStorage.removeItem(SESS_KEY);
+  show('app', false); show('loginView', true); el('pw').focus();
+}
+async function doLogin() {
+  el('loginErr').textContent = '';
+  const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { el('loginErr').textContent = d.error || '登录失败'; return; }
+  SESSION = d.session; sessionStorage.setItem(SESS_KEY, SESSION);
+  el('pw').value = ''; boot();
+}
+async function logout() {
+  try { await api('/logout', { method: 'POST' }); } catch {}
+  toLogin();
+}
+el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+// ── 布局开关 ──
+function toggleSide(force) {
+  const s = el('side');
+  if (window.innerWidth <= 900) s.classList.toggle('open', force);
+  else el('app').classList.toggle('rail', force === undefined ? !el('app').classList.contains('rail') : !force);
+}
+function togglePanel(force) {
+  const on = force === undefined ? !el('app').classList.contains('with-panel') : force;
+  el('app').classList.toggle('with-panel', on);
+  show('panel', on);
+}
+
+// ── 会话 ──
+async function loadSessions() {
+  const d = await (await api('/chat/sessions')).json();
+  const rows = d.sessions || [];
+  el('sessions').innerHTML = rows.length
+    ? rows.map((s) => `<div class="sess ${s.id === curId ? 'active' : ''}" onclick="openChat('${s.id}')" title="${escapeHtml(s.title || '新对话')}">
+        <span class="t">${escapeHtml(s.title || '新对话')}</span>
+        <span class="acts">
+          <button onclick="event.stopPropagation();renameChat('${s.id}')" title="重命名">✎</button>
+          <button onclick="event.stopPropagation();delChat('${s.id}')" title="删除">🗑</button>
+        </span></div>`).join('')
+    : '<div style="padding:var(--s3);font-size:var(--fs-sm);color:oklch(1 0 0 / .5)">还没有对话</div>';
+  // 会话条数。上限是【磁盘保护】不是额度(超了删最旧的,不拒请求,管理员一样受约束),
+  // 所以平时只报条数 —— 写成 "0/200" 摆在"(管理员)"旁边,长得就像个额度徽标,会让人
+  // 以为不限额的账号还被限了。只在快撞上限(≥80%)时才把上限亮出来,那时它才真的影响你。
+  if (d.stats) {
+    const n = d.stats.sessions, cap = d.stats.maxSessions;
+    const near = cap > 0 && n >= cap * 0.8;
+    const meta = el('whoMeta');
+    meta.textContent = near ? `· ${n}/${cap} 对话` : `· ${n} 个对话`;
+    meta.classList.toggle('near-cap', near);
+    meta.title = cap > 0
+      ? `已保存 ${n} 个对话。超过 ${cap} 个时自动删掉最旧的 —— 这是磁盘保护,不是额度限制。上限可在 config.json 的 chatMaxSessions 里调,0 = 不限。`
+      : `已保存 ${n} 个对话(未设上限)。`;
+  }
+}
+function newChat() {
+  curId = null; messages = []; artifacts = []; togglePanel(false);
+  render(); loadSessions();
+  el('input').focus();
+  history.replaceState({}, '', (IS_ADMIN ? '/admin/chat' : '/u/chat'));
+  if (window.innerWidth <= 900) toggleSide(false);
+}
+async function openChat(id) {
+  const r = await api('/chat/session?id=' + encodeURIComponent(id));
+  if (!r.ok) { toast('会话打开失败', 'err'); return; }
+  const d = await r.json();
+  curId = d.session.id;
+  messages = d.session.messages || [];
+  if (d.session.model) el('model').value = d.session.model;
+  render(); loadSessions(); refreshArtifacts();
+  if (window.innerWidth <= 900) toggleSide(false);
+}
+async function renameChat(id) {
+  const cur = (messages && curId === id && messages.length) ? '' : '';
+  const title = prompt('新的对话标题:', cur);
+  if (title == null) return;
+  await api('/chat/session/rename', { method: 'POST', body: JSON.stringify({ id, title }) });
+  loadSessions();
+}
+async function delChat(id) {
+  if (!confirm('删除这个对话?不可恢复。')) return;
+  await api('/chat/session/remove', { method: 'POST', body: JSON.stringify({ id }) });
+  if (id === curId) newChat(); else loadSessions();
+}
+
+// ── 渲染 ──
+function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : (n / 1e6).toFixed(1) + 'M'; }
+
+function renderMsg(m, i) {
+  if (m.role === 'user') {
+    const imgs = (m.images || []).map((im) => `<img src="${API}/chat/image?id=${encodeURIComponent(im.id)}&s=${encodeURIComponent(SESSION)}" alt="附图" />`).join('');
+    return `<div class="msg user"><div class="bubble">${imgs ? `<div class="imgs">${imgs}</div>` : ''}${escapeHtml(m.content).replace(/\n/g, '<br />')}</div></div>`;
+  }
+  const think = m.thinking
+    ? `<details class="think"><summary>思考过程</summary><div class="tbody">${escapeHtml(m.thinking)}</div></details>`
+    : '';
+  const body = m.content ? renderMarkdown(m.content) : '';
+  const u = m.usage || {};
+  const meta = [];
+  if (m.model) meta.push(escapeHtml(m.model));
+  if (u.output) meta.push(`in ${fmtNum(u.input)} / out ${fmtNum(u.output)}${u.cacheRead ? ' / 缓存 ' + fmtNum(u.cacheRead) : ''}`);
+  if (m.stopped) meta.push('已停止');
+  return `<div class="msg assistant" data-i="${i}">
+    <div class="who">Claude</div>
+    ${think}
+    <div class="body">${body}</div>
+    ${m.error ? `<div class="err">${escapeHtml(m.error)}</div>` : ''}
+    ${meta.length ? `<div class="meta">${meta.map((x) => `<span>${x}</span>`).join('')}</div>` : ''}
+  </div>`;
+}
+
+function render() {
+  if (!messages.length) {
+    el('msgs').innerHTML = `<div class="empty"><b>开始一段对话</b>
+      <div class="sub">这里的请求会通过本机的 Claude 订阅转发,用量记在你选的那台设备名下(可在「我的设备」查看)。</div>
+      <div class="chips">
+        <button onclick="quick('用一句话解释 CAP 定理')">解释一个概念</button>
+        <button onclick="quick('帮我写一个 Node 的 LRU 缓存,带测试')">写代码</button>
+        <button onclick="quick('做一个可交互的 HTML 柱状图 demo')">做个可预览的页面</button>
+      </div></div>`;
+    show('regenBtn', false);
+    return;
+  }
+  el('msgs').innerHTML = messages.map(renderMsg).join('');
+  bindCodeButtons();
+  show('regenBtn', !abortCtl && messages.some((m) => m.role === 'assistant'));
+  scrollDown();
+}
+function quick(t) { el('input').value = t; autoGrow(); send(); }
+function scrollDown() { const s = el('stream'); s.scrollTop = s.scrollHeight; }
+
+// 代码块的「复制」与「在侧栏打开」——事件委托后绑定,避免 innerHTML 里塞 onclick
+function bindCodeButtons() {
+  el('msgs').querySelectorAll('.code-block').forEach((blk) => {
+    const copyBtn = blk.querySelector('[data-copy]');
+    if (copyBtn && !copyBtn.dataset.bound) {
+      copyBtn.dataset.bound = '1';
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(blk.querySelector('code').textContent)
+          .then(() => toast('已复制代码')).catch(() => toast('复制失败', 'err'));
+      };
+    }
+    // 属于 artifact 的代码块加一个「在侧栏打开」
+    const idx = Number(blk.dataset.codeIndex);
+    const art = artifacts.find((a) => a.index === idx);
+    if (art && !blk.querySelector('.art-open')) {
+      const b = document.createElement('button');
+      b.className = 'code-copy art-open';
+      b.type = 'button';
+      b.textContent = art.kind === 'preview' ? '预览 ▸' : '侧栏打开 ▸';
+      b.onclick = () => openArtifact(artifacts.indexOf(art));
+      blk.querySelector('.code-head').appendChild(b);
+    }
+  });
+}
+
+// ── Artifacts ──
+function refreshArtifacts() {
+  const all = [];
+  messages.forEach((m) => {
+    if (m.role !== 'assistant' || !m.content) return;
+    for (const a of extractArtifacts(m.content)) all.push(a);
+  });
+  artifacts = all;
+  show('panelBtn', artifacts.length > 0);
+  if (!artifacts.length) togglePanel(false);
+  el('pTabs').innerHTML = artifacts.map((a, i) =>
+    `<button class="${i === artIndex ? 'on' : ''}" onclick="openArtifact(${i})">${escapeHtml(a.title)}</button>`).join('');
+  bindCodeButtons();
+}
+function openArtifact(i) {
+  if (!artifacts[i]) return;
+  artIndex = i;
+  const a = artifacts[i];
+  panelMode = a.kind === 'preview' ? 'preview' : 'src';
+  togglePanel(true);
+  drawPanel();
+  refreshArtifacts();
+}
+function setPanelMode(m) { panelMode = m; drawPanel(); }
+function drawPanel() {
+  const a = artifacts[artIndex];
+  if (!a) return;
+  el('pTitle').textContent = a.title;
+  el('pMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === panelMode));
+  el('pMode').querySelector('[data-mode=preview]').disabled = a.kind !== 'preview';
+  if (panelMode === 'preview' && a.kind === 'preview') {
+    // 沙箱:给 allow-scripts 但【绝不】给 allow-same-origin —— 两个一起给等于没有沙箱。
+    // 用 srcdoc 注入,预览内容拿不到本页 DOM、cookie、localStorage。
+    const f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups');
+    f.setAttribute('referrerpolicy', 'no-referrer');
+    f.srcdoc = a.lang === 'svg' ? `<body style="margin:0;display:grid;place-items:center;min-height:100vh">${a.code}</body>` : a.code;
+    el('pBody').innerHTML = '';
+    el('pBody').appendChild(f);
+  } else {
+    el('pBody').innerHTML = `<pre class="src"><code>${highlight(a.code, a.lang)}</code></pre>`;
+  }
+}
+function copyArtifact() {
+  const a = artifacts[artIndex];
+  if (!a) return;
+  navigator.clipboard.writeText(a.code).then(() => toast('已复制')).catch(() => toast('复制失败', 'err'));
+}
+function downloadArtifact() {
+  const a = artifacts[artIndex];
+  if (!a) return;
+  const ext = { html: 'html', svg: 'svg', js: 'js', ts: 'ts', python: 'py', py: 'py', json: 'json', css: 'css', sql: 'sql', bash: 'sh' }[a.lang] || 'txt';
+  const blob = new Blob([a.code], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `artifact-${artIndex + 1}.${ext}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── 图片 ──
+function pickFile() { el('file').click(); }
+async function onFiles(files) {
+  for (const f of files) await addImage(f);
+  el('file').value = '';
+}
+async function addImage(file) {
+  if (!file.type.startsWith('image/')) { toast('只支持图片', 'err'); return; }
+  if (META && file.size > META.maxImageBytes) { toast(`图片超过 ${Math.round(META.maxImageBytes / 1048576)}MB`, 'err'); return; }
+  const data = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1] || '');
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  const r = await api('/chat/image', { method: 'POST', body: JSON.stringify({ data, mime: file.type }) });
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || '上传失败', 'err'); return; }
+  pendingImgs.push({ id: d.id, mime: d.mime, url: URL.createObjectURL(file) });
+  drawPending();
+}
+function drawPending() {
+  el('pending').innerHTML = pendingImgs.map((p, i) =>
+    `<div class="thumb"><img src="${p.url}" alt="待发送图片" /><button class="x" onclick="rmImage(${i})" aria-label="移除">✕</button></div>`).join('');
+}
+function rmImage(i) { pendingImgs.splice(i, 1); drawPending(); }
+
+const drop = el('drop');
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', async (e) => {
+  e.preventDefault(); drop.classList.remove('over');
+  for (const f of e.dataTransfer.files) await addImage(f);
+});
+el('input').addEventListener('paste', async (e) => {
+  const items = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/'));
+  for (const it of items) {
+    const f = it.getAsFile();
+    if (f) { e.preventDefault(); await addImage(f); }
+  }
+});
+
+// ── 输入框 ──
+function autoGrow() {
+  const t = el('input');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, window.innerHeight * 0.4) + 'px';
+}
+el('input').addEventListener('input', autoGrow);
+el('input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+});
+
+// ── 模型 / 设备 ──
+function onModelChange() {
+  const m = (META.models || []).find((x) => x.id === el('model').value);
+  if (!m) return;
+  show('effortWrap', !!m.supportsEffort);
+  // Fable 5 这类不接受 thinking:disabled 的,把"关闭"选项摘掉而不是让它 400
+  const dis = el('thinking').querySelector('option[value=disabled]');
+  if (dis) dis.hidden = !m.thinkingDisabledOk;
+  if (!m.thinkingDisabledOk && el('thinking').value === 'disabled') el('thinking').value = '';
+  try { localStorage.setItem('cc-chat-model', el('model').value); } catch {}
+}
+function onDeviceChange() {
+  const d = (META.devices || []).find((x) => x.id === el('device').value);
+  try { localStorage.setItem('cc-chat-device', el('device').value); } catch {}
+  applyForced(d);
+}
+// 管理员给该设备设了强制参数时,锁掉对应选择器并说明 —— 策略优先于偏好
+function applyForced(d) {
+  const note = [];
+  // 管理员不被设备的强制模型锁住:那些 overrides 本来就是他自己配的,
+  // 锁他只是让他绕路去改配置。普通用户仍然锁(策略优先于偏好)。
+  const lockModel = !IS_ADMIN && !!(d && d.forcedModel);
+  if (IS_ADMIN && d && d.forcedModel) {
+    note.push(`该设备默认强制 ${d.forcedModel},管理员可自由切换`);
+  }
+  el('model').disabled = lockModel;
+  if (lockModel) {
+    if (![...el('model').options].some((o) => o.value === d.forcedModel)) {
+      const o = document.createElement('option');
+      o.value = d.forcedModel; o.textContent = d.forcedModel;
+      el('model').appendChild(o);
+    }
+    el('model').value = d.forcedModel;
+    note.push(`模型由管理员锁定为 ${d.forcedModel}`);
+  }
+  if (!IS_ADMIN && d && d.forcedThinking) { el('thinking').value = d.forcedThinking; el('thinking').disabled = true; note.push('思考模式已锁定'); }
+  else el('thinking').disabled = false;
+  if (!IS_ADMIN && d && d.forcedEffort) { el('effort').value = d.forcedEffort; el('effort').disabled = true; note.push('深度已锁定'); }
+  else el('effort').disabled = false;
+  el('lockNote').textContent = note.join(' · ');
+}
+
+// ── 发送 / 流式接收 ──
+function setBusy(b) {
+  show('stopBtn', b);
+  el('sendBtn').disabled = b;
+  el('input').disabled = b;
+  show('regenBtn', !b && messages.some((m) => m.role === 'assistant'));
+}
+function stopGen() { if (abortCtl) abortCtl.abort(); }
+function regen() { send({ regenerate: true }); }
+
+async function send(opts = {}) {
+  const text = el('input').value.trim();
+  if (!opts.regenerate && !text && !pendingImgs.length) return;
+  if (abortCtl) return;
+
+  const imgs = pendingImgs.map((p) => ({ id: p.id, mime: p.mime }));
+  if (!opts.regenerate) {
+    messages.push({ role: 'user', content: text, images: imgs, ts: Date.now() });
+    el('input').value = ''; autoGrow();
+    pendingImgs = []; drawPending();
+  } else {
+    while (messages.length && messages[messages.length - 1].role === 'assistant') messages.pop();
+  }
+
+  // 占位的 assistant 消息:边收边填
+  const holder = { role: 'assistant', content: '', thinking: '', model: el('model').value, usage: {} };
+  messages.push(holder);
+  render();
+  const bodyEl = () => el('msgs').querySelector('.msg.assistant:last-child .body');
+  const thinkEl = () => el('msgs').querySelector('.msg.assistant:last-child .think .tbody');
+  bodyEl()?.classList.add('typing');
+
+  abortCtl = new AbortController();
+  setBusy(true);
+  let sawDelta = false;
+
+  try {
+    const r = await fetch(API + '/chat/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + SESSION },
+      body: JSON.stringify({
+        sessionId: curId,
+        text: opts.regenerate ? '' : text,
+        images: opts.regenerate ? [] : imgs,
+        model: el('model').value,
+        thinking: el('thinking').value,
+        effort: el('effort').value,
+        deviceId: el('device').value,
+        regenerate: !!opts.regenerate,
+      }),
+      signal: abortCtl.signal,
+    });
+    if (r.status === 401) { toLogin(); return; }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      holder.error = d.error || `HTTP ${r.status}`;
+      render();
+      return;
+    }
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, nl);
+        buf = buf.slice(nl + 2);
+        const line = chunk.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+
+        if (ev.t === 'start') {
+          curId = ev.sessionId;
+          history.replaceState({}, '', (IS_ADMIN ? '/admin/chat' : '/u/chat') + '?c=' + encodeURIComponent(curId));
+        } else if (ev.t === 'delta') {
+          holder.content += ev.v;
+          sawDelta = true;
+          // 流式期间只更新这一条的正文,不整页重渲染(否则会闪且丢滚动位置)
+          const b = bodyEl();
+          if (b) { b.innerHTML = renderMarkdown(holder.content); b.classList.add('typing'); }
+          scrollDown();
+        } else if (ev.t === 'thinking') {
+          holder.thinking += ev.v;
+          let te = thinkEl();
+          if (!te) { render(); te = thinkEl(); }
+          if (te) te.textContent = holder.thinking;
+          scrollDown();
+        } else if (ev.t === 'usage') {
+          holder.usage = { input: ev.input, output: ev.output, cacheRead: ev.cacheRead, cacheWrite: ev.cacheWrite };
+        } else if (ev.t === 'error') {
+          holder.error = ev.message;
+        } else if (ev.t === 'done') {
+          holder.stopped = ev.stopped;
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') holder.stopped = true;
+    else holder.error = '网络中断: ' + err.message;
+  } finally {
+    abortCtl = null;
+    setBusy(false);
+    if (!sawDelta && !holder.error && !holder.thinking) holder.error = holder.error || '没有收到内容';
+    render();
+    refreshArtifacts();
+    loadSessions();
+  }
+}
+
+// ── 启动 ──
+async function boot() {
+  applyTheme(curTheme());
+  if (IS_ADMIN) el('loginHint').textContent = '用管理员账号登录';
+  if (!SESSION) { toLogin(); return; }
+  try {
+    // 管理员侧没有 /me(那是用户端的),用 /meta 的 user 字段
+    ME = IS_ADMIN ? { user: { name: 'admin' } } : await (await api('/me')).json();
+  } catch { return; }
+  show('loginView', false); show('app', true);
+  el('whoName').textContent = ME.user.name + (IS_ADMIN ? '(管理员)' : '');
+  el('homeLink').href = HOME;
+  el('homeLink').textContent = IS_ADMIN ? '返回管理台' : '我的设备';
+
+  META = await (await api('/chat/meta')).json();
+  const models = META.models || [];
+  el('model').innerHTML = models.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.id)}${m.latest ? ' ·最新' : ''}</option>`).join('');
+  let want = null;
+  try { want = localStorage.getItem('cc-chat-model'); } catch {}
+  if (want && models.some((m) => m.id === want)) el('model').value = want;
+  else {
+    // 默认挑一个"最新"的中高端模型,别让用户第一件事就是选模型
+    const pref = models.find((m) => m.latest && /opus|sonnet/i.test(m.id)) || models.find((m) => m.latest) || models[0];
+    if (pref) el('model').value = pref.id;
+  }
+  onModelChange();
+
+  const devs = META.devices || [];
+  el('device').innerHTML = devs.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join('');
+  show('devWrap', devs.length > 1);
+  if (!devs.length) {
+    el('hint').textContent = '还没有分配设备 —— 请让管理员在管理台「用户」页给你分配一个客户端令牌';
+    el('sendBtn').disabled = true;
+  } else {
+    let wd = null;
+    try { wd = localStorage.getItem('cc-chat-device'); } catch {}
+    if (wd && devs.some((d) => d.id === wd)) el('device').value = wd;
+    applyForced(devs.find((d) => d.id === el('device').value));
+    if (!META.persisted) el('hint').textContent = '未启用数据目录,会话不会保存';
+  }
+
+  await loadSessions();
+  const c = new URL(location.href).searchParams.get('c');
+  if (c) await openChat(c); else render();
+  el('input').focus();
+}
+boot();
+</script>
+</body>
+</html>

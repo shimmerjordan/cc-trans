@@ -21,6 +21,9 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
   let totals = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
   const byClient = new Map(); // name -> 聚合
   const daily = new Map(); // 'YYYY-MM-DD' -> { requests, errors, inTokens, outTokens, cacheReadTokens, cacheWriteTokens }
+  // client -> 'YYYY-MM-DD' -> 聚合。用户级配额要按"某几个令牌 + 某个时间窗口"算,
+  // 全局 daily 和累计 byClient 都答不了这个问题,所以需要这个交叉维度。
+  const byClientDaily = new Map();
   const recent = []; // 环形缓冲(内存态,重启清零)
   const subscribers = new Set(); // 实时日志订阅回调
   let seq = 0;
@@ -36,6 +39,7 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
         if (j.since) since = j.since;
         for (const [k, v] of Object.entries(j.daily || {})) daily.set(k, v);
         for (const [k, v] of Object.entries(j.byClient || {})) byClient.set(k, v);
+        for (const [c, days] of Object.entries(j.byClientDaily || {})) byClientDaily.set(c, new Map(Object.entries(days)));
         if (j.rateLimit) rateLimit = j.rateLimit;
       }
     } catch (err) {
@@ -57,6 +61,7 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
           totals,
           daily: Object.fromEntries(daily),
           byClient: Object.fromEntries(byClient),
+          byClientDaily: Object.fromEntries([...byClientDaily].map(([c, days]) => [c, Object.fromEntries(days)])),
           rateLimit,
         }),
         { mode: 0o600 },
@@ -113,6 +118,17 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
       byClient.set(name, c);
     }
     bumpAggregate(c, e, u);
+    // 交叉维度(客户端 × 日期),供用户级配额按窗口聚合
+    let cd = byClientDaily.get(name);
+    if (!cd) byClientDaily.set(name, (cd = new Map()));
+    let cdd = cd.get(day);
+    if (!cdd) {
+      cdd = { requests: 0, errors: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
+      cd.set(day, cdd);
+      // 与 daily 同样的保留期,避免无限增长
+      while (cd.size > MAX_DAILY_DAYS) cd.delete([...cd.keys()].sort()[0]);
+    }
+    bumpAggregate(cdd, e, u);
     c.lastSeen = e.ts;
     c.lastStatus = e.status;
     // 来源标注(异常请求排查用):记录最近一次的来源 IP / UA / 路径
@@ -182,6 +198,37 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
     };
   }
 
+  // 用户级配额用:把若干客户端在指定窗口内的用量加起来。
+  // window: 'day'(今天) | 'month'(本月) | 'total'(累计)
+  // tokens 口径 = 输入 + 输出,【不含缓存读】—— 缓存读量级巨大又极便宜,
+  // 拿它限额会让配额瞬间见底,失去意义;成本口径则包含缓存(已按价折算)。
+  function usageFor(clientNames, window = 'month') {
+    const names = Array.isArray(clientNames) ? clientNames : [clientNames];
+    const out = { requests: 0, inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 };
+    const add = (a) => {
+      if (!a) return;
+      out.requests += a.requests || 0;
+      out.inTokens += a.inTokens || 0;
+      out.outTokens += a.outTokens || 0;
+      out.cacheReadTokens += a.cacheReadTokens || 0;
+      out.cacheWriteTokens += a.cacheWriteTokens || 0;
+      out.cost += a.cost || 0;
+    };
+    if (window === 'total') {
+      for (const n of names) add(byClient.get(n));
+    } else {
+      const today = dayKey(Date.now());
+      const prefix = window === 'day' ? today : today.slice(0, 7); // 'YYYY-MM-DD' / 'YYYY-MM'
+      for (const n of names) {
+        const cd = byClientDaily.get(n);
+        if (!cd) continue;
+        for (const [d, agg] of cd) if (d.startsWith(prefix)) add(agg);
+      }
+    }
+    out.tokens = out.inTokens + out.outTokens; // 配额判定口径
+    return out;
+  }
+
   function recentLogs(limit = 200) {
     return recent.slice(-limit);
   }
@@ -189,6 +236,7 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
   // 某个客户端名被吊销/删除后,把它的聚合也清掉(可选)
   function forget(name) {
     byClient.delete(name);
+    byClientDaily.delete(name);
     dirty = true;
   }
 
@@ -197,5 +245,5 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
     save();
   }
 
-  return { record, setRateLimit, subscribe, snapshot, recentLogs, forget, flush };
+  return { record, setRateLimit, subscribe, snapshot, recentLogs, usageFor, forget, flush };
 }

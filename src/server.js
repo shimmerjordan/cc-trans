@@ -23,6 +23,11 @@ import { handleOpenAiCompat } from './openai_compat.js';
 import { createFileLogger, dirSize } from './logger.js';
 import { createModelStore } from './model_store.js';
 import { createLogStore } from './logstore.js';
+import { createStorage } from './storage.js';
+import { createUserStore, tokenIdOf, effectiveQuota } from './users.js';
+import { createChatStore } from './chat_store.js';
+import { createChat } from './chat.js';
+import { createUserPortal } from './user.js';
 
 function generateClientToken() {
   return 'cct-' + crypto.randomBytes(24).toString('base64url');
@@ -267,7 +272,10 @@ const tokenAdmin = {
   canManage: () => !!config.__file,
   list: () => clientTokens.map((t) => ({ token: t.token, name: t.name, overrides: t.overrides || {} })),
   add: (name) => {
-    const entry = { token: generateClientToken(), name: (name || 'client').trim() || 'client', overrides: {} };
+    const clean = (name || 'client').trim() || 'client';
+    // metrics 与 logStore 都以令牌名为聚合键,同名会把两台设备的数据混在一起
+    if (clientTokens.some((t) => t.name === clean)) return { error: `设备名 "${clean}" 已存在,请换一个` };
+    const entry = { token: generateClientToken(), name: clean, overrides: {} };
     clientTokens.push(entry);
     tokenMap.set(entry.token, entry);
     persistClientTokens();
@@ -280,6 +288,13 @@ const tokenAdmin = {
     tokenMap.delete(token);
     limiter.forget(token);
     persistClientTokens();
+    // 令牌没了,用户身上的绑定也不该留着。
+    // 出错要吼出来:这里曾经因为漏 import 而静默失败,留下能查到已吊销令牌的悬空绑定。
+    try {
+      users.forgetToken(tokenIdOf(token));
+    } catch (err) {
+      log(`⚠️ 清理用户令牌绑定失败(可能留下悬空绑定): ${err.message}`);
+    }
     return true;
   },
   // 按客户端下发参数(强制模型/thinking/effort/门禁前缀/参数清洗),写回 config.json 立即生效
@@ -295,8 +310,11 @@ const tokenAdmin = {
 // 管理台:adminEnabled 或设了 adminPassword 即启用;账号密码登录
 const ADMIN_PREFIX = '/admin';
 const adminOn = config.adminEnabled || !!config.adminPassword;
-const adminUser = config.adminUser || 'admin';
+// 登录名和密码都可以在线改,所以两个都是 let;对外一律经 adminCredentials 读,
+// 别把 adminUser 的值拷进别的常量里(改名后会读到旧值)。
+let adminUser = config.adminUser || 'admin';
 let adminPassword = config.adminPassword;
+let adminLastLoginAt = 0; // 只记在内存:登录一次就写一次 config.json 太吵
 let initialPasswordNotice = null;
 
 if (adminOn && !adminPassword) {
@@ -310,22 +328,113 @@ if (adminOn && !adminPassword) {
   }
 }
 
+// 登录名字符集与普通用户一致 —— 两边同一个命名空间(不允许重名),规则不该两套
+const ADMIN_NAME_RE = /^[a-zA-Z0-9._-]{2,32}$/;
+
 const adminCredentials = {
-  user: adminUser,
-  verify: (u, p) => u === adminUser && !!adminPassword && safeEqual(p, adminPassword),
-  changePassword: (oldPw, newPw) => {
-    if (!safeEqual(oldPw, adminPassword)) return { ok: false, error: '当前密码不正确' };
-    if (!newPw || String(newPw).length < 6) return { ok: false, error: '新密码至少 6 位' };
-    adminPassword = String(newPw);
+  // getter:改名后所有读取点(登录页默认名、用户列表里的管理员行、日志)自动跟上
+  get user() {
+    return adminUser;
+  },
+  lastLoginAt: () => adminLastLoginAt,
+  // 环境变量配置时不能在线改 —— 改了也写不回,重启就丢
+  canManage: () => !!config.__file,
+  verify: (u, p) => {
+    const ok = u === adminUser && !!adminPassword && safeEqual(p, adminPassword);
+    if (ok) adminLastLoginAt = Date.now();
+    return ok;
+  },
+  // 登录名和密码在同一个表单里改:两者都是凭证,都要验当前密码,任填其一。
+  changeAccount: ({ username, oldPassword, newPassword } = {}) => {
+    if (!config.__file) {
+      return { ok: false, error: '当前用环境变量配置管理台账号,无法在线修改;请改用 config.json' };
+    }
+    if (!safeEqual(String(oldPassword || ''), adminPassword)) return { ok: false, error: '当前密码不正确' };
+
+    const patch = {};
+    const wantName = String(username || '').trim();
+    if (wantName && wantName !== adminUser) {
+      if (!ADMIN_NAME_RE.test(wantName)) return { ok: false, error: '登录名需 2~32 位,仅限字母数字与 . _ -' };
+      if (wantName.toLowerCase() === '__admin__') return { ok: false, error: '"__admin__" 是内部保留名,请换一个' };
+      // 与普通用户同名会让"这个名字该去哪登录"变得没有答案,直接挡掉
+      if (users.list().some((u) => u.name.toLowerCase() === wantName.toLowerCase())) {
+        return { ok: false, error: `已有同名普通用户 "${wantName}",请换一个登录名` };
+      }
+      patch.adminUser = wantName;
+    }
+    const wantPw = String(newPassword || '');
+    if (wantPw) {
+      if (wantPw.length < 6) return { ok: false, error: '新密码至少 6 位' };
+      patch.adminPassword = wantPw;
+    }
+    if (!Object.keys(patch).length) return { ok: false, error: '没有要修改的内容' };
+
+    // 先落盘再改内存:写失败时进程里的凭证和文件不会对不上
     try {
-      if (config.__file) patchConfigFile({ adminPassword });
+      patchConfigFile(patch);
     } catch (err) {
       return { ok: false, error: '写回 config.json 失败: ' + err.message };
     }
-    log(`管理台密码已修改`);
-    return { ok: true };
+    if (patch.adminUser) {
+      log(`管理台登录名已修改: ${adminUser} → ${patch.adminUser}`);
+      adminUser = patch.adminUser;
+    }
+    if (patch.adminPassword) {
+      adminPassword = patch.adminPassword;
+      log(`管理台密码已修改`);
+    }
+    return { ok: true, user: adminUser, renamed: !!patch.adminUser, passwordChanged: !!patch.adminPassword };
   },
+  changePassword: (oldPw, newPw) => adminCredentials.changeAccount({ oldPassword: oldPw, newPassword: newPw }),
 };
+
+// 普通用户账号(与客户端令牌绑定)。数据层被管理台和用户端共用,
+// 越权判断只写一处。
+const users = createUserStore({
+  config,
+  persist: config.__file ? (list) => patchConfigFile({ users: list }) : null,
+  // 管理员改名后,新名字也要立刻变成普通用户的禁用名(双向互斥,只写这一处)
+  reservedName: () => adminCredentials.user,
+  log,
+});
+
+// 网页聊天:会话存服务端(<dataDir>/chats/<user>/),换浏览器还在
+const chatStore = createChatStore({
+  dir: dataDir ? path.join(dataDir, 'chats') : null,
+  maxSessions: config.chatMaxSessions,
+  maxMessages: config.chatMaxMessages,
+  log,
+});
+
+// 聊天页在用户端与管理台共用同一份 HTML(前端按 location 推导 API 前缀),
+// 所以这里读一次给两边用 —— 注入用替换【函数】,替换串会把 $& 当特殊模式。
+function readChatUi() {
+  try {
+    const dir = path.dirname(new URL(import.meta.url).pathname);
+    const mdSrc = fs.readFileSync(path.join(dir, 'md.js'), 'utf8').replace(/^export /gm, '');
+    return fs
+      .readFileSync(path.join(dir, 'chat-ui.html'), 'utf8')
+      .replace('/*__TOKENS__*/', () => fs.readFileSync(path.join(dir, 'ui-tokens.css'), 'utf8'))
+      .replace('/*__MD__*/', () => mdSrc);
+  } catch (err) {
+    log(`⚠️ 聊天页读取失败: ${err.message}`);
+    return '';
+  }
+}
+const chat = adminOn
+  ? createChat({ store: chatStore, modelStore, tokenAdmin, tokenIdOf, forward: chatForward, config, log })
+  : null;
+
+// 数据目录的占用统计与清理(概览页「存储占用」)。必须在 createAdmin 之前声明 ——
+// const 有 TDZ,放后面会在启动时直接崩(这坑踩过一次了)。
+const storage = createStorage({
+  dataDir,
+  chatStore,
+  logStore,
+  configFile: config.__file || null,
+  logFile: config.logFile || null,
+  log,
+});
 
 const admin = adminOn
   ? createAdmin({
@@ -335,10 +444,135 @@ const admin = adminOn
       getOauth: () => oauth, // 取当前实例(管理台可热切换订阅/密钥模式)
       metrics,
       tokenAdmin,
+      users,
+      chat, // 管理员也能用网页聊天(管理员本就有全部权限)
+      chatUi: readChatUi(),
       modelStore,
       logStore,
+      storage,
       upstreamAdmin,
       maskToken,
+      log,
+    })
+  : null;
+
+// ── 用户级配额 ───────────────────────────────────────────────────────────
+// 额度按【用户】算,与他名下所有令牌共享一份 —— 不是每个令牌各一份。
+// 口径是 token 数与花费金额,而不是请求次数(一次长对话和一句 hello 差几个数量级)。
+// 未绑定到任何用户的令牌(如管理员自用)不受限。
+function quotaCheck(tokenEntry) {
+  const owner = users.ownerOfToken(tokenIdOf(tokenEntry.token));
+  if (!owner) return null; // 没有归属用户 → 不限
+  const q = effectiveQuota(owner);
+  if (q.unlimited) return null;
+  // 该用户名下所有令牌的名字(配额是共享的)
+  const names = clientTokens.filter((t) => (owner.tokenIds || []).includes(tokenIdOf(t.token))).map((t) => t.name);
+  const used = metrics.usageFor(names, q.window);
+  const label = { day: '今天', month: '本月', total: '累计' }[q.window] || q.window;
+  if (q.tokens && used.tokens >= q.tokens) {
+    return { status: 429, message: `用户 ${owner.name} ${label} token 配额已用尽(${used.tokens}/${q.tokens})`, retryAfterSec: q.window === 'day' ? 3600 : 3600 };
+  }
+  if (q.costUsd && used.cost >= q.costUsd) {
+    return { status: 429, message: `用户 ${owner.name} ${label} 花费配额已用尽($${used.cost.toFixed(2)}/$${q.costUsd.toFixed(2)})`, retryAfterSec: 3600 };
+  }
+  return null;
+}
+
+// ── 网页聊天用的内部转发 ─────────────────────────────────────────────────
+// 聊天不另开上游通路,而是以【用户绑定的那台设备】的身份走这里,从而继承参数下发、
+// 限流/并发、成本估算与日志统计 —— 同一份额度、同一份账。
+// 与 handleProxy 的区别只在于:入口是一个 JS 对象而不是 HTTP 请求,出口是 Response
+// 而不是直接写 res(SSE 的翻译交给 chat.js)。规则本身完全复用同一批函数。
+async function chatForward({ tokenEntry, payload, signal, req }) {
+  const ov = effectiveOverrides(tokenEntry.overrides, { subscription: !!oauth });
+  const started = Date.now();
+  const clientName = tokenEntry.name;
+
+  // 伪造一个最小 req 给复用的改写/记账函数(它们只读 url 与 headers)
+  const fakeReq = {
+    method: 'POST',
+    url: '/v1/messages',
+    headers: {
+      'content-type': 'application/json',
+      'user-agent': String((req && req.headers['user-agent']) || 'cc-trans-web-chat'),
+      ...(req && req.headers['x-forwarded-for'] ? { 'x-forwarded-for': req.headers['x-forwarded-for'] } : {}),
+      ...(req && req.socket ? {} : {}),
+    },
+    socket: req ? req.socket : undefined,
+  };
+
+  const t = applyBodyTransforms(Buffer.from(JSON.stringify(payload), 'utf8'), fakeReq, ov);
+  const effectiveModel = t.effectiveModel || payload.model;
+
+  if (effectiveModel && !modelAllowed(ov.allowedModels, effectiveModel)) {
+    recordMetric(fakeReq, started, 403, clientName, {}, payload.model, effectiveModel);
+    return { error: { status: 403, message: `令牌不允许使用模型 ${effectiveModel}` } };
+  }
+
+  const overQuota = quotaCheck(tokenEntry);
+  if (overQuota) {
+    recordMetric(fakeReq, started, overQuota.status, clientName, {}, payload.model, effectiveModel);
+    log(`[chat] 配额拒绝: ${overQuota.message} [${clientName}]`);
+    return { error: overQuota };
+  }
+
+  const gate = limiter.tryAcquire(tokenEntry.token, ov);
+  if (!gate.ok) {
+    recordMetric(fakeReq, started, gate.status, clientName, {}, payload.model, effectiveModel);
+    return { error: { status: gate.status, message: gate.message, retryAfterSec: gate.retryAfterSec } };
+  }
+
+  const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', accept: 'text/event-stream' };
+  try {
+    await applyUpstreamAuth(headers);
+  } catch (err) {
+    gate.release();
+    recordMetric(fakeReq, started, 502, clientName, {}, payload.model, effectiveModel);
+    return { error: { status: 502, message: '上游凭证不可用: ' + err.message } };
+  }
+  applyClaudeCodeSpoof(headers, effectiveModel, ov);
+
+  let res;
+  try {
+    res = await upstreamFetch(config.upstreamBaseUrl + '/v1/messages', {
+      method: 'POST',
+      headers,
+      body: t.body,
+      signal,
+      ...(upstreamDispatcher ? { dispatcher: upstreamDispatcher } : {}),
+    });
+  } catch (err) {
+    gate.release();
+    recordMetric(fakeReq, started, 502, clientName, {}, payload.model, effectiveModel);
+    return { error: { status: 502, message: '连接上游失败: ' + err.message } };
+  }
+
+  return {
+    res,
+    release: gate.release,
+    effectiveModel,
+    // chat.js 拿到完整 usage 后回调,把这次聊天记进该设备的账
+    record: ({ status, usage }) => {
+      recordMetric(fakeReq, started, status, clientName, usage, payload.model, effectiveModel);
+      log(`[chat] POST /v1/messages ${status} ${Date.now() - started}ms model=${effectiveModel} in=${usage.input || 0} out=${usage.output || 0} [${clientName}]`);
+    },
+  };
+}
+
+// 用户端(/u):普通用户看自己被分配的设备 + 网页聊天。独立前缀 + 独立 session,
+// 与管理台互不认证 —— 越权是这块最大的风险,物理隔离比条件判断可靠。
+const USER_PREFIX = '/u';
+const userPortal = adminOn
+  ? createUserPortal({
+      prefix: USER_PREFIX,
+      users,
+      metrics,
+      logStore,
+      tokenAdmin,
+      maskToken,
+      clientIp,
+      chat,
+      config,
       log,
     })
   : null;
@@ -569,10 +803,20 @@ function recordMetric(req, started, status, clientName, usage, model, effectiveM
   });
 }
 
+// 前缀匹配要精确到分隔符,否则 /usage 这类路径会被 /u 误吞
+function underPrefix(url, prefix) {
+  return url === prefix || url.startsWith(prefix + '/') || url.startsWith(prefix + '?');
+}
+
 async function handleProxy(req, res, started) {
   // 管理台:自成一套鉴权,先于代理逻辑处理
   if (admin && req.url.startsWith(ADMIN_PREFIX)) {
     return admin.handle(req, res);
+  }
+
+  // 用户端:同样自成一套鉴权(与管理台的 session 互不相认)
+  if (userPortal && underPrefix(req.url.split('?')[0], USER_PREFIX)) {
+    return userPortal.handle(req, res);
   }
 
   // 浏览器自动请求的资源(favicon 等):无需令牌,直接 204,不污染日志/指标
@@ -653,6 +897,15 @@ async function handleProxy(req, res, started) {
     log(`${req.method} ${req.url} 403 模型不在白名单 model=${effectiveModel} 允许=[${ov.allowedModels.join(', ')}] [${clientName}]`);
     recordMetric(req, started, 403, clientName, {}, model);
     return sendError(res, 403, 'permission_error', `cc-trans: 令牌不允许使用模型 ${effectiveModel}`);
+  }
+
+  // ── 用户级配额(比限流更外层:限流管频率,配额管总量)──
+  const overQuota = quotaCheck(clientEntry);
+  if (overQuota) {
+    log(`${req.method} ${req.url} ${overQuota.status} 配额: ${overQuota.message} [${clientName}]`);
+    recordMetric(req, started, overQuota.status, clientName, {}, model, effectiveModel);
+    res.setHeader('retry-after', String(overQuota.retryAfterSec));
+    return sendError(res, overQuota.status, 'rate_limit_error', `cc-trans: ${overQuota.message}`);
   }
 
   // ── B 安全:限流 / 并发(仅对转发请求计数;放行则占额度,finish 时释放)──
@@ -980,6 +1233,7 @@ function printBanner() {
     const ips = lanIps();
     const host = ips[0] || 'localhost';
     log(`  管理台:    http://${host}:${config.port}${ADMIN_PREFIX}  (账号 ${adminUser} 登录)`);
+    log(`  用户端:    http://${host}:${config.port}${USER_PREFIX}  (${users.count()} 个用户账号${users.count() ? '' : ',在管理台「用户」页创建'})`);
   } else {
     log(`  管理台:    未启用(在 config.json 设 adminEnabled:true 即可开启)`);
   }

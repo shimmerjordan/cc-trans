@@ -14,6 +14,7 @@ const DEFAULTS = {
   upstreamAuthToken: '',
   oauthCredentialsPath: '',
   clientTokens: [],
+  users: [], // 普通用户账号(管理台创建;密码为 scrypt 哈希,见 users.js)
   modelMap: {},
   upstreamProxy: '', // 上游代理:http://、https://、socks5://(留空=直连)
   dataDir: '', // 状态目录(指标/模型列表/日志块)。留空=config.json 同级的 data/;Docker 里指到挂载卷
@@ -22,6 +23,9 @@ const DEFAULTS = {
   logMaxBytes: 10 * 1024 * 1024, // 单个日志文件上限,超过就轮转
   logMaxFiles: 5, // 保留的轮转文件数(超出删最旧,控制磁盘占用)
   logRetentionDays: 14, // 请求日志分块(data/logs)保留天数,超过自动删除(0=不自动删)
+  // 网页聊天的磁盘保护(不是额度:超了删最旧的,不拒绝请求,也不区分管理员)。0=不限
+  chatMaxSessions: 200, // 每用户会话数上限
+  chatMaxMessages: 500, // 每会话消息数上限
   adminEnabled: false,
   adminUser: 'admin',
   adminPassword: '',
@@ -103,6 +107,9 @@ export function loadConfig() {
         ? splitList(process.env.CC_TRANS_CLIENT_TOKENS)
         : file.clientTokens || DEFAULTS.clientTokens,
     ),
+    // 用户账号只从文件读(没有环境变量入口:哈希串塞环境变量不现实)。
+    // 漏了这一行会导致重启后用户全部登录不上 —— 曾经就是这样。
+    users: Array.isArray(file.users) ? file.users : DEFAULTS.users,
     modelMap: file.modelMap || DEFAULTS.modelMap,
     upstreamProxy: process.env.CC_TRANS_UPSTREAM_PROXY || file.upstreamProxy || DEFAULTS.upstreamProxy,
     dataDir: process.env.CC_TRANS_DATA_DIR || file.dataDir || DEFAULTS.dataDir,
@@ -112,6 +119,13 @@ export function loadConfig() {
     logMaxFiles: Number(process.env.CC_TRANS_LOG_MAX_FILES || file.logMaxFiles || DEFAULTS.logMaxFiles),
     logRetentionDays: Number(
       process.env.CC_TRANS_LOG_RETENTION_DAYS ?? file.logRetentionDays ?? DEFAULTS.logRetentionDays,
+    ),
+    // 用 ?? 而不是 ||:显式写 0(不限)必须留住,`||` 会把它当假值换回 200
+    chatMaxSessions: Number(
+      process.env.CC_TRANS_CHAT_MAX_SESSIONS ?? file.chatMaxSessions ?? DEFAULTS.chatMaxSessions,
+    ),
+    chatMaxMessages: Number(
+      process.env.CC_TRANS_CHAT_MAX_MESSAGES ?? file.chatMaxMessages ?? DEFAULTS.chatMaxMessages,
     ),
     adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
     adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,

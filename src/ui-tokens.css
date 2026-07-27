@@ -1,0 +1,93 @@
+/* cc-trans 设计令牌 —— 管理台(/admin)与用户端(/u)共享这一份。
+   服务端读取本文件替换两个 HTML 里的 /*__TOKENS__*​/ 占位,所以不要在页面里
+   再复制一份令牌:那正是布局改造要根治的漂移来源。
+
+   主题:跟随系统,可手动覆盖(data-theme="light|dark" + localStorage)。 */
+  :root {
+    /* 间距(4 的等比) */
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
+    /* 字号(1.15~1.25 步进,product register:固定 rem 而非 clamp) */
+    --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-base: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+    /* 圆角 / 层级 / 动效 */
+    --r-sm: 6px; --r: 10px; --r-lg: 14px; --r-full: 999px;
+    /* 分层限宽:数据密集内容越宽越好,连续文字超过 ~75 字符行长就难回行,
+       所以两类内容各有各的上限,而不是全站一个 max-width。 */
+    --w-wide: 1800px; --w-read: 72ch;
+    --z-sticky: 10; --z-backdrop: 40; --z-modal: 50; --z-toast: 60;
+    --dur-1: 120ms; --dur-2: 200ms;
+    --ease: cubic-bezier(.22, 1, .36, 1); /* ease-out-quint:无弹跳 */
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+
+    /* 亮色:中性色带一点主色色相偏色(chroma .004~.008),不是纯灰也不是奶油色 */
+    --bg: oklch(.975 .004 275);
+    --card: oklch(1 0 0);
+    --surface-2: oklch(.985 .005 275);   /* 表头 / 工具条 / 代码块 */
+    --ink: oklch(.25 .02 272);
+    --muted: oklch(.52 .022 272);         /* 对 --card 5.6:1,正文可用 */
+    --faint: oklch(.63 .02 272);          /* 仅图表刻度等非正文,≥3:1 */
+    --line: oklch(.915 .007 275);
+    --line-strong: oklch(.86 .01 275);
+    --accent: oklch(.52 .21 277);         /* 保留原 indigo 身份 */
+    --accent-hover: oklch(.47 .21 277);
+    --accent-soft: oklch(.95 .03 277);    /* 选中/悬停底 */
+    --accent-ink: oklch(1 0 0);
+    --ok: oklch(.53 .14 162); --ok-soft: oklch(.95 .04 162);
+    --warn: oklch(.56 .14 68); --warn-soft: oklch(.95 .05 75);
+    --err: oklch(.54 .21 25); --err-soft: oklch(.95 .04 25);
+    --nav-bg: oklch(.24 .03 272); --nav-ink: oklch(.97 .005 275);
+    --sh-1: 0 1px 2px oklch(.25 .02 272 / .06);
+    --sh-2: 0 12px 32px oklch(.25 .02 272 / .18), 0 2px 6px oklch(.25 .02 272 / .08);
+    /* 图表分类色(与状态色区分开,顺序稳定) */
+    --c1: oklch(.55 .2 277); --c2: oklch(.58 .13 162); --c3: oklch(.65 .15 68); --c4: oklch(.58 .19 25);
+    --c5: oklch(.6 .12 220); --c6: oklch(.55 .19 305); --c7: oklch(.6 .19 350); --c8: oklch(.6 .14 130);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { color-scheme: dark;
+      --bg: oklch(.18 .012 272);
+      --card: oklch(.225 .014 272);
+      --surface-2: oklch(.26 .015 272);
+      --ink: oklch(.95 .006 275);
+      --muted: oklch(.73 .016 275);       /* 对 --card 5.2:1 */
+      --faint: oklch(.6 .015 275);
+      --line: oklch(.31 .014 272);
+      --line-strong: oklch(.4 .016 272);
+      --accent: oklch(.72 .15 277);       /* 暗底提亮降饱和,免刺眼 */
+      --accent-hover: oklch(.78 .14 277);
+      --accent-soft: oklch(.3 .05 277);
+      --accent-ink: oklch(.17 .02 277);
+      --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
+      --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
+      --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
+      --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
+      --sh-1: 0 1px 2px oklch(0 0 0 / .3);
+      --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
+      --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
+      --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
+    }
+  }
+  /* 手动选深色:与上面同一套值(CSS 不能变量化整段规则,只能重复一次) */
+  :root[data-theme="dark"] { color-scheme: dark;
+    --bg: oklch(.18 .012 272);
+    --card: oklch(.225 .014 272);
+    --surface-2: oklch(.26 .015 272);
+    --ink: oklch(.95 .006 275);
+    --muted: oklch(.73 .016 275);
+    --faint: oklch(.6 .015 275);
+    --line: oklch(.31 .014 272);
+    --line-strong: oklch(.4 .016 272);
+    --accent: oklch(.72 .15 277);
+    --accent-hover: oklch(.78 .14 277);
+    --accent-soft: oklch(.3 .05 277);
+    --accent-ink: oklch(.17 .02 277);
+    --ok: oklch(.75 .14 162); --ok-soft: oklch(.28 .05 162);
+    --warn: oklch(.79 .13 75); --warn-soft: oklch(.3 .06 75);
+    --err: oklch(.7 .17 22); --err-soft: oklch(.3 .07 22);
+    --nav-bg: oklch(.145 .012 272); --nav-ink: oklch(.95 .006 275);
+    --sh-1: 0 1px 2px oklch(0 0 0 / .3);
+    --sh-2: 0 16px 40px oklch(0 0 0 / .5), 0 2px 8px oklch(0 0 0 / .3);
+    --c1: oklch(.7 .16 277); --c2: oklch(.75 .13 162); --c3: oklch(.79 .13 75); --c4: oklch(.7 .16 22);
+    --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
+  }
+

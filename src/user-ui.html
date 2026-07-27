@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cc-trans · 我的设备</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%234f46e5'/%3E%3Ctext x='8' y='12' font-size='10' fill='white' text-anchor='middle' font-family='monospace'%3Eu%3C/text%3E%3C/svg%3E" />
+<style>
+  /*__TOKENS__*/
+
+  * { box-sizing: border-box; }
+  /* 设了 display 的元素会覆盖默认的 [hidden]{display:none},必须显式兜住 */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; font: var(--fs-base)/1.55 var(--sans);
+    background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+  :focus:not(:focus-visible) { outline: none; }
+
+  header {
+    background: var(--nav-bg); color: var(--nav-ink);
+    padding: var(--s3) var(--s5); display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap;
+  }
+  header .title { font-weight: 650; font-size: var(--fs-lg); letter-spacing: .2px; }
+  header .who { flex: 1; min-width: 0; font-size: var(--fs-sm); color: oklch(1 0 0 / .78); }
+  header .who b { color: var(--nav-ink); }
+  header button { background: oklch(1 0 0 / .1); border-color: oklch(1 0 0 / .16); color: var(--nav-ink); }
+  header button:hover:not(:disabled) { background: oklch(1 0 0 / .18); border-color: oklch(1 0 0 / .28); }
+  .icon-btn { padding: var(--s2); line-height: 0; min-width: 36px; display: inline-flex; justify-content: center; }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  button {
+    font: inherit; cursor: pointer; border: 1px solid var(--line-strong);
+    background: var(--card); color: var(--ink);
+    border-radius: var(--r-sm); padding: 7px var(--s3); min-height: 34px;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
+  button:active:not(:disabled) { transform: translateY(.5px); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 550; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.sm { min-height: 28px; padding: 3px var(--s2); font-size: var(--fs-sm); }
+
+  main { max-width: var(--w-wide); margin: var(--s5) auto var(--s7); padding: 0 var(--s4); }
+  /* gap 管相邻标签的空隙、padding 只管下划线贴文字的余量(与管理台同一套) */
+  .tabs { display: flex; gap: var(--s6); margin-bottom: var(--s5); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tabs button {
+    border: 0; background: none; border-radius: var(--r-sm) var(--r-sm) 0 0;
+    padding: var(--s3); min-height: 44px; color: var(--muted);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .15s ease-out, border-color .15s ease-out, background-color .15s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) { .tabs button { transition: none; } }
+  .tabs button:hover:not(.active) { background: var(--surface-2); color: var(--ink); }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+  .block {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
+    padding: var(--s5); margin-bottom: var(--s4); box-shadow: var(--sh-1);
+  }
+  .block > h2 {
+    font-size: var(--fs-base); font-weight: 600; margin: 0 0 var(--s4);
+    color: var(--ink); display: flex; align-items: center; gap: var(--s2);
+  }
+  .block > h2::before { content: ""; width: 3px; height: 14px; background: var(--accent); border-radius: var(--r-full); flex: none; }
+  .block > h2.with-action > button { margin-left: auto; font-weight: 400; }
+
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: var(--s5) var(--s4); }
+  .metric .n { font-size: var(--fs-xl); font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .metric .l { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
+  .metric .n.err { color: var(--err); }
+
+  /* 设备卡:一张卡是一台设备,不用表格 —— 每张卡里有令牌、用量、接入命令三段
+     不同性质的内容,表格塞不下 */
+  /* auto-fill 而不是 auto-fit:auto-fit 会把空轨道合并,导致只有一台设备时
+     那张卡横向拉满整屏、右边全是空白。auto-fill 保留轨道,单卡也是正常宽度。 */
+  .devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr)); gap: var(--s4); }
+  .dev { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1); padding: var(--s5); }
+  .dev-head { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); }
+  .dev-head .name { font-weight: 650; font-size: var(--fs-lg); }
+  .dev-head .seen { margin-left: auto; font-size: var(--fs-sm); color: var(--muted); }
+  .dev-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+  .dev-stats .n { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .dev-stats .l { font-size: var(--fs-xs); color: var(--muted); }
+
+  .key-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .key-box {
+    flex: 1; min-width: 220px; font-family: var(--mono); font-size: var(--fs-md);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+    padding: var(--s2) var(--s3); overflow-wrap: anywhere;
+  }
+  .key-box.revealed { border-color: var(--warn); background: var(--warn-soft); }
+  .snip {
+    margin-top: var(--s3); background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: var(--r-sm); padding: var(--s3); font-family: var(--mono);
+    font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted);
+  }
+  .ov { margin-top: var(--s3); font-size: var(--fs-sm); color: var(--muted); }
+  .ov .mono { color: var(--accent); }
+
+  .table-wrap {
+    border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--sh-1);
+    overflow-x: auto; overscroll-behavior-x: contain; background: var(--card);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); font-size: var(--fs-md); white-space: nowrap; }
+  th { background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: var(--fs-sm); position: sticky; top: 0; z-index: var(--z-sticky); }
+  tbody tr:hover { background: var(--surface-2); }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono { font-family: var(--mono); font-size: var(--fs-sm); }
+  td.path { max-width: 34ch; overflow: hidden; text-overflow: ellipsis; }
+  .st { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .st-2 { color: var(--ok); } .st-4 { color: var(--warn); } .st-5, .st-0 { color: var(--err); }
+
+  .empty { padding: var(--s7) var(--s5); text-align: center; color: var(--muted); }
+  .empty b { display: block; color: var(--ink); font-size: var(--fs-base); margin-bottom: var(--s1); font-weight: 600; }
+  .empty .sub { font-size: var(--fs-md); }
+  td .empty { white-space: normal; }
+  .skeleton { border-radius: var(--r-sm); background: var(--surface-2); position: relative; overflow: hidden; min-height: 1em; }
+  .skeleton::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, oklch(1 0 0 / .18), transparent); animation: shimmer 1.4s infinite; }
+  @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .sk-line { height: 12px; margin: var(--s2) 0; }
+
+  .toolbar { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s3); flex-wrap: wrap; }
+  .toolbar .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--muted); }
+  .note { color: var(--muted); font-size: var(--fs-sm); margin: var(--s3) 0 0; max-width: var(--w-read); }
+  .xs { font-size: var(--fs-xs); }
+  /* 配额:有限额才出现,进度条比数字更直观 */
+  .quota { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--line); max-width: 520px; }
+  .qhead { font-size: var(--fs-md); font-weight: 600; margin-bottom: var(--s3); display: flex; gap: var(--s2); align-items: baseline; }
+  .qline + .qline { margin-top: var(--s3); }
+  .qtop { display: flex; justify-content: space-between; font-size: var(--fs-md); margin-bottom: 5px; }
+  .qtop b { font-variant-numeric: tabular-nums; }
+  .qtrack { height: 8px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+  .qtrack i { display: block; height: 100%; background: var(--accent); transition: width var(--dur-2) var(--ease); }
+  .qtrack i.warn { background: var(--warn); }
+  .qtrack i.err { background: var(--err); }
+
+  input, select {
+    font: inherit; font-size: var(--fs-md); color: var(--ink);
+    padding: 7px var(--s2); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    background: var(--card); min-height: 34px; max-width: 100%;
+    transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+  }
+  input:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--muted); }
+  input:focus-visible, select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent); }
+  input::placeholder { color: var(--muted); opacity: 1; }
+  select { appearance: none; padding-right: 26px; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 12px center, right 7px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  .form-row { display: grid; grid-template-columns: 6.5em 1fr; gap: var(--s3); align-items: center; max-width: 460px; margin-bottom: var(--s3); }
+  .form-row > label:first-child { color: var(--muted); font-size: var(--fs-md); }
+
+  .login {
+    max-width: 360px; margin: 12vh auto; background: var(--card);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: var(--s7) var(--s6); box-shadow: var(--sh-2);
+  }
+  .login h1 { font-size: var(--fs-xl); margin: 0 0 var(--s1); text-align: center; }
+  .login p { color: var(--muted); margin: 0 0 var(--s5); font-size: var(--fs-md); text-align: center; }
+  .login input { width: 100%; margin-bottom: var(--s3); min-height: 38px; }
+  .login button { width: 100%; justify-content: center; min-height: 38px; }
+  .err-msg { color: var(--err); font-size: var(--fs-md); min-height: 18px; margin-top: var(--s2); text-align: center; }
+  .ok-msg { color: var(--ok); font-size: var(--fs-md); min-height: 18px; }
+
+  .toasts { position: fixed; right: var(--s4); bottom: var(--s4); z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7))); }
+  .toast { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--sh-2); padding: var(--s3) var(--s4); font-size: var(--fs-md); display: flex; gap: var(--s2); align-items: flex-start; animation: toast-in var(--dur-2) var(--ease); }
+  .toast .ico { flex: none; font-weight: 700; }
+  .toast.ok .ico { color: var(--ok); }
+  .toast.err .ico { color: var(--err); }
+  .toast.leaving { animation: toast-out var(--dur-2) var(--ease) forwards; }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes toast-out { to { opacity: 0; transform: translateY(4px); } }
+
+  @media (max-width: 760px) {
+    main { padding: 0 var(--s3); margin-top: var(--s4); }
+    .block, .dev { padding: var(--s4); }
+    .form-row { grid-template-columns: 1fr; gap: var(--s1); }
+    header { padding: var(--s3) var(--s4); gap: var(--s2); }
+    header .who { flex-basis: 100%; order: 3; }
+    header .title { flex: 1; }
+    .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tabs button { flex: none; }
+    button.sm { min-height: 36px; padding: var(--s1) var(--s3); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    .skeleton::after { display: none; }
+  }
+</style>
+<script>
+  try {
+    const t = localStorage.getItem('cc-trans-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch {}
+</script>
+</head>
+<body>
+
+<div id="loginView" class="login" hidden>
+  <h1>cc-trans</h1>
+  <p>用你的账号登录,查看分配给你的设备</p>
+  <input id="user" type="text" placeholder="用户名" autocomplete="username" />
+  <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
+  <button class="primary" onclick="doLogin()">登录</button>
+  <div id="loginErr" class="err-msg"></div>
+</div>
+
+<div id="appView" hidden>
+  <header>
+    <span class="title">cc-trans</span>
+    <span class="who" id="who"></span>
+    <button class="icon-btn" id="themeBtn" onclick="cycleTheme()" title="切换主题" aria-label="切换主题">
+      <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+    </button>
+    <button onclick="logout()">退出</button>
+  </header>
+  <main>
+    <div class="tabs">
+      <button data-tab="devices" class="active" onclick="switchTab('devices')">我的设备</button>
+      <button data-tab="logs" onclick="switchTab('logs')">我的请求</button>
+      <button data-tab="account" onclick="switchTab('account')">账号</button>
+    </div>
+
+    <section id="tab-devices">
+      <section class="block">
+        <h2>用量合计</h2>
+        <div class="metrics" id="totalNums"><div class="skeleton sk-line" style="width:60%"></div></div>
+        <div id="quotaBox"></div>
+        <p class="note">统计自服务累计数据,跨重启保留。成本按模型定价估算,仅供参考,非账单。</p>
+      </section>
+      <div class="devices" id="devices"></div>
+    </section>
+
+    <section id="tab-logs" hidden>
+      <div class="toolbar">
+        <span class="grow muted" id="logHint"></span>
+        <input id="logQ" aria-label="搜索" placeholder="搜索路径/模型" style="width:180px" onkeydown="if(event.key==='Enter')reloadLogs(0)" />
+        <select id="logErrOnly" aria-label="状态过滤" onchange="reloadLogs(0)">
+          <option value="">全部状态</option>
+          <option value="1">仅异常(≥400)</option>
+        </select>
+        <button onclick="reloadLogs(0)">查询</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>时间</th><th>方法</th><th>路径</th><th class="num">状态</th><th class="num">耗时</th><th>模型</th><th>用量</th><th>设备</th></tr></thead>
+          <tbody id="logRows"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="margin-top:var(--s3)">
+        <button id="logPrev" onclick="pageLogs(-1)">← 上一页</button>
+        <span class="muted" id="logPageInfo" style="font-size:var(--fs-md)"></span>
+        <button id="logNext" onclick="pageLogs(1)">下一页 →</button>
+      </div>
+    </section>
+
+    <section id="tab-account" hidden>
+      <section class="block">
+        <h2>修改密码</h2>
+        <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
+        <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 8 位" /></div>
+        <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
+        <div class="form-row"><label></label><div><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+      </section>
+      <section class="block">
+        <h2>账号信息</h2>
+        <dl class="dl" id="acctInfo" style="display:grid;grid-template-columns:max-content 1fr;gap:var(--s2) var(--s5);margin:0"></dl>
+      </section>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+const TABS = ['devices', 'logs', 'account'];
+const PREFIX = (() => {
+  let p = location.pathname.replace(/\/+$/, '') || '/u';
+  const last = p.split('/').pop();
+  if (TABS.includes(last)) p = p.slice(0, -(last.length + 1));
+  return p || '/u';
+})();
+const API = PREFIX + '/api';
+let SESSION = sessionStorage.getItem('cc-trans-user') || '';
+let ME = null, curTab = 'devices', DEVICES = [];
+
+const el = (id) => document.getElementById(id);
+const show = (id, on) => { el(id).hidden = !on; };
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const THEME_ICONS = {
+  auto: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  light: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  dark: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+};
+const THEME_LABELS = { auto: '主题:跟随系统', light: '主题:亮色', dark: '主题:深色' };
+function currentTheme() { return document.documentElement.dataset.theme || 'auto'; }
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { t === 'auto' ? localStorage.removeItem('cc-trans-theme') : localStorage.setItem('cc-trans-theme', t); } catch {}
+  const b = el('themeBtn');
+  if (b) { el('themeIcon').innerHTML = THEME_ICONS[t]; b.title = THEME_LABELS[t]; b.setAttribute('aria-label', THEME_LABELS[t]); }
+}
+function cycleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[currentTheme()]); }
+
+function toast(msg, kind = 'ok', ms = 3600) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + kind;
+  t.innerHTML = `<span class="ico" aria-hidden="true">${kind === 'err' ? '!' : '✓'}</span><span>${esc(msg)}</span>`;
+  el('toasts').appendChild(t);
+  setTimeout(() => { t.classList.add('leaving'); setTimeout(() => t.remove(), 220); }, ms);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}), authorization: 'Bearer ' + SESSION } });
+  if (r.status === 401) { toLogin(); throw new Error('unauthorized'); }
+  return r;
+}
+
+function toLogin() {
+  SESSION = ''; sessionStorage.removeItem('cc-trans-user');
+  show('appView', false); show('loginView', true); el('pw').focus();
+}
+async function doLogin() {
+  el('loginErr').textContent = '';
+  const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { el('loginErr').textContent = d.error || '登录失败'; return; }
+  SESSION = d.session; sessionStorage.setItem('cc-trans-user', SESSION);
+  el('pw').value = ''; enterApp();
+}
+async function logout() {
+  try { await api('/logout', { method: 'POST' }); } catch {}
+  toLogin();
+}
+el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+function enterApp() {
+  show('loginView', false); show('appView', true);
+  loadMe();
+  switchTab(tabFromPath(), { replace: true });
+}
+function tabFromPath() {
+  const last = (location.pathname.replace(/\/+$/, '') || '').split('/').pop();
+  return TABS.includes(last) ? last : 'devices';
+}
+function switchTab(t, opts = {}) {
+  if (!TABS.includes(t)) t = 'devices';
+  curTab = t;
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+  TABS.forEach((x) => show('tab-' + x, x === t));
+  const url = PREFIX + '/' + t;
+  if (location.pathname !== url && !opts.noPush) {
+    try { history[opts.replace ? 'replaceState' : 'pushState']({ tab: t }, '', url); } catch {}
+  }
+  document.title = `cc-trans · ${({ devices: '我的设备', logs: '我的请求', account: '账号' })[t]}`;
+  if (t === 'devices') loadMe();
+  if (t === 'logs') reloadLogs(0);
+}
+window.addEventListener('popstate', () => switchTab(tabFromPath(), { noPush: true }));
+
+function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : n < 1e9 ? (n / 1e6).toFixed(1) + 'M' : (n / 1e9).toFixed(2) + 'B'; }
+function fmtUsd(n) { n = n || 0; if (n === 0) return '$0'; if (n < 0.01) return '$' + n.toFixed(4); if (n < 1) return '$' + n.toFixed(3); if (n < 100) return '$' + n.toFixed(2); return '$' + Math.round(n).toLocaleString(); }
+function ago(ts) { if (!ts) return '从未使用'; const s = Math.floor((Date.now() - ts) / 1000); return s < 60 ? s + '秒前' : s < 3600 ? Math.floor(s / 60) + '分前' : s < 86400 ? Math.floor(s / 3600) + '时前' : Math.floor(s / 86400) + '天前'; }
+function fmtTime(ts) { return new Date(ts).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
+function stClass(s) { return 'st st-' + Math.floor((s || 0) / 100); }
+
+async function loadMe() {
+  try {
+    const d = await (await api('/me')).json();
+    ME = d;
+    el('who').innerHTML = `<b>${esc(d.user.name)}</b> · ${d.devices.length} 台设备`;
+    const t = d.total;
+    el('totalNums').innerHTML = [
+      ['总请求', fmtNum(t.requests)],
+      ['异常', fmtNum(t.errors), t.errors ? 'err' : ''],
+      ['输入 token', fmtNum(t.inTokens)],
+      ['输出 token', fmtNum(t.outTokens)],
+      ['缓存读', fmtNum(t.cacheReadTokens)],
+      ['缓存写', fmtNum(t.cacheWriteTokens)],
+      ['估算成本', fmtUsd(t.cost)],
+    ].map(([l, v, cls]) => `<div class="metric"><div class="n ${cls || ''}">${v}</div><div class="l">${l}</div></div>`).join('');
+    DEVICES = d.devices;
+    renderQuota(d.quota);
+    renderDevices(d);
+    el('acctInfo').innerHTML = [
+      ['用户名', esc(d.user.name)],
+      ['分配设备', d.devices.length + ' 台'],
+      ['创建时间', d.user.createdAt ? new Date(d.user.createdAt).toLocaleString('zh-CN') : '—'],
+      ['最近登录', d.user.lastLoginAt ? new Date(d.user.lastLoginAt).toLocaleString('zh-CN') : '—'],
+    ].map(([k, v]) => `<dt class="muted">${k}</dt><dd style="margin:0">${v}</dd>`).join('');
+  } catch (e) {}
+}
+
+// 配额:与名下所有设备共享一份。不限时不占版面,有限额才显示进度。
+function renderQuota(q) {
+  const box = el('quotaBox');
+  if (!q || q.unlimited) { box.innerHTML = ''; return; }
+  const label = { day: '今天', month: '本月', total: '累计' }[q.window] || q.window;
+  const bar = (used, cap, fmt) => {
+    const pct = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0;
+    const cls = pct >= 90 ? 'err' : pct >= 70 ? 'warn' : '';
+    return `<div class="qline">
+      <div class="qtop"><span>${label}已用 <b>${fmt(used)}</b> / ${fmt(cap)}</span><span class="muted">${pct}%</span></div>
+      <div class="qtrack"><i class="${cls}" style="width:${pct}%"></i></div></div>`;
+  };
+  const rows = [];
+  if (q.tokens) rows.push(bar(q.usedTokens || 0, q.tokens, fmtNum));
+  if (q.costUsd) rows.push(bar(q.usedCost || 0, q.costUsd, fmtUsd));
+  box.innerHTML = `<div class="quota"><div class="qhead">配额<span class="muted xs">(与你名下所有设备共享)</span></div>${rows.join('')}</div>`;
+}
+
+// 参数下发对用户是只读信息:让他知道自己的请求会被怎么改写
+function ovText(ov) {
+  ov = ov || {};
+  const parts = [];
+  if (ov.model) parts.push(`强制模型 <span class="mono">${esc(ov.model)}</span>`);
+  if (ov.thinking) parts.push(`thinking <span class="mono">${esc(ov.thinking)}</span>`);
+  if (ov.effort) parts.push(`effort <span class="mono">${esc(ov.effort)}</span>`);
+  if (ov.rateLimitRequests) parts.push(`限流 ${ov.rateLimitRequests} 次 / ${ov.rateLimitWindowSec || 0} 秒`);
+  if (ov.concurrencyLimit) parts.push(`并发上限 ${ov.concurrencyLimit}`);
+  if (ov.allowedModels && ov.allowedModels.length) parts.push(`仅允许 ${ov.allowedModels.length} 个模型`);
+  if (!parts.length) return '';
+  return `<div class="ov">管理员为这台设备设了:${parts.join(' · ')}</div>`;
+}
+
+function renderDevices(d) {
+  if (!d.devices.length) {
+    el('devices').innerHTML = `<div class="block"><div class="empty"><b>还没有分配设备</b><span class="sub">请让管理员在管理台「用户」页把一个客户端令牌分配给你的账号。</span></div></div>`;
+    return;
+  }
+  el('devices').innerHTML = d.devices.map((dev) => {
+    const s = dev.stats || {};
+    return `<div class="dev">
+      <div class="dev-head"><span class="name">${esc(dev.name)}</span><span class="seen">${ago(s.lastSeen)}</span></div>
+      <div class="dev-stats">
+        <div><div class="n">${fmtNum(s.requests)}</div><div class="l">请求</div></div>
+        <div><div class="n ${s.errors ? 'st-5' : ''}">${fmtNum(s.errors)}</div><div class="l">异常</div></div>
+        <div><div class="n">${fmtNum(s.inTokens)}</div><div class="l">输入</div></div>
+        <div><div class="n">${fmtNum(s.outTokens)}</div><div class="l">输出</div></div>
+        <div><div class="n">${fmtUsd(s.cost)}</div><div class="l">成本</div></div>
+      </div>
+      <div class="key-row">
+        <div class="key-box" id="key-${dev.id}" data-masked="${esc(dev.tokenMask)}">${esc(dev.tokenMask)}</div>
+        <button class="sm" id="revealBtn-${dev.id}" onclick="reveal('${dev.id}')">显示完整令牌</button>
+        <button class="sm" id="copyBtn-${dev.id}" onclick="copyKey('${dev.id}')">复制</button>
+      </div>
+      ${ovText(dev.overrides)}
+      <div class="snip" id="snip-${dev.id}">ANTHROPIC_BASE_URL=${esc(location.origin)}
+ANTHROPIC_AUTH_TOKEN=${esc(dev.tokenMask)}</div>
+    </div>`;
+  }).join('');
+}
+
+// 明文令牌:按需取,不缓存在前端状态里;每次取都会在服务端留审计
+async function fetchToken(id) {
+  const r = await api('/token', { method: 'POST', body: JSON.stringify({ id }) });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || '取令牌失败');
+  return d.token;
+}
+async function reveal(id) {
+  const btn = el('revealBtn-' + id), box = el('key-' + id), snip = el('snip-' + id);
+  if (box.dataset.plain) { // 再点一次收起
+    delete box.dataset.plain;
+    box.textContent = box.dataset.masked;
+    box.classList.remove('revealed');
+    snip.textContent = `ANTHROPIC_BASE_URL=${location.origin}\nANTHROPIC_AUTH_TOKEN=${box.dataset.masked}`;
+    btn.textContent = '显示完整令牌';
+    return;
+  }
+  btn.disabled = true; btn.textContent = '取回中…';
+  try {
+    const token = await fetchToken(id);
+    box.dataset.plain = '1';
+    box.textContent = token;
+    box.classList.add('revealed');
+    snip.textContent = `ANTHROPIC_BASE_URL=${location.origin}\nANTHROPIC_AUTH_TOKEN=${token}`;
+    btn.textContent = '隐藏';
+  } catch (e) {
+    toast(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function copyKey(id) {
+  try {
+    const token = await fetchToken(id); // 复制永远复制明文,不管当前是否展开
+    await navigator.clipboard.writeText(token);
+    toast('令牌已复制到剪贴板');
+  } catch (e) {
+    toast('复制失败:' + e.message, 'err');
+  }
+}
+
+const LOG_PAGE = 50;
+let logOffset = 0, logTotal = 0;
+async function reloadLogs(offset) {
+  if (offset != null) logOffset = Math.max(0, offset);
+  const p = new URLSearchParams({ limit: String(LOG_PAGE), offset: String(logOffset) });
+  const q = el('logQ').value.trim();
+  if (q) p.set('q', q);
+  if (el('logErrOnly').value === '1') p.set('errorsOnly', '1');
+  try {
+    const d = await (await api('/logs?' + p)).json();
+    const rows = (d.logs || []).map((e) => {
+      const u = e.usage || {};
+      const usage = [u.input != null ? 'in ' + u.input : '', u.output != null ? 'out ' + u.output : '', u.cacheRead ? 'cR ' + u.cacheRead : ''].filter(Boolean).join(' ');
+      return `<tr><td class="mono">${fmtTime(e.ts)}</td><td>${esc(e.method)}</td><td class="mono path" title="${esc(e.path)}">${esc(e.path || '')}</td>
+        <td class="num ${stClass(e.status)}">${e.status}</td><td class="num">${e.ms}ms</td>
+        <td class="mono">${esc(e.model || '')}</td><td class="mono">${usage}</td><td>${esc(e.client || '')}</td></tr>`;
+    }).join('');
+    el('logRows').innerHTML = rows || `<tr><td colspan="8"><div class="empty"><b>${el('logQ').value.trim() || el('logErrOnly').value ? '没有匹配的请求' : '还没有请求记录'}</b><span class="sub">用「我的设备」里的令牌配置好客户端后,请求会出现在这里。</span></div></td></tr>`;
+    logTotal = d.total ?? 0;
+    const from = logTotal ? logOffset + 1 : 0;
+    el('logPageInfo').textContent = `${from}-${logOffset + (d.logs || []).length} / 共 ${logTotal} 条`;
+    el('logPrev').disabled = logOffset <= 0;
+    el('logNext').disabled = !d.hasMore;
+    el('logHint').textContent = d.persisted === false ? '仅显示内存中最近的记录' : '';
+  } catch (e) {}
+}
+function pageLogs(dir) {
+  const next = logOffset + dir * LOG_PAGE;
+  if (next < 0) return;
+  reloadLogs(next);
+}
+
+async function changePw() {
+  const m = el('pwMsg');
+  m.className = 'ok-msg'; m.textContent = '';
+  if (el('newPw').value !== el('newPw2').value) { m.className = 'err-msg'; m.textContent = '两次新密码不一致'; return; }
+  const r = await api('/password', { method: 'POST', body: JSON.stringify({ oldPassword: el('oldPw').value, newPassword: el('newPw').value }) });
+  const d = await r.json();
+  if (r.ok && d.ok) {
+    el('oldPw').value = el('newPw').value = el('newPw2').value = '';
+    toast('密码已修改');
+  } else {
+    m.className = 'err-msg'; m.textContent = d.error || '修改失败';
+  }
+}
+
+applyTheme(currentTheme());
+if (SESSION) enterApp(); else toLogin();
+</script>
+</body>
+</html>
