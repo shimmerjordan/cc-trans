@@ -280,6 +280,8 @@
      用 accent-soft 兑淡而不是 surface-2 —— 后者在亮色下只比卡片底深 1.5%,肉眼看不出,
      等于没标。禁止用左侧色条(那是廉价做法),整行浅色带才是表格里的正确写法。 */
   tr.row-admin > td { background: color-mix(in oklch, var(--accent-soft) 55%, transparent); }
+  /* 近似值要看得出来是近似值 —— 一个没标来源的错日期比留白更糟 */
+  .approx { border-bottom: 1px dotted currentColor; cursor: help; }
 
   /* 空状态:教下一步,不只是"暂无" */
   .empty { padding: var(--s7) var(--s5); text-align: center; color: var(--muted); }
@@ -689,11 +691,12 @@
       <section class="block" id="acctBlock">
         <h2>管理台账号</h2>
         <div class="form-row"><label for="acctUser">登录名</label><input id="acctUser" autocomplete="username" placeholder="admin" /></div>
-        <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
+        <div class="form-row"><label for="acctNote">备注</label><input id="acctNote" maxlength="200" placeholder="例如:运维主账号" /></div>
+        <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" placeholder="改登录名或密码时必填" /></div>
         <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="留空 = 不改密码" /></div>
         <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
         <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="saveAccount()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
-        <p class="note" id="acctNote">登录名和密码都要<b>验当前密码</b>才能改,只想改一样就把另一样留着不动。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。</p>
+        <p class="note" id="acctHint">改<b>登录名或密码</b>要验当前密码,只想改一样就把另一样留空;<b>备注</b>不是凭证,单改它不用输密码。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。这些在「用户」页管理员那一行点「编辑」也能改。</p>
       </section>
     </section>
   </main>
@@ -814,6 +817,28 @@
   <p class="note">跨用户隔离是<b>硬边界</b>(任何人都只能看到自己被分配的设备,看不到别人的统计与日志)。这里是在此之上进一步收窄:关掉哪项,对应功能就对他不可用。</p>
   <div id="uMsg" class="err-msg" style="text-align:left"></div>
   <div class="dlg-actions"><button onclick="userDlg.close()">取消</button> <button class="primary" id="uSaveBtn" onclick="saveUser()">创建</button></div>
+</dialog>
+
+<!-- 管理员账号的编辑框。字段顺序刻意与「编辑用户」对齐,只是设备/权限/配额
+     由管理员身份固定,所以是只读说明而不是控件 —— 摆一排点不动的勾选框更糟。 -->
+<dialog id="adminDlg">
+  <h3 id="adminDlgTitle">编辑管理员</h3>
+  <div class="form-row"><label for="aName">登录名</label><input id="aName" autocomplete="username" placeholder="2~32 位,字母数字与 . _ -" /></div>
+  <div class="form-row"><label for="aNote">备注</label><input id="aNote" maxlength="200" placeholder="例如:运维主账号" /></div>
+  <h4>改密码(留空 = 不改)</h4>
+  <div class="form-row"><label for="aNewPw">新密码</label>
+    <div class="stack">
+      <input id="aNewPw" type="password" class="grow-1" autocomplete="new-password" placeholder="至少 6 位" />
+      <button class="sm" onclick="el('aNewPw').type = el('aNewPw').type === 'password' ? 'text' : 'password'">显示</button>
+    </div>
+  </div>
+  <div class="form-row"><label for="aNewPw2">确认新密码</label><input id="aNewPw2" type="password" autocomplete="new-password" /></div>
+  <div class="form-row"><label for="aOldPw">当前密码</label><input id="aOldPw" type="password" autocomplete="current-password" placeholder="改登录名或密码时必填" /></div>
+  <p class="note">只改备注不用输当前密码 —— 备注不是凭证。</p>
+  <h4>由管理员身份固定,不单独配置</h4>
+  <dl class="dl" id="aFixed"></dl>
+  <div id="aMsg" class="err-msg" style="text-align:left"></div>
+  <div class="dlg-actions"><button onclick="adminDlg.close()">取消</button> <button class="primary" onclick="saveAdminUser()">保存</button></div>
 </dialog>
 
 <dialog id="genDlg">
@@ -1319,52 +1344,54 @@ async function loadUsers() {
     el('userHint').textContent = d.canManage ? '' : '当前用环境变量配置,无法在线管理用户(改用 config.json 即可)';
     el('userPortalUrl').textContent = location.origin + '/u';
     ADMIN_ACCT = d.admin || ADMIN_ACCT;
-    const rows = (d.users || []).map((u) => {
-      // 令牌被吊销后这里会留下 name=null 的悬空项,明确标出来而不是静静消失
-      const devs = u.tokens.length
-        ? u.tokens.map((t) => t.name ? `<span class="tag ok">${esc(t.name)}</span>` : `<span class="tag warn" title="令牌已被吊销">已失效</span>`).join(' ')
-        : '<span class="muted">未分配</span>';
-      return `<tr>
-        <td><b>${esc(u.name)}</b>${u.note ? ` <span class="muted xs">${esc(u.note)}</span>` : ''}</td>
-        <td>${devs}</td>
-        <td>${quotaCell(u)}</td>
-        <td>${(() => {
-          const off = Object.keys(PERM_META).filter((k) => u.perms && u.perms[k] === false);
-          return off.length
-            ? off.map((k) => `<span class="tag warn" title="已关闭">✗ ${esc(PERM_META[k])}</span>`).join(' ')
-            : '<span class="muted">全部</span>';
-        })()}</td>
-        <td>${u.disabled ? '<span class="st-4">已禁用</span>' : '<span class="st-2">正常</span>'}</td>
-        <td class="muted">${u.createdAt ? new Date(u.createdAt).toLocaleDateString('zh-CN') : '—'}</td>
-        <td class="muted">${u.lastLoginAt ? ago(u.lastLoginAt) : '从未登录'}</td>
-        <td class="act">${d.canManage ? `
-          <button class="sm" onclick="openUser('${esc(u.name)}')">编辑</button>
-          <button class="sm" onclick="resetUserPw('${esc(u.name)}')">重置密码</button>
-          <button class="sm" onclick="toggleUser('${esc(u.name)}', ${!u.disabled})">${u.disabled ? '启用' : '禁用'}</button>
-          <button class="sm danger" onclick="removeUser('${esc(u.name)}')">删除</button>` : ''}</td></tr>`;
-    }).join('') || `<tr><td colspan="8"><div class="empty"><b>还没有普通用户账号</b><span class="sub">创建一个账号并分配设备后,对方就能在 ${esc(location.origin)}/u 登录查看自己的用量、随时取回令牌。</span></div></td></tr>`;
-    el('userRows').innerHTML = adminRow(d.admin) + rows;
+    const rows = (d.users || []).map((u) => userRow(u, d.canManage)).join('')
+      || `<tr><td colspan="8"><div class="empty"><b>还没有普通用户账号</b><span class="sub">创建一个账号并分配设备后,对方就能在 ${esc(location.origin)}/u 登录查看自己的用量、随时取回令牌。</span></div></td></tr>`;
+    el('userRows').innerHTML = (d.admin ? userRow(d.admin, d.canManage) : '') + rows;
   } catch (e) {}
 }
 
-// 管理员行:合成的,永远排在第一行。没有删除/禁用/编辑按钮 —— 不是"藏起来了",
-// 而是这行的凭证在 adminUser/adminPassword,删了就没人能进管理台。
-function adminRow(a) {
-  if (!a) return '';
-  const dev = a.deviceCount
-    ? `<span class="tag acc" title="管理员可把聊天用量记到任意一台设备">全部设备 · ${a.deviceCount}</span>`
-    : '<span class="muted">还没有令牌</span>';
-  return `<tr class="row-admin">
-    <td><b>${esc(a.name)}</b> <span class="tag acc">管理员</span></td>
-    <td>${dev}</td>
-    <td><span class="muted">不限</span></td>
-    <td><span class="muted">全部</span></td>
-    <td><span class="st-2">正常</span></td>
-    <td class="muted">—</td>
-    <td class="muted">${a.lastLoginAt ? ago(a.lastLoginAt) : '本次启动后未登录'}</td>
-    <td class="act">${a.canManage
-      ? '<button class="sm" onclick="gotoAccount()">改登录名 / 密码</button>'
-      : '<span class="muted xs">环境变量配置,不可在线改</span>'}</td></tr>`;
+// 一行账号。管理员和普通用户走【同一套单元格】—— 差别只有两处:
+//   · 设备/权限/配额由管理员身份固定决定(悬停有 fixed.* 说明,不是"没配")
+//   · 没有禁用/删除:这行的凭证是 adminUser/adminPassword,删了就没人能进管理台
+// 分两套渲染的话两边迟早长得不一样 —— 上一版管理员行"少了很多"就是这么来的。
+function userRow(u, canManage) {
+  const A = !!u.isAdmin;
+  const fx = u.fixed || {};
+  // 令牌被吊销后会留下 name=null 的悬空项,明确标出来而不是静静消失
+  const devs = (u.tokens || []).length
+    ? (u.tokens || []).map((t) => (t.name
+        ? `<span class="tag ok"${A ? ` title="${esc(fx.devices || '')}"` : ''}>${esc(t.name)}</span>`
+        : '<span class="tag warn" title="令牌已被吊销">已失效</span>')).join(' ')
+    : `<span class="muted">${A ? '还没有令牌' : '未分配'}</span>`;
+  const off = Object.keys(PERM_META).filter((k) => u.perms && u.perms[k] === false);
+  const perms = off.length
+    ? off.map((k) => `<span class="tag warn" title="已关闭">✗ ${esc(PERM_META[k])}</span>`).join(' ')
+    : `<span class="muted"${A ? ` title="${esc(fx.perms || '')}"` : ''}>全部</span>`;
+  return `<tr class="${A ? 'row-admin' : ''}">
+    <td><b>${esc(u.name)}</b>${A ? ' <span class="tag acc">管理员</span>' : ''}${u.note ? ` <span class="muted xs">${esc(u.note)}</span>` : ''}</td>
+    <td>${devs}</td>
+    <td>${A ? `<span class="muted" title="${esc(fx.quota || '')}">不限</span>` : quotaCell(u)}</td>
+    <td>${perms}</td>
+    <td>${u.disabled ? '<span class="st-4">已禁用</span>' : '<span class="st-2">正常</span>'}</td>
+    <td class="muted">${u.createdAt
+      ? `<span${u.createdApprox ? ' title="这是 config.json 的文件创建时间(近似):管理台账号没记过注册时间,这个字段是后加的" class="approx"' : ''}>${new Date(u.createdAt).toLocaleDateString('zh-CN')}${u.createdApprox ? ' ≈' : ''}</span>`
+      : '—'}</td>
+    <td class="muted">${u.lastLoginAt ? ago(u.lastLoginAt) : A ? '本次启动后未登录' : '从未登录'}</td>
+    <td class="act">${rowActions(u, canManage)}</td></tr>`;
+}
+
+function rowActions(u, canManage) {
+  if (u.isAdmin) {
+    // 管理员少的就是这两个:禁用、删除。其余按钮位置与普通用户一一对应。
+    if (!u.canManage) return '<span class="muted xs">环境变量配置,不可在线改</span>';
+    return `<button class="sm" onclick="openAdminUser()">编辑</button>
+      <button class="sm" onclick="openAdminUser('pw')">改密码</button>`;
+  }
+  if (!canManage) return '';
+  return `<button class="sm" onclick="openUser('${esc(u.name)}')">编辑</button>
+    <button class="sm" onclick="resetUserPw('${esc(u.name)}')">重置密码</button>
+    <button class="sm" onclick="toggleUser('${esc(u.name)}', ${!u.disabled})">${u.disabled ? '启用' : '禁用'}</button>
+    <button class="sm danger" onclick="removeUser('${esc(u.name)}')">删除</button>`;
 }
 
 // 配额单元格:不限就一个字,有限额则显示"已用/上限"并用条形量化(一眼看出谁快满了)
@@ -1640,25 +1667,29 @@ async function loadAccount() {
   try {
     const d = await (await api('/account')).json();
     ADMIN_ACCT = d;
-    el('acctUser').value = d.user || '';
+    el('acctUser').value = d.name || d.user || '';
+    el('acctNote').value = d.note || '';
     // 环境变量配的账号改不了(写不回文件,重启就丢)—— 直接把表单锁掉并说清原因
-    ['acctUser', 'oldPw', 'newPw', 'newPw2'].forEach((k) => { el(k).disabled = !d.canManage; });
+    ['acctUser', 'acctNote', 'oldPw', 'newPw', 'newPw2'].forEach((k) => { el(k).disabled = !d.canManage; });
     el('acctBlock').querySelector('button.primary').disabled = !d.canManage;
-    if (!d.canManage) el('acctNote').innerHTML = '当前用<b>环境变量</b>配置管理台账号,无法在线修改(改了也写不回 <span class="mono">config.json</span>,重启就丢)。改用 config.json 即可在这里改。';
+    if (!d.canManage) el('acctHint').innerHTML = '当前用<b>环境变量</b>配置管理台账号,无法在线修改(改了也写不回 <span class="mono">config.json</span>,重启就丢)。改用 config.json 即可在这里改。';
   } catch (e) {}
 }
 async function saveAccount() {
   const msg = el('pwMsg');
   msg.textContent = ''; msg.className = 'ok-msg';
   const username = el('acctUser').value.trim();
+  const note = el('acctNote').value;
   const oldPassword = el('oldPw').value, newPassword = el('newPw').value;
   const fail = (t) => { msg.className = 'err-msg'; msg.textContent = t; };
-  if (!oldPassword) return fail('请填当前密码');
+  const renaming = username && username !== ((ADMIN_ACCT && (ADMIN_ACCT.name || ADMIN_ACCT.user)) || '');
   if (newPassword !== el('newPw2').value) return fail('两次新密码不一致');
-  const r = await api('/account', { method: 'POST', body: JSON.stringify({ username, oldPassword, newPassword }) });
+  // 备注不是凭证,单改它不该逼人输密码
+  if ((renaming || newPassword) && !oldPassword) return fail('改登录名或密码需要填当前密码');
+  const r = await api('/account', { method: 'POST', body: JSON.stringify({ username: renaming ? username : '', note, oldPassword, newPassword }) });
   const d = await r.json();
   if (!r.ok || !d.ok) return fail('失败:' + (d.error || '未知'));
-  const done = [d.renamed ? `登录名已改为 ${d.user}` : '', d.passwordChanged ? '密码已修改' : ''].filter(Boolean).join('、');
+  const done = [d.renamed ? `登录名已改为 ${d.user}` : '', d.passwordChanged ? '密码已修改' : '', d.noteChanged ? '备注已更新' : ''].filter(Boolean).join('、');
   msg.textContent = '✅ ' + done;
   el('oldPw').value = el('newPw').value = el('newPw2').value = '';
   if (d.user) el('acctUser').value = d.user;
@@ -1671,6 +1702,52 @@ function gotoAccount() {
   const f = el('acctUser');
   f.focus(); f.select();
   el('acctBlock').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// ── 「用户」页里管理员那行的编辑框 ──
+// 和普通用户的编辑框同一个位置、同一批字段;设备/权限/配额是身份决定的,
+// 所以列成只读说明 —— 摆一排点不动的勾选框只会让人以为是坏了。
+const adminDlg = el('adminDlg');
+async function openAdminUser(focus) {
+  const a = ADMIN_ACCT || (await (await api('/account')).json().catch(() => null));
+  if (!a) return toast('读取管理员信息失败', 'err');
+  ADMIN_ACCT = a;
+  el('adminDlgTitle').textContent = `编辑管理员 · ${a.name}`;
+  el('aName').value = a.name || '';
+  el('aNote').value = a.note || '';
+  el('aNewPw').value = el('aNewPw2').value = el('aOldPw').value = '';
+  el('aNewPw').type = 'password';
+  el('aMsg').textContent = '';
+  const fx = a.fixed || {};
+  const devs = (a.tokens || []).map((t) => t.name).filter(Boolean);
+  el('aFixed').innerHTML = `
+    <dt>分配设备</dt><dd>${devs.length ? esc(devs.join('、')) : '还没有客户端令牌'}<div class="muted xs">${esc(fx.devices || '')}</div></dd>
+    <dt>权限</dt><dd>全部<div class="muted xs">${esc(fx.perms || '')}</div></dd>
+    <dt>配额</dt><dd>不限<div class="muted xs">${esc(fx.quota || '')}</div></dd>`;
+  adminDlg.showModal();
+  el(focus === 'pw' ? 'aNewPw' : 'aName').focus();
+}
+
+async function saveAdminUser() {
+  const msg = el('aMsg');
+  msg.textContent = '';
+  const username = el('aName').value.trim();
+  const note = el('aNote').value;
+  const newPassword = el('aNewPw').value;
+  const oldPassword = el('aOldPw').value;
+  const cur = ADMIN_ACCT || {};
+  const renaming = username && username !== cur.name;
+  if (newPassword !== el('aNewPw2').value) { msg.textContent = '两次新密码不一致'; return; }
+  // 只有动凭证才要当前密码 —— 提前拦一下,别让人白跑一趟服务端
+  if ((renaming || newPassword) && !oldPassword) { msg.textContent = '改登录名或密码需要填当前密码'; return; }
+  const r = await api('/account', { method: 'POST', body: JSON.stringify({ username: renaming ? username : '', note, oldPassword, newPassword }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { msg.textContent = '失败:' + (d.error || '未知'); return; }
+  adminDlg.close();
+  const done = [d.renamed ? `登录名改为 ${d.user}` : '', d.passwordChanged ? '密码已改' : '', d.noteChanged ? '备注已改' : ''].filter(Boolean);
+  toast('管理员账号已更新' + (done.length ? ':' + done.join('、') : ''));
+  loadUsers();
+  if (el('acctUser')) el('acctUser').value = d.user || '';
 }
 
 // ── 实时日志(分块持久化 + 分页)──

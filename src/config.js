@@ -29,6 +29,8 @@ const DEFAULTS = {
   adminEnabled: false,
   adminUser: 'admin',
   adminPassword: '',
+  adminNote: '', // 管理台账号的备注,和普通用户的 note 一个意思
+  adminCreatedAt: 0, // 首次生成管理台凭证的时间;老配置没有,启动时补一次
 };
 
 function readConfigFile() {
@@ -130,6 +132,8 @@ export function loadConfig() {
     adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
     adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,
     adminPassword: process.env.CC_TRANS_ADMIN_PASSWORD || file.adminPassword || DEFAULTS.adminPassword,
+    adminNote: file.adminNote || DEFAULTS.adminNote,
+    adminCreatedAt: Number(file.adminCreatedAt) || DEFAULTS.adminCreatedAt,
     __file: file.__file,
   };
 

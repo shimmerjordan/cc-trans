@@ -55,6 +55,35 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
     log(`⚠️ 管理台页面读取失败 ${UI_FILE}: ${err.message}`);
   }
 
+  // 管理员在「用户」页的那一行。字段刻意和 users.list() 的形状对齐,
+  // 前端才能复用同一套单元格渲染;不同之处用 fixed* 标出来:
+  // 设备/权限/配额由管理员身份固定决定,不是"没配"。
+  function adminRow() {
+    const tokens = tokenAdmin.list();
+    return {
+      name: credentials.user,
+      isAdmin: true,
+      note: credentials.note ? credentials.note() : '',
+      createdAt: credentials.createdAt ? credentials.createdAt() : 0,
+      // true = 这个日期是从 config.json 的文件时间推出来的近似值,不是真的注册时间
+      createdApprox: credentials.createdApprox ? credentials.createdApprox() : false,
+      lastLoginAt: credentials.lastLoginAt ? credentials.lastLoginAt() : 0,
+      disabled: false,
+      canManage: credentials.canManage ? credentials.canManage() : false,
+      // 与普通用户同名的字段,值是"全部"
+      tokens: tokens.map((t) => ({ id: idOf(t.token), name: t.name })),
+      deviceCount: tokens.length,
+      perms: Object.fromEntries(Object.keys(PERMS).map((k) => [k, true])),
+      quota: { window: 'month', tokens: 0, costUsd: 0, unlimited: true },
+      used: { tokens: 0, cost: 0, requests: 0 },
+      fixed: {
+        devices: '管理员始终拥有全部设备,不单独绑定',
+        perms: '管理员固定拥有全部权限',
+        quota: '管理员不受配额限制',
+      },
+    };
+  }
+
   function newSession() {
     const t = crypto.randomBytes(24).toString('base64url');
     sessions.set(t, Date.now() + SESSION_TTL_MS);
@@ -227,18 +256,21 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
     }
 
     if (sub === '/api/account' && req.method === 'GET') {
-      return sendJson(res, 200, {
-        user: credentials.user,
-        canManage: credentials.canManage ? credentials.canManage() : false,
-        lastLoginAt: credentials.lastLoginAt ? credentials.lastLoginAt() : 0,
-      });
+      // name 是与普通用户行对齐的字段名;user 是这个接口原有的叫法,留作别名
+      const row = adminRow();
+      return sendJson(res, 200, { ...row, user: row.name });
     }
 
     // 管理台账号:登录名 + 密码在一个接口里改(都是凭证,都验当前密码,任填其一)
     if (sub === '/api/account' && req.method === 'POST') {
       const b = await readJson(req);
       const r = credentials.changeAccount
-        ? credentials.changeAccount({ username: b.username, oldPassword: b.oldPassword || '', newPassword: b.newPassword || '' })
+        ? credentials.changeAccount({
+            username: b.username,
+            oldPassword: b.oldPassword || '',
+            newPassword: b.newPassword || '',
+            note: b.note,
+          })
         : credentials.changePassword(b.oldPassword || '', b.newPassword || '');
       return sendJson(res, r.ok ? 200 : 400, r);
     }
@@ -298,14 +330,9 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
         users: list,
         // 管理员不在 config.users 里(凭证是 adminUser/adminPassword),但必须出现在这张表上:
         // 否则"系统里有哪些账号"这个问题在唯一该回答它的地方缺了一行。
-        // 它是合成行 —— 不可删除、不可禁用、不受配额限制、设备=全部令牌。
-        admin: {
-          name: credentials.user,
-          isAdmin: true,
-          canManage: credentials.canManage ? credentials.canManage() : false,
-          lastLoginAt: credentials.lastLoginAt ? credentials.lastLoginAt() : 0,
-          deviceCount: tokenAdmin.list().length,
-        },
+        // 字段与普通用户对齐,前端才能用同一套单元格渲染 —— 差别只在
+        // 不可禁用/删除,以及设备/权限/配额由管理员身份固定决定。
+        admin: adminRow(),
         // 可分配的令牌清单(掩码)
         tokens: tokenAdmin.list().map((t) => ({ id: idOf(t.token), name: t.name, tokenMask: maskToken(t.token) })),
       });

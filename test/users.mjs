@@ -463,8 +463,22 @@ try {
     ok('管理员行有最近登录时间', ul.admin.lastLoginAt > 0);
 
     const acc = await (await get('/admin/api/account', bearer(adminSession))).json();
-    ok('GET /api/account 返回当前登录名', acc.user === 'admin' && acc.canManage === true, JSON.stringify(acc));
+    ok('GET /api/account 返回当前登录名', acc.name === 'admin' && acc.canManage === true, JSON.stringify(acc).slice(0, 120));
+    ok('user 作为 name 的别名保留(旧契约)', acc.user === acc.name);
     ok('GET /api/account 需要登录', (await get('/admin/api/account')).status === 401);
+    // 管理员行的字段形状要和普通用户对齐,前端才能用同一套单元格渲染
+    for (const f of ['note', 'createdAt', 'lastLoginAt', 'disabled', 'tokens', 'perms', 'quota', 'used', 'fixed']) {
+      ok(`管理员行有字段 ${f}`, acc[f] !== undefined, JSON.stringify(acc[f]).slice(0, 60));
+    }
+    ok('管理员创建时间有值(老配置用 config.json 创建时间兜底)', acc.createdAt > 0, `${acc.createdAt}`);
+    // 这份 config 里没写 adminCreatedAt,所以只能是推导出来的近似值 —— 必须自报家门,
+    // 一个不标来源的错日期比留白更糟
+    ok('兜底得来的创建时间标为近似', acc.createdApprox === true, `${acc.createdApprox}`);
+    ok('近似的创建时间不写回 config.json(写回就成了"精确值")',
+      JSON.parse(fs.readFileSync(configFile, 'utf8')).adminCreatedAt === undefined);
+    ok('管理员权限全开', Object.values(acc.perms).every(Boolean));
+    ok('管理员配额不限', acc.quota.unlimited === true);
+    ok('管理员设备 = 全部令牌', acc.tokens.length === (await (await get('/admin/api/clients', bearer(adminSession))).json()).tokens.length);
 
     // 管理员不可删除 / 不可禁用(凭证不在 config.users 里,这两个接口碰不到它)
     ok('删除管理员失败', (await post('/admin/api/users/remove', { name: 'admin' }, bearer(adminSession))).status === 400);
@@ -485,7 +499,7 @@ try {
       const r = await post('/admin/api/account', body, bearer(adminSession));
       ok(`改账号被拒:${label}`, r.status === 400, (await r.json()).error);
     }
-    ok('被拒后登录名没变', (await (await get('/admin/api/account', bearer(adminSession))).json()).user === 'admin');
+    ok('被拒后登录名没变', (await (await get('/admin/api/account', bearer(adminSession))).json()).name === 'admin');
     ok('被拒后原密码仍能登录', (await post('/admin/api/login', { username: 'admin', password: 'admin-pw-123' })).ok);
 
     // 只改登录名
@@ -513,8 +527,34 @@ try {
     // 老 /api/password 路径只改密码,不该动到登录名
     const r3 = await post('/admin/api/password', { oldPassword: 'admin-pw-456', newPassword: 'admin-pw-789' }, bearer(adminSession));
     ok('老 /api/password 仍可只改密码', r3.ok, `status=${r3.status}`);
-    ok('只改密码不影响登录名', (await (await get('/admin/api/account', bearer(adminSession))).json()).user === 'root3');
+    ok('只改密码不影响登录名', (await (await get('/admin/api/account', bearer(adminSession))).json()).name === 'root3');
     ok('改完用新密码能登录', (await post('/admin/api/login', { username: 'root3', password: 'admin-pw-789' })).ok);
+
+    // 备注不是凭证:单改它不该逼人输当前密码
+    const n1 = await post('/admin/api/account', { note: '运维主账号' }, bearer(adminSession));
+    const dn1 = await n1.json();
+    ok('只改备注不需要当前密码', n1.ok && dn1.ok && dn1.noteChanged === true && !dn1.renamed, JSON.stringify(dn1));
+    ok('备注回读得到', (await (await get('/admin/api/account', bearer(adminSession))).json()).note === '运维主账号');
+    ok('备注写回 config.json', JSON.parse(fs.readFileSync(configFile, 'utf8')).adminNote === '运维主账号');
+    ok('改备注没动登录名', (await (await get('/admin/api/account', bearer(adminSession))).json()).name === 'root3');
+    ok('改备注没动密码', (await post('/admin/api/login', { username: 'root3', password: 'admin-pw-789' })).ok);
+    ok('用户列表里的管理员行带备注', (await (await get('/admin/api/users', bearer(adminSession))).json()).admin.note === '运维主账号');
+
+    const longNote = 'x'.repeat(300);
+    await post('/admin/api/account', { note: longNote }, bearer(adminSession));
+    ok('超长备注被截到 200', (await (await get('/admin/api/account', bearer(adminSession))).json()).note.length === 200);
+    await post('/admin/api/account', { note: '运维主账号' }, bearer(adminSession));
+
+    // 备注没变 + 没填别的 = 什么都没改
+    const noop = await post('/admin/api/account', { note: '运维主账号' }, bearer(adminSession));
+    ok('备注没变时视为没有要改的内容', noop.status === 400, (await noop.json()).error);
+
+    // 改名仍然要密码(别因为放宽了备注就把凭证也放行了)
+    const stillGuarded = await post('/admin/api/account', { username: 'root4', note: '运维主账号' }, bearer(adminSession));
+    ok('改登录名仍必须验当前密码', stillGuarded.status === 400, (await stillGuarded.json()).error);
+    const stillGuarded2 = await post('/admin/api/account', { newPassword: 'hack-me-123' }, bearer(adminSession));
+    ok('改密码仍必须验当前密码', stillGuarded2.status === 400, (await stillGuarded2.json()).error);
+    ok('被拒后密码没被改掉', (await post('/admin/api/login', { username: 'root3', password: 'admin-pw-789' })).ok);
   }
 
   // ── /u 前缀不吞其它路径 ──
@@ -550,6 +590,14 @@ try {
     // 改过的管理台登录名必须活过重启 —— 只改内存不写文件的话,这里会 401
     const a = await post('/admin/api/login', { username: 'root3', password: 'admin-pw-789' });
     ok('重启后管理台新登录名仍可登录', a.ok, `status=${a.status}`);
+    const s2 = await a.json().then((d) => d.session).catch(() => null);
+    if (s2) {
+      const acc2 = await (await get('/admin/api/account', bearer(s2))).json();
+      ok('重启后备注仍在', acc2.note === '运维主账号', JSON.stringify(acc2.note));
+      ok('重启后创建时间仍在(仍是近似)', acc2.createdAt > 0 && acc2.createdApprox === true, `${acc2.createdAt}/${acc2.createdApprox}`);
+    } else {
+      ok('重启后备注仍在', false, '登录失败');
+    }
     ok('重启后旧登录名仍无效', (await post('/admin/api/login', { username: 'admin', password: 'admin-pw-789' })).status === 401);
   } finally {
     child2.kill();

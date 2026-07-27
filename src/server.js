@@ -314,17 +314,35 @@ const adminOn = config.adminEnabled || !!config.adminPassword;
 // 别把 adminUser 的值拷进别的常量里(改名后会读到旧值)。
 let adminUser = config.adminUser || 'admin';
 let adminPassword = config.adminPassword;
+let adminNote = config.adminNote || '';
+let adminCreatedAt = Number(config.adminCreatedAt) || 0;
 let adminLastLoginAt = 0; // 只记在内存:登录一次就写一次 config.json 太吵
 let initialPasswordNotice = null;
 
 if (adminOn && !adminPassword) {
   // 首次部署:生成随机初始密码,写回 config.json,并在控制台醒目打印一次
   adminPassword = 'adm-' + crypto.randomBytes(9).toString('base64url');
+  adminCreatedAt = Date.now();
   initialPasswordNotice = adminPassword;
   try {
-    if (config.__file) patchConfigFile({ adminPassword });
+    if (config.__file) patchConfigFile({ adminPassword, adminCreatedAt });
   } catch (err) {
     initialPasswordNotice = adminPassword + ' (⚠️ 未能写回 config.json,重启会重新生成: ' + err.message + ')';
+  }
+}
+
+// 老配置里没有 adminCreatedAt(这个字段是后加的)。与其在界面上摆一个「—」,
+// 不如用 config.json 的创建时间兜底 —— 管理台账号本来就是随它一起出现的。
+// 【不写回】:写回就变成了"精确值",而它其实只是个近似。保持推导 + 打上
+// approx 标记,界面上说清来源 —— 不标来源的近似值就是在骗人。
+let adminCreatedApprox = false;
+if (adminOn && !adminCreatedAt && config.__file) {
+  try {
+    const st = fs.statSync(config.__file);
+    adminCreatedAt = Math.round(st.birthtimeMs || st.mtimeMs || 0);
+    adminCreatedApprox = !!adminCreatedAt;
+  } catch {
+    /* 拿不到就算了,界面上显示「—」 */
   }
 }
 
@@ -337,6 +355,9 @@ const adminCredentials = {
     return adminUser;
   },
   lastLoginAt: () => adminLastLoginAt,
+  note: () => adminNote,
+  createdAt: () => adminCreatedAt,
+  createdApprox: () => adminCreatedApprox,
   // 环境变量配置时不能在线改 —— 改了也写不回,重启就丢
   canManage: () => !!config.__file,
   verify: (u, p) => {
@@ -344,14 +365,23 @@ const adminCredentials = {
     if (ok) adminLastLoginAt = Date.now();
     return ok;
   },
-  // 登录名和密码在同一个表单里改:两者都是凭证,都要验当前密码,任填其一。
-  changeAccount: ({ username, oldPassword, newPassword } = {}) => {
+  // 登录名、密码、备注都在这一个接口里改,任填其一。
+  // 只有【凭证类】改动(登录名 / 密码)才验当前密码 —— 备注不是凭证,
+  // 为了改一行备注去输密码只会让人烦。
+  changeAccount: ({ username, oldPassword, newPassword, note } = {}) => {
     if (!config.__file) {
       return { ok: false, error: '当前用环境变量配置管理台账号,无法在线修改;请改用 config.json' };
     }
-    if (!safeEqual(String(oldPassword || ''), adminPassword)) return { ok: false, error: '当前密码不正确' };
+    const wantsCredential = !!String(username || '').trim() || !!String(newPassword || '');
+    if (wantsCredential && !safeEqual(String(oldPassword || ''), adminPassword)) {
+      return { ok: false, error: '当前密码不正确' };
+    }
 
     const patch = {};
+    if (note !== undefined) {
+      const n = String(note || '').slice(0, 200);
+      if (n !== adminNote) patch.adminNote = n;
+    }
     const wantName = String(username || '').trim();
     if (wantName && wantName !== adminUser) {
       if (!ADMIN_NAME_RE.test(wantName)) return { ok: false, error: '登录名需 2~32 位,仅限字母数字与 . _ -' };
@@ -383,7 +413,18 @@ const adminCredentials = {
       adminPassword = patch.adminPassword;
       log(`管理台密码已修改`);
     }
-    return { ok: true, user: adminUser, renamed: !!patch.adminUser, passwordChanged: !!patch.adminPassword };
+    if (patch.adminNote !== undefined) {
+      adminNote = patch.adminNote;
+      log(`管理台账号备注已修改`);
+    }
+    return {
+      ok: true,
+      user: adminUser,
+      note: adminNote,
+      renamed: !!patch.adminUser,
+      passwordChanged: !!patch.adminPassword,
+      noteChanged: patch.adminNote !== undefined,
+    };
   },
   changePassword: (oldPw, newPw) => adminCredentials.changeAccount({ oldPassword: oldPw, newPassword: newPw }),
 };
