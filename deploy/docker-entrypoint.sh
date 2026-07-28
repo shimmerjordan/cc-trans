@@ -48,6 +48,24 @@ else
   fi
 fi
 
+# 老配置里可能写死了 dataDir=/app/data(旧版 entrypoint 干的)。这份 config.json
+# 现在与裸机共用,容器路径留在里面会让裸机启动指向不存在的目录 —— 摘掉它。
+# 容器自己走 CC_TRANS_DATA_DIR,行为不变。
+if [ -f "$CONFIG" ]; then
+  node -e '
+    const fs = require("fs");
+    const f = process.argv[1];
+    try {
+      const c = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (typeof c.dataDir === "string" && c.dataDir.startsWith("/app/")) {
+        delete c.dataDir;
+        fs.writeFileSync(f, JSON.stringify(c, null, 2));
+        console.log("[entrypoint] 已从配置里移除容器专用的 dataDir(改由环境变量提供)");
+      }
+    } catch {}
+  ' "$CONFIG" || true
+fi
+
 if [ ! -f "$CONFIG" ]; then
   echo "[entrypoint] 未发现 $CONFIG,首次启动 —— 自动生成配置…"
   TOKEN="$(node /app/src/server.js gen-token)"
@@ -58,8 +76,10 @@ if [ ! -f "$CONFIG" ]; then
     c.clientTokens = [{ token, name: "default" }];
     c.adminEnabled = true;
     c.adminPassword = "";          // 留空 → 首启随机生成并打印到日志
-    c.dataDir = dataDir;           // 所有状态(指标/模型/日志)都落在挂载卷里
     c.host = "0.0.0.0";
+    // 【不】把 dataDir 写进配置:那是容器内路径(/app/data),而这份 config.json
+    // 现在由 Docker 与裸机/systemd 共用 —— 写进去,裸机读到就指向不存在的目录。
+    // 容器自己用 CC_TRANS_DATA_DIR 环境变量指定(优先级高于文件)。
     fs.writeFileSync(out, JSON.stringify(c, null, 2));
   ' /app/config.example.json "$CONFIG" "$TOKEN" "$DATA_DIR"
   # 上面这步是 root 写的;管理台「设置」页要能改写它,属主得跟运行身份一致

@@ -349,6 +349,99 @@ const dataDir = path.join(tmp, 'data');
   }
 }
 
+// ── 状态目录的默认位置:两种部署必须落到【同一个目录】 ──
+// systemd/裸机历史上配置在 <仓库根>/config.json、Docker 在 <dataDir>/config.json,
+// 而 dataDir 默认都是"配置同级的 data/"。两者共用同一个数据目录却各自一份配置,
+// 就会漂移成"同一个服务两种界面"(真发生过:一边没有用户账号、日志保留天数也不同)。
+// 所以配置本来就躺在 data/ 里时,状态目录就是那个目录 —— 不能再往下套一层 data/data。
+{
+  const cases = [
+    { name: '配置在 data/ 里 → 状态目录就是它自己(不套 data/data)', sub: 'data', expect: (base) => path.join(base, 'data') },
+    { name: '配置在上层目录 → 状态目录是同级的 data/', sub: '', expect: (base) => path.join(base, 'data') },
+  ];
+  for (const c of cases) {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-dd-'));
+    const dir = c.sub ? path.join(base, c.sub) : base;
+    fs.mkdirSync(dir, { recursive: true });
+    const cfg = path.join(dir, 'config.json');
+    const port = 19983 + cases.indexOf(c);
+    fs.writeFileSync(cfg, JSON.stringify({
+      host: '127.0.0.1', port, upstreamAuth: 'apiKey', upstreamApiKey: 'sk-test',
+      adminEnabled: true, adminPassword: 'dd-pw-1234',
+      clientTokens: [{ token: 'cct-' + 'f'.repeat(32), name: 'dev' }],
+    }));
+    const ch = spawn(process.execPath, [path.join(import.meta.dirname, '../src/server.js')], {
+      env: { ...process.env, CC_TRANS_CONFIG: cfg }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let lg = '';
+    ch.stdout.on('data', (d) => (lg += d));
+    ch.stderr.on('data', (d) => (lg += d));
+    try {
+      let up = false;
+      for (let i = 0; i < 60 && !up; i++) {
+        try { up = (await fetch(`http://127.0.0.1:${port}/health`)).ok; } catch {}
+        if (!up) await new Promise((r) => setTimeout(r, 150));
+      }
+      const want = c.expect(base);
+      // 问服务自己解析成了哪个目录 —— metrics.json 是 20s 定时落盘的,
+      // 启动后立刻查文件必然还不存在
+      const sess = await (await fetch(`http://127.0.0.1:${port}/admin/api/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'dd-pw-1234' }),
+      })).json().then((d) => d.session).catch(() => null);
+      const got = sess
+        ? await (await fetch(`http://127.0.0.1:${port}/admin/api/storage`, { headers: { authorization: 'Bearer ' + sess } })).json().then((d) => d.dataDir).catch(() => null)
+        : null;
+      ok(c.name, up && got === want, `解析到 ${got}(期望 ${want})`);
+    } finally {
+      ch.kill();
+      await new Promise((r) => ch.on('exit', r));
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }
+
+  // 配置里写死了另一种部署的路径(例如容器内 /app/data):要退回默认并说清原因,
+  // 而不是等到第一次落盘才 EACCES 崩掉
+  {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-dd-bad-'));
+    const cfg = path.join(base, 'config.json');
+    const port = 19986;
+    fs.writeFileSync(cfg, JSON.stringify({
+      host: '127.0.0.1', port, upstreamAuth: 'apiKey', upstreamApiKey: 'sk-test',
+      dataDir: '/app/data', // 真实场景:容器路径被裸机读到(宿主机上 /app 不存在且建不了)
+      adminEnabled: true, adminPassword: 'dd-pw-1234',
+      clientTokens: [{ token: 'cct-' + 'g'.repeat(32), name: 'dev' }],
+    }));
+    const ch = spawn(process.execPath, [path.join(import.meta.dirname, '../src/server.js')], {
+      env: { ...process.env, CC_TRANS_CONFIG: cfg }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let lg = '';
+    ch.stdout.on('data', (d) => (lg += d));
+    ch.stderr.on('data', (d) => (lg += d));
+    try {
+      let up = false;
+      for (let i = 0; i < 60 && !up; i++) {
+        try { up = (await fetch(`http://127.0.0.1:${port}/health`)).ok; } catch {}
+        if (!up) await new Promise((r) => setTimeout(r, 150));
+      }
+      ok('不可写的 dataDir 不会让服务起不来', up, lg.slice(-300));
+      ok('并且明确告警说明退回到哪', /dataDir 不可写/.test(lg) && /已退回/.test(lg), (lg.split('\n').find((l) => l.includes('不可写')) || '').trim());
+      const sess = await (await fetch(`http://127.0.0.1:${port}/admin/api/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'dd-pw-1234' }),
+      })).json().then((d) => d.session).catch(() => null);
+      const got = sess
+        ? await (await fetch(`http://127.0.0.1:${port}/admin/api/storage`, { headers: { authorization: 'Bearer ' + sess } })).json().then((d) => d.dataDir).catch(() => null)
+        : null;
+      ok('状态目录退回到配置同级的 data/', got === path.join(base, 'data'), `解析到 ${got}`);
+    } finally {
+      ch.kill();
+      await new Promise((r) => ch.on('exit', r));
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass}/${pass + fail} 通过`);
 process.exit(fail ? 1 : 0);

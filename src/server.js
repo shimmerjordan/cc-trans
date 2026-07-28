@@ -103,13 +103,49 @@ const tokenMap = new Map(clientTokens.map((t) => [t.token, t]));
 // let:管理台「上游订阅」可在线切换鉴权方式/凭证路径并热重建,无需重启
 let oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
 
-// 状态目录:显式 dataDir 优先(Docker 里指到挂载卷),否则 config.json 同级 data/;
+// 状态目录:显式 dataDir 优先(Docker 用 CC_TRANS_DATA_DIR 指到挂载卷),
 // 纯环境变量配置模式(无 config.json)则为 null —— 全部退化为内存态。
-const dataDir = config.dataDir
-  ? path.resolve(config.dataDir)
-  : config.__file
-    ? path.join(path.dirname(config.__file), 'data')
-    : null;
+//
+// 没显式指定时的默认值要让两种布局落到【同一个目录】:
+//   <仓库根>/config.json      (老装机)  → <仓库根>/data
+//   <仓库根>/data/config.json (新默认/Docker) → <仓库根>/data  ← 就是它自己所在的目录
+// 所以配置文件本来就躺在 data/ 里的时候,状态目录就是那个目录,不再往下套一层
+// (否则会出现 data/data 这种嵌套,两种部署又各写一处)。
+function defaultDataDir(configFile) {
+  if (!configFile) return null;
+  const dir = path.dirname(configFile);
+  return path.basename(dir) === 'data' ? dir : path.join(dir, 'data');
+}
+// 目标目录能不能写:找到最近的【已存在】祖先看它的权限。
+// 刻意【不】在启动时 mkdir 去试 —— `fs.mkdirSync(p, {recursive:true})` 对某些病态
+// 路径会直接阻塞(实测 /proc 下递归创建卡死不返回),那会让整个服务起不来,
+// 比"第一次落盘才报错"糟得多。existsSync/accessSync 都是毫秒级且不阻塞。
+function dirWritable(p) {
+  let cur = path.resolve(p);
+  for (;;) {
+    if (fs.existsSync(cur)) {
+      try {
+        fs.accessSync(cur, fs.constants.W_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    const up = path.dirname(cur);
+    if (up === cur) return false; // 走到根了还不存在
+    cur = up;
+  }
+}
+
+let dataDir = config.dataDir ? path.resolve(config.dataDir) : defaultDataDir(config.__file);
+// 配置里写死的 dataDir 可能来自另一种部署(例如容器路径 /app/data 被裸机读到)。
+// 与其等第一次落盘才 EACCES,不如启动就说清并退回默认。
+if (config.dataDir && dataDir && !dirWritable(dataDir)) {
+  const fallback = defaultDataDir(config.__file);
+  log(`⚠️ 配置里的 dataDir 不可写: ${dataDir}`);
+  log(`   这通常是另一种部署方式写进配置的路径(如容器内 /app/data)。已退回 ${fallback || '内存态'}`);
+  dataDir = fallback;
+}
 
 // 请求日志分块持久化(<dataDir>/logs/<日期>/<小时>.jsonl),支持分页查询/按时间段删除/自动过期
 const logStore = createLogStore({
@@ -1279,6 +1315,12 @@ function printBanner() {
     log(`  管理台:    未启用(在 config.json 设 adminEnabled:true 即可开启)`);
   }
   if (config.__file) log(`  配置文件:  ${config.__file}`);
+  // 两处都有 config.json = 同一份数据配了两份配置,迟早漂移成"同一个服务两种界面"。
+  // 静默择一最坏:用户看到的是界面不一致,却查不到原因。
+  if (config.__shadowed) {
+    log(`  ⚠️ 另有一份被忽略的配置: ${config.__shadowed}`);
+    log(`     两份配置指向同一个数据目录会各自漂移(用户/保留天数等),确认无用后删掉它。`);
+  }
   if (Object.keys(config.modelMap).length) {
     log(`  模型映射:  ${JSON.stringify(config.modelMap)}`);
   }

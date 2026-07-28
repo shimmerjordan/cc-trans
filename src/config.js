@@ -33,14 +33,36 @@ const DEFAULTS = {
   adminCreatedAt: 0, // 首次生成管理台凭证的时间;老配置没有,启动时补一次
 };
 
+// 配置文件的解析顺序。
+//
+// 为什么要有顺序:Docker 用 `<dataDir>/config.json`(卷里,状态集中一处),裸机/systemd
+// 历史上用 `<仓库根>/config.json`,而两种部署的 dataDir 默认都落在 `<仓库根>/data`。
+// 结果是【同一份数据配了两份配置】,各自漂移 —— 实测过一次:裸机那份没有用户账号、
+// 日志保留是默认 14 天,Docker 那份有用户、保留 30 天,同一个服务两种界面。
+//
+// 所以默认优先 data/config.json:两种部署方式落到同一份配置上,来回切不丢设置。
+// 仓库根的那份仅作向后兼容(老装机只有它),并且在两份都存在时【明确告警】。
+export function resolveConfigPath() {
+  if (process.env.CC_TRANS_CONFIG) {
+    return { file: process.env.CC_TRANS_CONFIG, explicit: true, shadowed: null };
+  }
+  const inData = path.join(ROOT, 'data', 'config.json');
+  const inRoot = path.join(ROOT, 'config.json');
+  const hasData = fs.existsSync(inData);
+  const hasRoot = fs.existsSync(inRoot);
+  if (hasData) return { file: inData, explicit: false, shadowed: hasRoot ? inRoot : null };
+  if (hasRoot) return { file: inRoot, explicit: false, shadowed: null };
+  // 都没有:新装机建在 data/ 里,和 Docker 一致
+  return { file: inData, explicit: false, shadowed: null, fresh: true };
+}
+
 function readConfigFile() {
-  // 允许用 CC_TRANS_CONFIG 指定路径,否则用仓库根目录的 config.json
-  const file = process.env.CC_TRANS_CONFIG || path.join(ROOT, 'config.json');
-  if (!fs.existsSync(file)) return { __file: null };
+  const { file, shadowed } = resolveConfigPath();
+  if (!fs.existsSync(file)) return { __file: null, __shadowed: shadowed || null };
   try {
     const raw = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(raw);
-    return { ...parsed, __file: file };
+    return { ...parsed, __file: file, __shadowed: shadowed || null };
   } catch (err) {
     throw new Error(`读取配置文件失败 ${file}: ${err.message}`);
   }
@@ -135,6 +157,7 @@ export function loadConfig() {
     adminNote: file.adminNote || DEFAULTS.adminNote,
     adminCreatedAt: Number(file.adminCreatedAt) || DEFAULTS.adminCreatedAt,
     __file: file.__file,
+    __shadowed: file.__shadowed || null, // 另一处也有 config.json,启动时要告警
   };
 
   // 上游鉴权方式:显式 upstreamAuth 优先;否则有静态密钥就走 apiKey,否则默认走订阅 OAuth

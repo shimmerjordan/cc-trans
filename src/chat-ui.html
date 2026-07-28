@@ -241,14 +241,36 @@
   .toast.err { border-color: color-mix(in oklch, var(--err) 40%, var(--line)); }
   @keyframes tin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
+  /* 遮罩:桌面上永不出现(侧栏是常驻列),手机上是唯一保证"能关回去"的东西 */
+  .scrim { display: none; }
+  .only-sm { display: none; }
+  /* 覆盖层打开时锁住背景滚动 —— 否则手指在遮罩上滑会滚后面的对话流 */
+  body.no-scroll { overflow: hidden; touch-action: none; }
+
   @media (max-width: 900px) {
     .app, .app.with-panel { grid-template-columns: 1fr; }
-    aside { position: fixed; inset: 0 auto 0 0; width: 270px; z-index: var(--z-modal); transform: translateX(-100%); transition: transform var(--dur-2) var(--ease); }
-    aside.open { transform: none; }
+    aside {
+      position: fixed; inset: 0 auto 0 0; width: min(84vw, 300px); z-index: var(--z-modal);
+      transform: translateX(-100%); transition: transform var(--dur-2) var(--ease);
+      /* 刘海屏:左侧安全区 + 底部 home 指示条 */
+      padding-left: env(safe-area-inset-left);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    aside.open { transform: none; box-shadow: var(--sh-2); }
+    .scrim { display: block; position: fixed; inset: 0; z-index: var(--z-backdrop); background: oklch(0 0 0 / .5); }
+    .only-sm { display: inline-flex; }
     .app.with-panel .panel { position: fixed; inset: 0; z-index: var(--z-modal); }
     .stream-inner { padding: var(--s4) var(--s3); }
-    .composer { padding: var(--s2) var(--s3) var(--s3); }
+    .composer { padding: var(--s2) var(--s3) max(var(--s3), env(safe-area-inset-bottom)); }
     .hide-sm { display: none !important; }
+    /* 顶栏在手机上会挤:允许换行,别把模型选择器压成一条缝 */
+    .bar { flex-wrap: wrap; row-gap: var(--s2); }
+    .bar select { max-width: 42vw; }
+    /* 底栏那行带的是账号名,是身份信息不是装饰,12px 在手机上太小 */
+    aside .foot { font-size: var(--fs-sm); }
+    /* Artifacts 面板头有 5 个控件,390px 下必须让它折行,否则关闭按钮被挤出去 */
+    .phead { flex-wrap: wrap; row-gap: var(--s2); }
+    .phead .ptitle { flex-basis: 100%; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -274,11 +296,18 @@
 </div>
 
 <div class="app" id="app" hidden>
+  <!-- 侧栏在手机上是覆盖层,遮罩必须存在:开关按钮在主区左上角、正好被侧栏盖住,
+       没有遮罩就等于打开后关不掉(用户实测踩到)。 -->
+  <div id="sideScrim" class="scrim" onclick="toggleSide(false)" hidden></div>
   <aside id="side">
     <div class="top">
       <span class="brand">cc-trans</span>
       <button class="icon" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
         <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+      </button>
+      <!-- 只在手机上出现:遮罩之外再给一个明确的关闭入口 -->
+      <button class="icon only-sm" onclick="toggleSide(false)" title="收起会话列表" aria-label="收起会话列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <div class="new-chat"><button class="primary" onclick="newChat()">＋ 新对话</button></div>
@@ -436,11 +465,34 @@ async function logout() {
 el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
 // ── 布局开关 ──
+// 手机上侧栏是覆盖层:开关按钮在主区左上角、会被侧栏盖住,所以【打开的同时必须
+// 备好三条退路】—— 点遮罩、点侧栏里的 ✕、按 Esc。少任何一条都可能关不掉。
+// 同时锁住背景滚动,否则手指在遮罩上滑会滚动后面的对话流。
 function toggleSide(force) {
   const s = el('side');
-  if (window.innerWidth <= 900) s.classList.toggle('open', force);
-  else el('app').classList.toggle('rail', force === undefined ? !el('app').classList.contains('rail') : !force);
+  if (window.innerWidth <= 900) {
+    const open = force === undefined ? !s.classList.contains('open') : !!force;
+    s.classList.toggle('open', open);
+    el('sideScrim').hidden = !open;
+    document.body.classList.toggle('no-scroll', open);
+  } else {
+    el('app').classList.toggle('rail', force === undefined ? !el('app').classList.contains('rail') : !force);
+  }
 }
+// Esc 关掉当前打开的覆盖层。先关 Artifacts 面板(它在更上层),再关侧栏。
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (window.innerWidth <= 900 && el('panel') && !el('panel').hidden) { togglePanel(false); return; }
+  if (el('side').classList.contains('open')) toggleSide(false);
+});
+// 转到桌面宽度时,手机态的覆盖层要收干净 —— 否则侧栏会以 fixed 姿态卡在页面上
+addEventListener('resize', () => {
+  if (window.innerWidth > 900 && el('side').classList.contains('open')) {
+    el('side').classList.remove('open');
+    el('sideScrim').hidden = true;
+    document.body.classList.remove('no-scroll');
+  }
+});
 function togglePanel(force) {
   const on = force === undefined ? !el('app').classList.contains('with-panel') : force;
   el('app').classList.toggle('with-panel', on);

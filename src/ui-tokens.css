@@ -36,6 +36,8 @@
     --warn: oklch(.56 .14 68); --warn-soft: oklch(.95 .05 75);
     --err: oklch(.54 .21 25); --err-soft: oklch(.95 .04 25);
     --nav-bg: oklch(.24 .03 272); --nav-ink: oklch(.97 .005 275);
+    /* 触控目标最小尺寸。桌面鼠标不需要这么大,coarse 指针下才抬起来 */
+    --touch: 44px;
     --sh-1: 0 1px 2px oklch(.25 .02 272 / .06);
     --sh-2: 0 12px 32px oklch(.25 .02 272 / .18), 0 2px 6px oklch(.25 .02 272 / .08);
     /* 图表分类色(与状态色区分开,顺序稳定) */
@@ -91,3 +93,48 @@
     --c5: oklch(.74 .11 220); --c6: oklch(.72 .15 305); --c7: oklch(.72 .16 350); --c8: oklch(.75 .13 130);
   }
 
+
+  /* ── 手机:排版密度换档 ──────────────────────────────────────────────
+     product register 说"固定 rem 而非 clamp",指的是别让标题随视口连续缩放;
+     它不反对【按断点换一档密度】—— 那正是"响应式是结构性的"。
+     桌面上 11~13px 的次级文字在 390px 手机上根本读不动,所以整条阶梯抬一档。
+     单位仍是固定 px,不引入流体缩放。 */
+  @media (max-width: 640px) {
+    :root {
+      --fs-xs: 12px; --fs-sm: 13px; --fs-md: 15px; --fs-base: 16px;
+      --fs-lg: 17px; --fs-xl: 22px; --fs-2xl: 28px;
+    }
+  }
+
+  /* ── 触控与表单(三个页面共用,别在各页复制)──────────────────────────
+     按【指针类型】而不是视口宽度分档:带触摸屏的笔记本同样按不准 36px 的按钮。
+     再叠一条宽度条件兜底,免得某些环境不上报 pointer。
+
+     选择器都带 html 前缀:本文件是【注入到各页 <style> 最前面】的,页面自己的
+     `button { min-height: 34px }` 在后面、同权重会赢。加一个元素把权重抬到 0,0,2
+     就与注入顺序无关了 —— 这比在三个页面里各复制一份规则可靠。 */
+  @media (pointer: coarse), (max-width: 640px) {
+    html button,
+    html select,
+    html summary,
+    html input:not([type="checkbox"]),
+    html textarea,
+    html .input,
+    html header .chat-link,
+    html .foot .acts a {
+      min-height: var(--touch);
+    }
+    /* 表格里的行内小按钮:44 会把行撑得很高,40 是手指够用的下限 */
+    html button.sm { min-height: 40px; }
+    html .icon-btn, html button.icon { min-width: var(--touch); }
+    /* 分段控件的按钮自己写了 min-height:32px,同样要抬 */
+    html .seg button { min-height: var(--touch); }
+    /* 勾选框 16px 在触屏上按不准(WCAG 2.5.8 的 24×24 是下限) */
+    html input[type="checkbox"] { width: 24px; height: 24px; min-height: 24px; }
+  }
+
+  /* iOS Safari 会在聚焦 font-size < 16px 的输入框时【整页放大】,而且退出后不复位。
+     这不是审美取舍 —— 是页面当着用户的面跳一下,而且之后横向能滑。控件一律 16px。 */
+  @media (max-width: 640px) {
+    html input, html select, html textarea, html .input { font-size: 16px; }
+  }

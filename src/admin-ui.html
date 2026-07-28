@@ -81,7 +81,12 @@
 
   /* 并排区块。两列等分,窄屏退化单列 —— 定义一次,别在每处重写 grid。
      不用 align-items:start:并排卡片底边不齐看着很散,等高更整。 */
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  /* 模块之间的间距要压得住模块本身的体量:16px 放在这些高一两百像素的卡片之间
+     会让整页糊成一条,读的时候找不到"一块到哪儿结束"。24px 是这个尺度下的下限。 */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s6); margin-bottom: var(--s6); }
+  /* 里面的卡片清掉自己的下边距(否则并排两张卡下方各留一段),
+     由 .grid-2 自己负责与下一个模块的间距 —— 原来两者都没有,
+     于是相邻的两个并排行是【紧贴】的,整页读起来没有分块。 */
   .grid-2 > .block { margin-bottom: 0; }
 
   /* ── Tab(触控目标 ≥44px 高) ──
@@ -105,13 +110,13 @@
   /* ── 区块 ── */
   .block {
     background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
-    padding: var(--s5); margin-bottom: var(--s4); box-shadow: var(--sh-1);
+    padding: var(--s5); margin-bottom: var(--s6); box-shadow: var(--sh-1);
   }
-  .block > h2, .block > summary > h2 {
+  .block > h2, .block > summary > h2, .set-head > h2 {
     font-size: var(--fs-base); font-weight: 600; margin: 0 0 var(--s4);
     color: var(--ink); display: flex; align-items: center; gap: var(--s2);
   }
-  .block > h2::before, .block > summary > h2::before {
+  .block > h2::before, .block > summary > h2::before, .set-head > h2::before {
     content: ""; width: 3px; height: 14px; background: var(--accent);
     border-radius: var(--r-full); flex: none;
   }
@@ -240,6 +245,69 @@
      thinking 与说明是长文本,留给它们换行 */
   #catalogRows td:nth-child(2), #catalogRows td:nth-child(3), #catalogRows td:nth-child(5) { white-space: nowrap; }
   td.sm-cell { font-size: var(--fs-sm); }
+
+  /* ── 手机:把"多列一行"的表翻成"一卡一条" ──
+     窄屏横向滚动对 4~5 列还能忍,对 8~10 列就是逼人来回拉,一屏看不到一条完整记录。
+     做法:thead 隐掉,每个 td 用 data-label 自带列名(标签在 CSS 里生成,
+     不往 DOM 里塞冗余节点)。
+     日志表【不】走这套 —— 它是密集等宽数据、靠上下扫读,翻成卡片会变成一屏一条,
+     反而更难用;那张表继续横向滚动。 */
+  @media (max-width: 640px) {
+    .table-wrap:has(table.cards) {
+      border: 0; box-shadow: none; background: none; overflow: visible;
+    }
+    table.cards thead { display: none; }
+    table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; }
+    table.cards tr {
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
+      box-shadow: var(--sh-1); padding: var(--s3) var(--s4); margin-bottom: var(--s3);
+    }
+    table.cards tr:hover { background: var(--card); }
+    table.cards tr.row-admin > td { background: none; } /* 整卡已有底色,单元格不再叠 */
+    table.cards tr.row-admin { background: color-mix(in oklch, var(--accent-soft) 55%, var(--card)); }
+    /* 标签独占一行、值在下面。
+       别用 `display:grid` + 两列("标签 | 值")—— 单元格里有多个 .tag 时,
+       每个 tag 都会各自变成一个 grid item 排进后续格子:第二个标签会跑到标签列去,
+       整块错位;span 还会被 stretch 拉满整列(虚下划线横贯一整行)。
+       块级布局对任意单元格内容都不会错位,手机上纵向空间也不金贵。 */
+    table.cards td {
+      border: 0; padding: var(--s2) 0;
+      display: block; white-space: normal; text-align: left;
+    }
+    table.cards td + td { border-top: 1px solid color-mix(in oklch, var(--line) 55%, transparent); }
+    table.cards td::before {
+      content: attr(data-label);
+      display: block; margin-bottom: 3px;
+      color: var(--muted); font-size: var(--fs-sm);
+    }
+    /* 首列是这条记录的标题,单独一行放大 */
+    table.cards td:first-child {
+      display: block; font-size: var(--fs-lg);
+      padding-bottom: var(--s2); margin-bottom: var(--s2);
+      border-bottom: 1px solid var(--line);
+    }
+    table.cards td:first-child::before { content: none; }
+    /* 操作按钮:独占一行、可换行,别再右对齐挤成一条 */
+    table.cards td.act {
+      display: flex; flex-wrap: wrap; gap: var(--s2);
+      margin-top: var(--s2); padding-top: var(--s3); border-top: 1px solid var(--line);
+    }
+    table.cards td.act::before { content: none; }
+    table.cards td.act button { flex: 1 1 auto; }
+    /* 空单元格不该留一行空标签 */
+    table.cards td:empty { display: none; }
+    /* 桌面上为了行高整齐设的 nowrap/截断,在卡片里要放开 */
+    table.cards td.trunc, table.cards td.path, table.cards td.usage { max-width: none; overflow: visible; }
+    table.cards .qcell { min-width: 0; }
+    table.cards .qbar { max-width: none; }
+  }
+  /* 桌面上那几条 nowrap 是按 tbody 的 id 写的(#clientRows td 等),
+     id 选择器权重压过 .cards td,所以这里得带上 id 才能盖掉 */
+  @media (max-width: 640px) {
+    table.cards #clientRows td,
+    table.cards #otherRows td,
+    table.cards #catalogRows td { white-space: normal; }
+  }
   .xs { font-size: var(--fs-xs); font-weight: 400; }
   /* 配额单元格:用量条比纯数字更容易一眼看出"谁快满了" */
   .qcell { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
@@ -335,6 +403,24 @@
   input[type="number"] { font-variant-numeric: tabular-nums; }
   .check { display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-md); cursor: pointer; min-height: 32px; }
   .form-row { display: grid; grid-template-columns: 6.5em 1fr; gap: var(--s3); align-items: center; max-width: 520px; margin-bottom: var(--s3); }
+
+  /* ── 设置页:说明在左、控件在右 ──
+     设置是【表单面】不是数据面。之前它跟着 main 一起铺到 1800px,而 .form-row 被
+     max-width:520px 卡住,结果一张一千八的卡片里只左边五百像素有东西,右边全空。
+     按项目既有的「分层限宽」原则把表单收窄;同时把"这一节是干什么的"挪到左栏 ——
+     说明离它解释的控件更近,这点宽度也真的被用上了,而不是靠把输入框拉到 800px 去填
+     (输入框过长同样难用:眼睛找不到行首行尾)。 */
+  #tab-settings { max-width: 1080px; }
+  .set { display: grid; grid-template-columns: minmax(0, 19rem) minmax(0, 1fr); gap: var(--s5) var(--s7); align-items: start; }
+  .set-head > h2 { margin-bottom: var(--s2); }
+  .set-head .note { margin: 0; max-width: none; }
+  .set-body > *:last-child { margin-bottom: 0; }
+  /* 右栏就是控件该占的宽度,行不再自己限宽 */
+  .set-body .form-row { max-width: none; }
+  /* 没有内联固定宽度的文本控件吃满整行;数字/短字段仍用各自的内联宽度 */
+  .set-body .form-row > input:not([style*="width"]),
+  .set-body .form-row > select { width: 100%; }
+  .set-body .note { max-width: none; }
   /* 标签列必须是【固定】宽而不是 max-content:每个 .form-row 是独立 grid,
      max-content 会各算各的,导致"鉴权方式"和"订阅凭证文件"两行的输入框
      左边缘错开、宽度也不一样。 */
@@ -407,12 +493,16 @@
     .block { padding: var(--s4); }
     .dl { grid-template-columns: 1fr; gap: var(--s1) 0; }
     .dl dt { margin-top: var(--s2); font-size: var(--fs-sm); }
+    /* 设置页两栏在窄屏塌成一列:19rem 的说明栏在手机上会把控件挤成一条缝 */
+    .set { grid-template-columns: 1fr; gap: var(--s3); }
     .form-row { grid-template-columns: 1fr; gap: var(--s1); }
     .form-row > label:first-child:empty { display: none; }
     header { padding: var(--s3) var(--s4); gap: var(--s2); }
     /* pills 独占第二行:否则它 flex:1 会把标题和按钮挤到两边、自己竖排成 4 行 */
     header .pills { flex-basis: 100%; order: 3; }
     header .title { flex: 1; }
+    /* 图表刻度桌面 10px 尚可,390px 屏上就是一排看不清的灰点 */
+    .chart .tick, .chart .bar-label { font-size: 12px; }
     /* tab 条保持单行、横向滑动(比折行更像移动端的标准做法)。
        窄屏收一档间距:桌面的 24px 在这里只会让更多标签滑出屏幕外。 */
     .tabs { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; gap: var(--s4); }
@@ -522,7 +612,7 @@
         <button class="primary" id="genBtn" onclick="openGen()">+ 生成客户端令牌</button>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="cards">
           <thead><tr><th>设备名</th><th>归属用户</th><th>令牌(掩码)</th><th class="num">请求数</th><th class="num">错误</th><th class="num">输入/输出 token</th><th class="num">成本</th><th>参数下发</th><th>最近活跃</th><th></th></tr></thead>
           <tbody id="clientRows"></tbody>
         </table>
@@ -531,7 +621,7 @@
       <div id="othersWrap" hidden>
         <p class="note" style="margin-top:var(--s6)"><b>异常来源</b>(未携带令牌 / 令牌不匹配等未授权尝试)—— 已标注来源 IP、User-Agent 与请求路径,便于定位是谁在打:</p>
         <div class="table-wrap">
-          <table><thead><tr><th>类型</th><th class="num">请求数</th><th class="num">最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
+          <table class="cards"><thead><tr><th>类型</th><th class="num">请求数</th><th class="num">最近状态</th><th>来源 IP</th><th>User-Agent</th><th>最近路径</th><th>最近活跃</th></tr></thead><tbody id="otherRows"></tbody></table>
         </div>
       </div>
     </section>
@@ -542,7 +632,7 @@
         <button class="primary" id="addUserBtn" onclick="openUser()">+ 创建用户</button>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="cards">
           <thead><tr><th>用户名</th><th>分配的设备</th><th>配额</th><th>权限</th><th>状态</th><th>创建时间</th><th>最近登录</th><th></th></tr></thead>
           <tbody id="userRows"></tbody>
         </table>
@@ -561,7 +651,7 @@
         </div>
         <div id="liveModels" hidden style="margin-bottom:var(--s3)"></div>
         <div class="table-wrap">
-          <table>
+          <table class="cards">
             <thead><tr><th>模型</th><th>层级</th><th>temperature</th><th>thinking</th><th>effort</th><th>说明</th><th></th></tr></thead>
             <tbody id="catalogRows"></tbody>
           </table>
@@ -645,8 +735,12 @@
     </section>
 
     <section id="tab-settings" hidden>
-      <section class="block">
-        <h2>本地 AI 订阅 / 上游凭证</h2>
+      <section class="block set">
+        <div class="set-head">
+          <h2>本地 AI 订阅 / 上游凭证</h2>
+          <p class="note">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
+        </div>
+        <div class="set-body">
         <div id="upCurrent" class="muted" style="font-size:var(--fs-md);margin-bottom:var(--s4)"><span class="skeleton sk-line" style="display:block;width:70%"></span></div>
         <div class="form-row"><label for="upAuth">鉴权方式</label>
           <select id="upAuth" onchange="onUpAuthChange()">
@@ -675,28 +769,36 @@
           <button class="primary" onclick="saveUpstream()">保存并立即生效</button>
           <span id="upMsg" class="ok-msg"></span>
         </div></div>
-        <p class="note">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
+        </div>
       </section>
-      <section class="block">
-        <h2>外观</h2>
-        <div class="form-row"><label>主题</label>
-          <div class="seg" id="themeSeg">
-            <button type="button" data-t="auto" onclick="applyTheme('auto')">跟随系统</button>
-            <button type="button" data-t="light" onclick="applyTheme('light')">亮色</button>
-            <button type="button" data-t="dark" onclick="applyTheme('dark')">深色</button>
+      <section class="block set">
+        <div class="set-head">
+          <h2>外观</h2>
+          <p class="note">选择记在本浏览器,不写回服务端。顶栏右上的图标按钮也能循环切换。</p>
+        </div>
+        <div class="set-body">
+          <div class="form-row"><label>主题</label>
+            <div class="seg" id="themeSeg">
+              <button type="button" data-t="auto" onclick="applyTheme('auto')">跟随系统</button>
+              <button type="button" data-t="light" onclick="applyTheme('light')">亮色</button>
+              <button type="button" data-t="dark" onclick="applyTheme('dark')">深色</button>
+            </div>
           </div>
         </div>
-        <p class="note">选择记在本浏览器。顶栏右上的图标按钮也能循环切换。</p>
       </section>
-      <section class="block" id="acctBlock">
-        <h2>管理台账号</h2>
+      <section class="block set" id="acctBlock">
+        <div class="set-head">
+          <h2>管理台账号</h2>
+          <p class="note" id="acctHint">改<b>登录名或密码</b>要验当前密码,只想改一样就把另一样留空;<b>备注</b>不是凭证,单改它不用输密码。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。这些在「用户」页管理员那一行点「编辑」也能改。</p>
+        </div>
+        <div class="set-body">
         <div class="form-row"><label for="acctUser">登录名</label><input id="acctUser" autocomplete="username" placeholder="admin" /></div>
         <div class="form-row"><label for="acctNote">备注</label><input id="acctNote" maxlength="200" placeholder="例如:运维主账号" /></div>
         <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" placeholder="改登录名或密码时必填" /></div>
         <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="留空 = 不改密码" /></div>
         <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
         <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="saveAccount()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
-        <p class="note" id="acctHint">改<b>登录名或密码</b>要验当前密码,只想改一样就把另一样留空;<b>备注</b>不是凭证,单改它不用输密码。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。这些在「用户」页管理员那一行点「编辑」也能改。</p>
+        </div>
       </section>
     </section>
   </main>
@@ -1025,10 +1127,10 @@ async function loadStorage(manual = false) {
     const rows = d.categories.map((c) => {
       const empty = !c.bytes && !c.files;
       return `<tr class="${empty ? 'dim' : ''}">
-        <td><b>${esc(c.name)}</b><div class="desc">${esc(c.desc || '')}</div></td>
-        <td class="n">${fmtBytes(c.bytes)}</td>
-        <td class="n">${c.files} 个</td>
-        <td class="desc">${esc(c.note || '')}</td>
+        <td data-label="类别"><b>${esc(c.name)}</b><div class="desc">${esc(c.desc || '')}</div></td>
+        <td class="n" data-label="大小">${fmtBytes(c.bytes)}</td>
+        <td class="n" data-label="文件">${c.files} 个</td>
+        <td class="desc" data-label="说明">${esc(c.note || '')}</td>
         <td class="act">${cleanBtn(c)}</td>
       </tr>`;
     }).join('');
@@ -1042,7 +1144,7 @@ async function loadStorage(manual = false) {
       </div>
       <div class="sto-bar">${bar}</div>
       <div class="sto-legend">${legend}</div>
-      <div class="table-wrap"><table class="sto-tbl">
+      <div class="table-wrap"><table class="sto-tbl cards">
         <thead><tr><th>类别</th><th class="n">大小</th><th class="n">文件</th><th>说明</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
@@ -1303,26 +1405,26 @@ async function refreshClients() {
     el('genBtn').disabled = !d.canManage;
     el('clientHint').textContent = d.canManage ? '' : '当前用环境变量配置令牌,无法在线增删(改用 config.json 即可)';
     el('clientRows').innerHTML = d.tokens.map((t) => { const s = t.stats || {}; return `<tr>
-      <td><b>${esc(t.name)}</b></td>
-      <td>${(t.owners || []).length
+      <td data-label="设备名"><b>${esc(t.name)}</b></td>
+      <td data-label="归属用户">${(t.owners || []).length
         ? (t.owners || []).map((o) => `<span class="tag ok">${esc(o)}</span>`).join(' ')
         : '<span class="muted">未分配</span>'}</td>
-      <td class="mono">${esc(t.tokenMask)}</td><td class="num">${fmtNum(s.requests)}</td>
-      <td class="num ${s.errors ? 'st-5' : ''}">${errCell(s)}</td><td class="num">${fmtNum(s.inTokens)} / ${fmtNum(s.outTokens)}</td>
-      <td class="num" title="按模型定价估算">${fmtUsd(s.cost)}</td>
-      <td>${ovBadge(t.overrides)}</td><td>${ago(s.lastSeen)}</td>
+      <td class="mono" data-label="令牌">${esc(t.tokenMask)}</td><td class="num" data-label="请求数">${fmtNum(s.requests)}</td>
+      <td class="num ${s.errors ? 'st-5' : ''}" data-label="错误">${errCell(s)}</td><td class="num" data-label="输入/输出">${fmtNum(s.inTokens)} / ${fmtNum(s.outTokens)}</td>
+      <td class="num" title="按模型定价估算" data-label="成本">${fmtUsd(s.cost)}</td>
+      <td data-label="参数下发">${ovBadge(t.overrides)}</td><td data-label="最近活跃">${ago(s.lastSeen)}</td>
       <td class="act">${d.canManage ? `<button class="sm" onclick="openOverrides('${t.id}')">参数</button> <button class="sm danger" onclick="revoke('${t.id}','${esc(t.name)}','${t.tokenMask}')">吊销</button>` : ''}</td></tr>`; }).join('')
       || `<tr><td colspan="10"><div class="empty"><b>还没有客户端令牌</b><span class="sub">${d.canManage ? '点右上「+ 生成客户端令牌」为第一台设备发一个,填到远端的 ANTHROPIC_AUTH_TOKEN 即可接入。' : '当前用环境变量配置令牌,请在 config.json 或环境变量里添加。'}</span></div></td></tr>`;
     const others = d.others || [];
     show('othersWrap', others.length > 0);
     el('otherRows').innerHTML = others.map((c) => `<tr>
-      <td>${esc(c.name)}</td>
-      <td class="num">${c.requests}</td>
-      <td class="num ${stClass(c.lastStatus)}">${c.lastStatus}</td>
-      <td class="mono">${esc(c.lastErrorIp || c.lastIp || '—')}${ipsBadge(c.errorIps)}</td>
-      <td class="mono trunc" title="${esc(c.lastErrorUa || c.lastUa || '')}">${esc((c.lastErrorUa || c.lastUa || '—').slice(0, 28))}</td>
-      <td class="mono trunc" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
-      <td>${ago(c.lastSeen)}</td></tr>`).join('');
+      <td data-label="类型">${esc(c.name)}</td>
+      <td class="num" data-label="请求数">${c.requests}</td>
+      <td class="num ${stClass(c.lastStatus)}" data-label="最近状态">${c.lastStatus}</td>
+      <td class="mono" data-label="来源 IP">${esc(c.lastErrorIp || c.lastIp || '—')}${ipsBadge(c.errorIps)}</td>
+      <td class="mono trunc" data-label="User-Agent" title="${esc(c.lastErrorUa || c.lastUa || '')}">${esc((c.lastErrorUa || c.lastUa || '—').slice(0, 28))}</td>
+      <td class="mono trunc" data-label="最近路径" title="${esc(c.lastErrorPath || c.lastPath || '')}">${esc((c.lastErrorPath || c.lastPath || '—').slice(0, 28))}</td>
+      <td data-label="最近活跃">${ago(c.lastSeen)}</td></tr>`).join('');
   } catch (e) {}
 }
 
@@ -1368,15 +1470,15 @@ function userRow(u, canManage) {
     ? off.map((k) => `<span class="tag warn" title="已关闭">✗ ${esc(PERM_META[k])}</span>`).join(' ')
     : `<span class="muted"${A ? ` title="${esc(fx.perms || '')}"` : ''}>全部</span>`;
   return `<tr class="${A ? 'row-admin' : ''}">
-    <td><b>${esc(u.name)}</b>${A ? ' <span class="tag acc">管理员</span>' : ''}${u.note ? ` <span class="muted xs">${esc(u.note)}</span>` : ''}</td>
-    <td>${devs}</td>
-    <td>${A ? `<span class="muted" title="${esc(fx.quota || '')}">不限</span>` : quotaCell(u)}</td>
-    <td>${perms}</td>
-    <td>${u.disabled ? '<span class="st-4">已禁用</span>' : '<span class="st-2">正常</span>'}</td>
-    <td class="muted">${u.createdAt
+    <td data-label="用户名"><b>${esc(u.name)}</b>${A ? ' <span class="tag acc">管理员</span>' : ''}${u.note ? ` <span class="muted xs">${esc(u.note)}</span>` : ''}</td>
+    <td data-label="设备">${devs}</td>
+    <td data-label="配额">${A ? `<span class="muted" title="${esc(fx.quota || '')}">不限</span>` : quotaCell(u)}</td>
+    <td data-label="权限">${perms}</td>
+    <td data-label="状态">${u.disabled ? '<span class="st-4">已禁用</span>' : '<span class="st-2">正常</span>'}</td>
+    <td class="muted" data-label="创建">${u.createdAt
       ? `<span${u.createdApprox ? ' title="这是 config.json 的文件创建时间(近似):管理台账号没记过注册时间,这个字段是后加的" class="approx"' : ''}>${new Date(u.createdAt).toLocaleDateString('zh-CN')}${u.createdApprox ? ' ≈' : ''}</span>`
       : '—'}</td>
-    <td class="muted">${u.lastLoginAt ? ago(u.lastLoginAt) : A ? '本次启动后未登录' : '从未登录'}</td>
+    <td class="muted" data-label="最近登录">${u.lastLoginAt ? ago(u.lastLoginAt) : A ? '本次启动后未登录' : '从未登录'}</td>
     <td class="act">${rowActions(u, canManage)}</td></tr>`;
 }
 
@@ -1528,12 +1630,12 @@ function renderCatalog(d) {
     ? '列表已来自上游拉取结果,可再次拉取以同步最新。'
     : '当前是内置种子列表 —— 点右侧「从上游拉取并更新列表」获取订阅实际可用的模型。';
   el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
-      <td class="mono">${esc(m.id)}${m.latest ? ' <span class="tag ok">最新</span>' : ''}${m.unknown ? ' <span class="tag warn">规则推断</span>' : ''}</td>
-      <td>${esc(m.tier)}</td>
-      <td class="${m.temperature ? '' : 'st-4'}">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
-      <td class="sm-cell">${esc(m.thinking)}</td>
-      <td class="sm-cell">${esc(m.effort)}</td>
-      <td class="muted sm-cell">${esc(m.note)}</td>
+      <td class="mono" data-label="模型">${esc(m.id)}${m.latest ? ' <span class="tag ok">最新</span>' : ''}${m.unknown ? ' <span class="tag warn">规则推断</span>' : ''}</td>
+      <td data-label="层级">${esc(m.tier)}</td>
+      <td class="${m.temperature ? '' : 'st-4'}" data-label="temperature">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
+      <td class="sm-cell" data-label="thinking">${esc(m.thinking)}</td>
+      <td class="sm-cell" data-label="effort">${esc(m.effort)}</td>
+      <td class="muted sm-cell" data-label="说明">${esc(m.note)}</td>
       <td class="act"><button class="sm danger" onclick="removeModel('${esc(m.id)}')">移除</button></td></tr>`).join('')
     || '<tr><td colspan="7"><div class="empty"><b>模型列表是空的</b><span class="sub">点右上「从上游拉取并更新列表」,或在左侧输入框手动补一个模型 id。</span></div></td></tr>';
   el('modelList').innerHTML = CATALOG.map((m) => `<option value="${esc(m.id)}"></option>`).join('');

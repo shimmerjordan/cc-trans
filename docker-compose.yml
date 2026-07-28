@@ -29,6 +29,8 @@ services:
     environment:
       - CC_TRANS_PORT=8787
       - CC_TRANS_CONFIG=/app/data/config.json
+      # 状态目录走环境变量,不写进 config.json —— 那份配置与裸机部署共用,必须可移植
+      - CC_TRANS_DATA_DIR=/app/data
       - CC_TRANS_OAUTH_CREDENTIALS=/home/node/.claude/.credentials.json
     # 日志轮转(控制磁盘占用):单文件 10MB、最多 5 个
     logging:
