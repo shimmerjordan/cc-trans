@@ -410,8 +410,21 @@
      按项目既有的「分层限宽」原则把表单收窄;同时把"这一节是干什么的"挪到左栏 ——
      说明离它解释的控件更近,这点宽度也真的被用上了,而不是靠把输入框拉到 800px 去填
      (输入框过长同样难用:眼睛找不到行首行尾)。 */
-  #tab-settings { max-width: 1080px; }
-  .set { display: grid; grid-template-columns: minmax(0, 19rem) minmax(0, 1fr); gap: var(--s5) var(--s7); align-items: start; }
+  /* 卡片分两列排布,宽屏是真的被用满,而不是"把卡片限窄然后右边空一大块"
+     (上一版就是这么错的:空白只是从卡片内部挪到了页面右边)。
+     用多列而不是 grid:三张卡高矮悬殊,grid 的行高对齐会在矮卡下面留一块死白,
+     多列会把矮的两张顺着排进同一列,自动把高度配平。 */
+  #tab-settings { columns: 34rem 2; column-gap: var(--s6); }
+  #tab-settings > .block { break-inside: avoid; margin-bottom: var(--s6); }
+
+  /* 卡片内部:说明在左、控件在右。
+     断点按【容器宽度】而不是视口 —— 同一个视口下卡片可能排成 1 列(很宽)也可能
+     2 列(较窄),用视口断点必然判错其中一种。 */
+  .set { container-type: inline-size; }
+  .set-grid { display: grid; grid-template-columns: minmax(0, 17rem) minmax(0, 1fr); gap: var(--s5) var(--s6); align-items: start; }
+  @container (max-width: 640px) {
+    .set-grid { grid-template-columns: 1fr; gap: var(--s3); }
+  }
   .set-head > h2 { margin-bottom: var(--s2); }
   .set-head .note { margin: 0; max-width: none; }
   .set-body > *:last-child { margin-bottom: 0; }
@@ -493,8 +506,8 @@
     .block { padding: var(--s4); }
     .dl { grid-template-columns: 1fr; gap: var(--s1) 0; }
     .dl dt { margin-top: var(--s2); font-size: var(--fs-sm); }
-    /* 设置页两栏在窄屏塌成一列:19rem 的说明栏在手机上会把控件挤成一条缝 */
-    .set { grid-template-columns: 1fr; gap: var(--s3); }
+    /* 设置页在手机上就是一列卡片(卡内两栏由容器查询自己塌掉) */
+    #tab-settings { columns: 1; }
     .form-row { grid-template-columns: 1fr; gap: var(--s1); }
     .form-row > label:first-child:empty { display: none; }
     header { padding: var(--s3) var(--s4); gap: var(--s2); }
@@ -736,6 +749,7 @@
 
     <section id="tab-settings" hidden>
       <section class="block set">
+        <div class="set-grid">
         <div class="set-head">
           <h2>本地 AI 订阅 / 上游凭证</h2>
           <p class="note">保存后写回 <span class="mono">config.json</span> 并<b>热应用</b>(重建凭证与连接层),无需重启服务。代理需 <span class="mono">npm i undici</span> 才生效。</p>
@@ -770,8 +784,10 @@
           <span id="upMsg" class="ok-msg"></span>
         </div></div>
         </div>
+        </div>
       </section>
       <section class="block set">
+        <div class="set-grid">
         <div class="set-head">
           <h2>外观</h2>
           <p class="note">选择记在本浏览器,不写回服务端。顶栏右上的图标按钮也能循环切换。</p>
@@ -785,8 +801,10 @@
             </div>
           </div>
         </div>
+        </div>
       </section>
       <section class="block set" id="acctBlock">
+        <div class="set-grid">
         <div class="set-head">
           <h2>管理台账号</h2>
           <p class="note" id="acctHint">改<b>登录名或密码</b>要验当前密码,只想改一样就把另一样留空;<b>备注</b>不是凭证,单改它不用输密码。改完写回 <span class="mono">config.json</span>,已登录的会话不受影响。登录名不能和「用户」页里的普通账号重名。这些在「用户」页管理员那一行点「编辑」也能改。</p>
@@ -798,6 +816,7 @@
         <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="留空 = 不改密码" /></div>
         <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
         <div class="form-row"><label></label><div class="stack"><button class="primary" onclick="saveAccount()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+        </div>
         </div>
       </section>
     </section>
