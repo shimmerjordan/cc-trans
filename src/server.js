@@ -285,6 +285,8 @@ function inspectLocalCredentials(p) {
     return {
       ok: true,
       file,
+      // 经软链接时把真实落点也报出来(~/.claude 常被链到别的盘),排查不用再 ssh 上去 readlink
+      realFile: info.real && info.real !== path.resolve(file) ? info.real : '',
       subscriptionType: info.subscriptionType || null,
       expiresInMin: left,
       expired: left != null && left <= 0,

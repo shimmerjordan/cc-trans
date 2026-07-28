@@ -14,17 +14,130 @@ const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'; // Claude Code 的公�
 const TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
 const REFRESH_SKEW_MS = 5 * 60 * 1000; // 到期前 5 分钟就提前刷新
 
+// 当前用户的家目录。优先 /etc/passwd 的 pw_dir 而不是 $HOME:
+// setuid 降权(deploy/drop-privs.mjs)、sudo、cron 都会留下一个属于别人的 HOME,
+// 照着它找凭证会解析到 /root/.claude 这种根本不存在的地方。
+// uid 不在 passwd 里时(容器设了任意 PUID)userInfo 会抛,那就退回 os.homedir()。
+export function homeDir() {
+  try {
+    const h = os.userInfo().homedir;
+    if (h) return h;
+  } catch {
+    /* 落到下面的兜底 */
+  }
+  return os.homedir();
+}
+
 export function defaultCredentialsPath() {
-  return path.join(os.homedir(), '.claude', '.credentials.json');
+  return path.join(homeDir(), '.claude', '.credentials.json');
+}
+
+// 沿路径逐段找第一条断掉的软链接。~/.claude 常被链到别的盘,那块盘没挂上时
+// realpath 只给一个 ENOENT,和「压根没登录过」长得一模一样 —— 得把话说清楚。
+function findBrokenLink(file) {
+  const abs = path.resolve(file);
+  const parts = abs.split(path.sep).filter(Boolean);
+  let cur = '';
+  for (const p of parts) {
+    cur += path.sep + p;
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return null; // 这一段本身就不存在 = 真缺文件,不是断链
+    }
+    if (st.isSymbolicLink()) {
+      const target = path.resolve(path.dirname(cur), fs.readlinkSync(cur));
+      if (!fs.existsSync(target)) return { link: cur, target };
+      cur = fs.realpathSync(cur); // 跟进去继续查后面的段
+    }
+  }
+  return null;
+}
+
+function fail(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
+
+// 把凭证路径解析成真实文件路径(穿透软链接:文件本身的、以及路径中任何一层目录的)。
+// 读写都要先过这里 —— 见 writeCredentials 里为什么不能直接对软链接路径动手。
+// 每次调用都重新解析:claude 重新登录可能换掉链接目标。
+export function resolveCredentialsFile(file) {
+  try {
+    const real = fs.realpathSync(file);
+    return { real, viaLink: real !== path.resolve(file) };
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      const broken = findBrokenLink(file);
+      if (broken) {
+        throw fail(
+          'EBROKENLINK',
+          `订阅凭证软链接已断: ${broken.link} → ${broken.target}(目标不存在)—— ` +
+            `若目标在另一块盘/网络存储上,先确认它已挂载(systemd 可加 RequiresMountsFor=);` +
+            `Docker 里还要注意软链接目标路径在容器内也得存在`,
+        );
+      }
+      // 目录在、却是空的:容器里看不到「断链」,只看得到一个空挂载点。
+      // 典型成因是宿主的 ~/.claude 在容器启动【之后】被换掉(比如改成了软链接),
+      // bind mount 还绑着旧 inode。报「请先 claude 登录」会让人白折腾一遍登录。
+      const dir = path.dirname(path.resolve(file));
+      let empty = false;
+      try {
+        empty = fs.readdirSync(dir).length === 0;
+      } catch {
+        /* 目录也不在,那就是普通的 ENOENT */
+      }
+      if (empty) {
+        throw fail(
+          'EEMPTYDIR',
+          `订阅凭证目录是空的: ${dir} —— Docker 里多为挂载源在容器启动后被换过` +
+            `(比如宿主 ~/.claude 改成了软链接),容器仍绑着旧的挂载点,` +
+            `\`docker compose up -d --force-recreate\` 重建即可;裸机上则确实是没登录过`,
+        );
+      }
+    }
+    throw fail(err.code || 'EUNKNOWN', `读取订阅凭证失败 ${file}: ${err.message}`);
+  }
 }
 
 // 给 config 校验用:确认凭证文件存在且含 accessToken
 export function inspectCredentials(file) {
-  const raw = fs.readFileSync(file, 'utf8');
+  const { real } = resolveCredentialsFile(file);
+  const raw = fs.readFileSync(real, 'utf8');
   const j = JSON.parse(raw);
   const o = j.claudeAiOauth;
   if (!o || !o.accessToken) throw new Error('凭证文件缺少 claudeAiOauth.accessToken');
-  return { expiresAt: o.expiresAt || 0, subscriptionType: o.subscriptionType, hasRefresh: !!o.refreshToken };
+  return {
+    expiresAt: o.expiresAt || 0,
+    subscriptionType: o.subscriptionType,
+    hasRefresh: !!o.refreshToken,
+    real,
+  };
+}
+
+// 原子写回:临时文件 + rename,权限 0600,调用方只改 token 三件套、其余字段原样保留。
+// 两处都必须用 realpath 后的路径:
+//   - rename 到软链接【路径】会把链接本身替换成普通文件,之后 cc-trans 与本机 claude
+//     各写各的副本,token 悄悄分叉
+//   - tmp 建在软链接所在目录时,若目标在另一个文件系统上,rename 直接 EXDEV 失败
+export function writeCredentials(file, json) {
+  const { real } = resolveCredentialsFile(file);
+  const dir = path.dirname(real);
+  const tmp = path.join(dir, `${path.basename(real)}.cc-trans.tmp.${process.pid}`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(json, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, real);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmp); // 别在人家 ~/.claude 里留垃圾
+    } catch {
+      /* tmp 可能压根没建起来 */
+    }
+    throw new Error(`写回订阅凭证失败 ${real}: ${err.message}`);
+  }
+  return real;
 }
 
 export function createOAuthProvider(credPath, logger = () => {}) {
@@ -34,9 +147,11 @@ export function createOAuthProvider(credPath, logger = () => {}) {
   function read() {
     let raw;
     try {
-      raw = fs.readFileSync(file, 'utf8');
+      // 软链接在这里穿透(断链会带着诊断抛出来,不会被误当成「没登录」)
+      raw = fs.readFileSync(resolveCredentialsFile(file).real, 'utf8');
     } catch (err) {
-      throw new Error(`读取订阅凭证失败 ${file}: ${err.message}(请在服务器上先 \`claude\` 登录)`);
+      const hint = err.code === 'EBROKENLINK' ? '' : '(请在服务器上先 `claude` 登录)';
+      throw new Error(`${err.message}${hint}`);
     }
     const j = JSON.parse(raw);
     if (!j.claudeAiOauth || !j.claudeAiOauth.accessToken) {
@@ -45,12 +160,7 @@ export function createOAuthProvider(credPath, logger = () => {}) {
     return j;
   }
 
-  // 原子写回:写临时文件 + rename,权限 0600,只改 token 三件套,其余字段原样保留
-  function writeBack(j) {
-    const tmp = `${file}.cc-trans.tmp.${process.pid}`;
-    fs.writeFileSync(tmp, JSON.stringify(j, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-  }
+  const writeBack = (j) => writeCredentials(file, j);
 
   async function doRefresh(current) {
     const refreshToken = current.claudeAiOauth.refreshToken;

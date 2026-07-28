@@ -1967,6 +1967,8 @@ async function loadUpstream() {
       bits.push(c.ok
         ? `凭证正常 · 订阅 <b>${esc(c.subscriptionType || '?')}</b> · token ${c.expired ? '已过期(将自动刷新)' : (c.expiresInMin != null ? c.expiresInMin + ' 分钟后到期' : '?')} · ${c.hasRefresh ? '可自动刷新' : '<span class="st-5">无 refreshToken,过期后需重新登录</span>'}`
         : `<span class="st-5">凭证不可用:${esc(c.error || '')}</span>`);
+      // 路径经软链接时(~/.claude 常被链到别的盘)把真实落点也显出来,省得上机器 readlink
+      if (c.realFile) bits.push(`<span class="muted mono xs">软链接 → ${esc(c.realFile)}</span>`);
     } else {
       bits.push(d.hasApiKey ? `API Key ${esc(d.apiKeyMask)}` : (d.hasAuthToken ? `Auth Token ${esc(d.authTokenMask)}` : '<span class="st-5">未配置密钥</span>'));
     }
@@ -1981,7 +1983,7 @@ async function probeCreds() {
   const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ path: el('upCredPath').value.trim() }) });
   const d = await r.json();
   el('upProbeMsg').innerHTML = d.ok
-    ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono xs">${esc(d.file)}</span>`
+    ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono xs">${esc(d.file)}${d.realFile ? ' → ' + esc(d.realFile) : ''}</span>`
     : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono xs">${esc(d.file || '')}</span>`;
 }
 async function saveUpstream() {

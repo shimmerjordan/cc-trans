@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultCredentialsPath, inspectCredentials } from './oauth.js';
+import { defaultCredentialsPath, inspectCredentials, resolveCredentialsFile } from './oauth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -177,19 +177,25 @@ function parseBool(v) {
 function validate(cfg) {
   const problems = [];
   if (cfg.upstreamAuth === 'oauth') {
-    // 订阅模式:校验本机 Claude Code 凭证可用。
-    // 区分「不存在」和「存在但读不了」—— 后者多为运行用户 uid 与 ~/.claude 属主不一致
-    // (容器里 PUID 设错、或 systemd 用别的用户跑),报「找不到」会把人带偏。
+    // 订阅模式:校验本机 Claude Code 凭证可用。三种失败要分开报,报错指错方向比不报还糟:
+    //   「断链」   —— ~/.claude 链到别的盘而那块盘没挂上(realpath 只给 ENOENT,和没登录同形)
+    //   「读不了」 —— 运行用户 uid 与 ~/.claude 属主不一致(容器 PUID 设错、systemd 换了用户)
+    //   「不存在」 —— 真没登录过
     let credErr = null;
+    let credReal = cfg.oauthCredentialsPath;
     try {
-      fs.accessSync(cfg.oauthCredentialsPath, fs.constants.R_OK);
+      credReal = resolveCredentialsFile(cfg.oauthCredentialsPath).real;
+      fs.accessSync(credReal, fs.constants.R_OK);
     } catch (err) {
       credErr = err;
     }
-    if (credErr && (credErr.code === 'EACCES' || credErr.code === 'EPERM')) {
+    if (credErr && (credErr.code === 'EBROKENLINK' || credErr.code === 'EEMPTYDIR')) {
+      problems.push(credErr.message);
+    } else if (credErr && (credErr.code === 'EACCES' || credErr.code === 'EPERM')) {
       const uid = process.getuid ? process.getuid() : '?';
+      const via = credReal !== cfg.oauthCredentialsPath ? `(软链接实际指向 ${credReal})` : '';
       problems.push(
-        `OAuth 凭证文件读不了(当前 uid=${uid},权限不足): ${cfg.oauthCredentialsPath} —— ` +
+        `OAuth 凭证文件读不了(当前 uid=${uid},权限不足): ${cfg.oauthCredentialsPath}${via} —— ` +
           `Docker 里用 PUID/PGID 对齐宿主机 ~/.claude 的属主;裸机部署请让服务运行用户能读该文件`,
       );
     } else if (credErr) {
