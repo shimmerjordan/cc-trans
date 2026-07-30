@@ -6,6 +6,9 @@ import { defaultCredentialsPath, inspectCredentials, resolveCredentialsFile } fr
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
+// 上游鉴权的合法取值。管理台的写入白名单也用这一份 —— 两处各写一遍迟早漂移。
+export const UPSTREAM_AUTH_MODES = new Set(['oauth', 'apiKey', 'inherit']);
+
 const DEFAULTS = {
   host: '0.0.0.0',
   port: 8787,
@@ -13,10 +16,14 @@ const DEFAULTS = {
   upstreamApiKey: '',
   upstreamAuthToken: '',
   oauthCredentialsPath: '',
+  inheritSettingsPath: '', // inherit 模式:本机 Claude Code 配置。留空=~/.claude/settings.json
   clientTokens: [],
   users: [], // 普通用户账号(管理台创建;密码为 scrypt 哈希,见 users.js)
   modelMap: {},
   upstreamProxy: '', // 上游代理:http://、https://、socks5://(留空=直连)
+  // 一个请求最多穿过几台 cc-trans(环路防护,见 hops.js)。正常级联 1~2 跳,
+  // 留 4 是给多级中转的余量;0 = 关闭防护。
+  maxHops: 4,
   dataDir: '', // 状态目录(指标/模型列表/日志块)。留空=config.json 同级的 data/;Docker 里指到挂载卷
   logBody: false,
   logFile: '', // 可选:把日志同时写到文件并自动轮转(留空=只 stdout,交给 journald/docker 轮转)
@@ -126,6 +133,10 @@ export function loadConfig() {
       process.env.CC_TRANS_OAUTH_CREDENTIALS ||
       file.oauthCredentialsPath ||
       defaultCredentialsPath(),
+    // inherit 模式的来源文件。留空不在这里兜默认值 —— 默认路径要按【运行用户】解析,
+    // 交给 upstream_auth.js 的 defaultSettingsPath() 统一负责(与 oauth 的凭证路径同理)
+    inheritSettingsPath:
+      process.env.CC_TRANS_INHERIT_SETTINGS || file.inheritSettingsPath || DEFAULTS.inheritSettingsPath,
     clientTokens: normalizeTokens(
       process.env.CC_TRANS_CLIENT_TOKENS
         ? splitList(process.env.CC_TRANS_CLIENT_TOKENS)
@@ -136,6 +147,8 @@ export function loadConfig() {
     users: Array.isArray(file.users) ? file.users : DEFAULTS.users,
     modelMap: file.modelMap || DEFAULTS.modelMap,
     upstreamProxy: process.env.CC_TRANS_UPSTREAM_PROXY || file.upstreamProxy || DEFAULTS.upstreamProxy,
+    // ?? 而不是 ||:显式写 0(关闭防护)必须留住
+    maxHops: Number(process.env.CC_TRANS_MAX_HOPS ?? file.maxHops ?? DEFAULTS.maxHops),
     dataDir: process.env.CC_TRANS_DATA_DIR || file.dataDir || DEFAULTS.dataDir,
     logBody: parseBool(process.env.CC_TRANS_LOG_BODY) ?? file.logBody ?? DEFAULTS.logBody,
     logFile: process.env.CC_TRANS_LOG_FILE || file.logFile || DEFAULTS.logFile,
@@ -160,7 +173,10 @@ export function loadConfig() {
     __shadowed: file.__shadowed || null, // 另一处也有 config.json,启动时要告警
   };
 
-  // 上游鉴权方式:显式 upstreamAuth 优先;否则有静态密钥就走 apiKey,否则默认走订阅 OAuth
+  // 上游鉴权方式:显式 upstreamAuth 优先;否则有静态密钥就走 apiKey,否则默认走订阅 OAuth。
+  //
+  // inherit 只认【显式声明】,永不推断 —— 「本机 settings.json 里有 ANTHROPIC_BASE_URL」
+  // 这件事太常见(任何用过中转的机器都有),据此静默把上游改掉是灾难级的意外。
   const explicit = process.env.CC_TRANS_UPSTREAM_AUTH || file.upstreamAuth;
   const hasStatic = !!(cfg.upstreamApiKey || cfg.upstreamAuthToken);
   cfg.upstreamAuth = explicit || (hasStatic ? 'apiKey' : 'oauth');
@@ -176,6 +192,15 @@ function parseBool(v) {
 
 function validate(cfg) {
   const problems = [];
+  if (!UPSTREAM_AUTH_MODES.has(cfg.upstreamAuth)) {
+    problems.push(
+      `upstreamAuth 只能是 ${[...UPSTREAM_AUTH_MODES].join(' / ')} 之一,收到 "${cfg.upstreamAuth}" —— ` +
+        `拼错时会被当成静态密钥处理,那比直接报错难查得多`,
+    );
+  }
+  // inherit 模式的校验(来源文件可读 / 有地址与令牌 / 不是自环)放在 upstream_auth.js
+  // 建 provider 时做:自环判定要用到监听端口与本机地址,而且 check-token 子命令
+  // 得能在上游不可用时照样跑 —— 它只查令牌,不该被上游拖死。
   if (cfg.upstreamAuth === 'oauth') {
     // 订阅模式:校验本机 Claude Code 凭证可用。三种失败要分开报,报错指错方向比不报还糟:
     //   「断链」   —— ~/.claude 链到别的盘而那块盘没挂上(realpath 只给 ENOENT,和没登录同形)
@@ -213,7 +238,7 @@ function validate(cfg) {
         problems.push(`OAuth 凭证文件无法解析: ${err.message}`);
       }
     }
-  } else if (!cfg.upstreamApiKey && !cfg.upstreamAuthToken) {
+  } else if (cfg.upstreamAuth === 'apiKey' && !cfg.upstreamApiKey && !cfg.upstreamAuthToken) {
     problems.push('apiKey 模式但未配置上游凭证:需要 upstreamApiKey 或 upstreamAuthToken 之一');
   }
   if (cfg.clientTokens.length === 0) {

@@ -4,8 +4,10 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { loadConfig, cleanToken } from './config.js';
-import { createOAuthProvider, defaultCredentialsPath, inspectCredentials } from './oauth.js';
+import { loadConfig, cleanToken, UPSTREAM_AUTH_MODES } from './config.js';
+import { defaultCredentialsPath, inspectCredentials } from './oauth.js';
+import { createUpstreamAuth, defaultSettingsPath, inspectInheritSettings } from './upstream_auth.js';
+import { applyHops, readHops, hopsExceeded, loopMessage } from './hops.js';
 import { createMetrics } from './metrics.js';
 import { createAdmin } from './admin.js';
 import {
@@ -99,9 +101,27 @@ const fileLogger = createFileLogger({
 let clientTokens = config.clientTokens.map((t) => ({ token: t.token, name: t.name, overrides: t.overrides || {} }));
 const tokenMap = new Map(clientTokens.map((t) => [t.token, t]));
 
-// 订阅 OAuth provider(仅 oauth 模式启用)
-// let:管理台「上游订阅」可在线切换鉴权方式/凭证路径并热重建,无需重启
-let oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+// config.json 里【声明】的上游地址。inherit 模式会在内存里把 config.upstreamBaseUrl
+// 覆写成从 settings.json 继承到的地址(好让 /health、banner、管理台那些直接读 config
+// 的地方零改动就对),所以从 inherit 切回其它模式时得有个地方把声明值还原回来 ——
+// 否则切回 apiKey 后仍在往继承来的那个地址发请求,而 config.json 里明明写的是另一个。
+let configuredBaseUrl = config.upstreamBaseUrl;
+
+// 上游鉴权 provider:oauth(订阅登录态)/ apiKey(静态密钥)/ inherit(继承本机
+// Claude Code 配置,级联到另一台 cc-trans)三种模式统一到一个接口,见 upstream_auth.js。
+// let:管理台「上游订阅」可在线切换鉴权方式/凭证路径并热重建,无需重启。
+let upstreamAuth = initUpstreamAuth();
+
+function initUpstreamAuth() {
+  try {
+    return createUpstreamAuth({ config, log });
+  } catch (err) {
+    // inherit 模式建 provider 时会先探一次来源文件。配错了在启动阶段一次说清,
+    // 而不是留着让每个请求各吃一个 502。
+    process.stderr.write(`\n上游鉴权(${config.upstreamAuth} 模式)不可用:\n  - ${err.message}\n\n`);
+    process.exit(1);
+  }
+}
 
 // 状态目录:显式 dataDir 优先(Docker 用 CC_TRANS_DATA_DIR 指到挂载卷),
 // 纯环境变量配置模式(无 config.json)则为 null —— 全部退化为内存态。
@@ -199,16 +219,21 @@ function persistClientTokens() {
 }
 
 // ── 上游订阅/凭证的在线配置(管理台「设置 → 本地 AI 订阅」)────────────────
-// 支持:切换鉴权方式(订阅 OAuth / 静态密钥)、改凭证文件路径、上游地址、代理。
-// 保存后写回 config.json 并【热应用】(重建 OAuth provider 与连接层),无需重启。
+// 支持:切换鉴权方式(订阅 OAuth / 静态密钥 / 继承本机配置)、改来源文件路径、
+// 上游地址、代理。保存后写回 config.json 并【热应用】(重建 provider 与连接层),
+// 无需重启。
 const upstreamAdmin = {
   canManage: () => !!config.__file,
   // 当前状态(密钥只回掩码,明文不出服务端)
   read() {
     const out = {
       upstreamAuth: config.upstreamAuth,
-      upstreamBaseUrl: config.upstreamBaseUrl,
+      // 当前【实际生效】的地址:inherit 模式下是从 settings.json 继承来的那个
+      upstreamBaseUrl: upstreamAuth.baseUrl(),
+      // config.json 里声明的那个(前端用它填输入框,免得把继承值写回配置)
+      configuredBaseUrl,
       oauthCredentialsPath: config.oauthCredentialsPath,
+      inheritSettingsPath: config.inheritSettingsPath,
       upstreamProxy: config.upstreamProxy || '',
       hasApiKey: !!config.upstreamApiKey,
       hasAuthToken: !!config.upstreamAuthToken,
@@ -217,23 +242,29 @@ const upstreamAdmin = {
       proxyDescribe: upstream.describe,
       canManage: !!config.__file,
       defaultCredentialsPath: defaultCredentialsPath(),
+      defaultSettingsPath: defaultSettingsPath(),
     };
     // 订阅凭证探测:文件在不在、订阅类型、到期、能否自动刷新
     out.credentials = inspectLocalCredentials(config.oauthCredentialsPath);
+    // 继承来源探测:文件在不在、解析出的上游地址与令牌掩码、是否自环
+    out.inherit = inspectInheritSettings(config.inheritSettingsPath, config.port);
     return out;
   },
-  // 探测任意路径的凭证(前端"检测"按钮用)
-  probe(p) {
+  // 探测任意路径的来源文件(前端"检测"按钮用)。kind 决定按哪种文件解析 ——
+  // 订阅凭证和 settings.json 是两种格式,拿错解析器只会报"缺 accessToken"这种误导话。
+  probe(p, kind = 'oauth') {
+    if (kind === 'inherit') return inspectInheritSettings(p || config.inheritSettingsPath, config.port);
     return inspectLocalCredentials(p || config.oauthCredentialsPath);
   },
   async apply(patch) {
     if (!config.__file) return { ok: false, error: '当前用环境变量配置,无法在线修改;请改用 config.json' };
     const next = {};
-    if (patch.upstreamAuth === 'oauth' || patch.upstreamAuth === 'apiKey') next.upstreamAuth = patch.upstreamAuth;
+    if (UPSTREAM_AUTH_MODES.has(patch.upstreamAuth)) next.upstreamAuth = patch.upstreamAuth;
     if (typeof patch.upstreamBaseUrl === 'string' && patch.upstreamBaseUrl.trim()) {
       next.upstreamBaseUrl = patch.upstreamBaseUrl.trim().replace(/\/+$/, '');
     }
     if (typeof patch.oauthCredentialsPath === 'string') next.oauthCredentialsPath = patch.oauthCredentialsPath.trim();
+    if (typeof patch.inheritSettingsPath === 'string') next.inheritSettingsPath = patch.inheritSettingsPath.trim();
     if (typeof patch.upstreamProxy === 'string') next.upstreamProxy = patch.upstreamProxy.trim();
     // 密钥:留空=不改;传 "__clear__"=清空
     for (const [k, field] of [['upstreamApiKey', 'upstreamApiKey'], ['upstreamAuthToken', 'upstreamAuthToken']]) {
@@ -244,13 +275,18 @@ const upstreamAdmin = {
 
     const targetAuth = next.upstreamAuth || config.upstreamAuth;
     const targetCredPath = next.oauthCredentialsPath ?? config.oauthCredentialsPath;
+    const targetInheritPath = next.inheritSettingsPath ?? config.inheritSettingsPath;
     const targetKey = next.upstreamApiKey ?? config.upstreamApiKey;
     const targetToken = next.upstreamAuthToken ?? config.upstreamAuthToken;
 
-    // 生效前校验:订阅模式要有可用凭证;apiKey 模式要有密钥
+    // 生效前校验:订阅要有可用凭证;apiKey 要有密钥;inherit 的来源文件要能解析出上游。
+    // 校验不过就【不写盘、不热应用】—— 切模式切成一个起不来的状态,比拒绝更糟。
     if (targetAuth === 'oauth') {
       const info = inspectLocalCredentials(targetCredPath || defaultCredentialsPath());
       if (!info.ok) return { ok: false, error: `订阅凭证不可用:${info.error}(请先在本机 \`claude\` 登录,或改用 apiKey 模式)` };
+    } else if (targetAuth === 'inherit') {
+      const info = inspectInheritSettings(targetInheritPath, config.port);
+      if (!info.ok) return { ok: false, error: `继承来源不可用:${info.error}` };
     } else if (!targetKey && !targetToken) {
       return { ok: false, error: 'apiKey 模式需要填 upstreamApiKey 或 upstreamAuthToken 之一' };
     }
@@ -262,10 +298,21 @@ const upstreamAdmin = {
       return { ok: false, error: '写回 config.json 失败: ' + err.message };
     }
     // 热应用到运行时
+    const prevAuth = upstreamAuth;
     Object.assign(config, next);
     if (next.oauthCredentialsPath === '') config.oauthCredentialsPath = defaultCredentialsPath();
+    if ('upstreamBaseUrl' in next) configuredBaseUrl = next.upstreamBaseUrl;
+    // 离开 inherit:把被继承值覆写过的地址还原成配置里声明的那个
+    if (targetAuth !== 'inherit') config.upstreamBaseUrl = configuredBaseUrl;
     const proxyChanged = 'upstreamProxy' in next;
-    oauth = config.upstreamAuth === 'oauth' ? createOAuthProvider(config.oauthCredentialsPath, log) : null;
+    try {
+      upstreamAuth = createUpstreamAuth({ config, log });
+    } catch (err) {
+      // 上面已 inspect 过,走到这里只可能是那一瞬间文件又变了。保留旧 provider ——
+      // 服务继续按老配置转发,总比带着一个建不起来的 provider 裸奔好。
+      upstreamAuth = prevAuth;
+      return { ok: false, error: `热应用失败,已保留原有上游设置: ${err.message}`, state: upstreamAdmin.read() };
+    }
     if (proxyChanged) {
       upstream = await initUpstream(config, log);
       upstreamFetch = upstream.fetch;
@@ -520,7 +567,10 @@ const admin = adminOn
       prefix: ADMIN_PREFIX,
       credentials: adminCredentials,
       config,
-      getOauth: () => oauth, // 取当前实例(管理台可热切换订阅/密钥模式)
+      // 都取【当前】实例:管理台能热切换模式,缓存住就会拿着已经废弃的那个 provider。
+      // getOauth 只在订阅专属功能(订阅用量面板)里用,非 oauth 模式下为 null。
+      getOauth: () => upstreamAuth.oauth,
+      getUpstreamAuth: () => upstreamAuth,
       metrics,
       tokenAdmin,
       users,
@@ -563,7 +613,7 @@ function quotaCheck(tokenEntry) {
 // 与 handleProxy 的区别只在于:入口是一个 JS 对象而不是 HTTP 请求,出口是 Response
 // 而不是直接写 res(SSE 的翻译交给 chat.js)。规则本身完全复用同一批函数。
 async function chatForward({ tokenEntry, payload, signal, req }) {
-  const ov = effectiveOverrides(tokenEntry.overrides, { subscription: !!oauth });
+  const ov = effectiveOverrides(tokenEntry.overrides, { subscription: upstreamAuth.isSubscription });
   const started = Date.now();
   const clientName = tokenEntry.name;
 
@@ -602,6 +652,8 @@ async function chatForward({ tokenEntry, payload, signal, req }) {
   }
 
   const headers = { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', accept: 'text/event-stream' };
+  // 网页聊天是本机发起的,所以从 0 跳起算(浏览器不会带这个头)
+  applyHops(headers, 0, upstreamAuth.baseUrl());
   try {
     await applyUpstreamAuth(headers);
   } catch (err) {
@@ -613,7 +665,7 @@ async function chatForward({ tokenEntry, payload, signal, req }) {
 
   let res;
   try {
-    res = await upstreamFetch(config.upstreamBaseUrl + '/v1/messages', {
+    res = await upstreamFetch(upstreamAuth.baseUrl() + '/v1/messages', {
       method: 'POST',
       headers,
       body: t.body,
@@ -703,6 +755,9 @@ function buildUpstreamHeaders(req) {
     if (STRIP_REQUEST_HEADERS.has(k.toLowerCase())) continue;
     headers[k] = v;
   }
+  // 环路防护:递增跳数(上游是官方时改为剥掉,见 hops.js)。放在这里,主转发与
+  // OpenAI 兼容端点两条路径就都自动覆盖到了。
+  applyHops(headers, readHops(req.headers), upstreamAuth.baseUrl());
   return headers;
 }
 
@@ -718,23 +773,19 @@ function ensureBeta(headers, flag) {
   headers[key] = vals.join(',');
 }
 
-// 注入本机真实上游凭证(订阅 OAuth 异步取 token;否则用静态密钥)
+// 注入本机真实上游凭证。三种模式的差异全在 provider 里(订阅异步取并刷新 token /
+// 静态密钥 / 继承本机 settings.json),这里只负责调它。读不到凭证时【抛】——
+// 三个调用点都把它翻译成 502 加明确文案。
 async function applyUpstreamAuth(headers) {
-  if (oauth) {
-    const accessToken = await oauth.getAccessToken();
-    headers['authorization'] = `Bearer ${accessToken}`;
-    ensureBeta(headers, oauth.beta); // 订阅 token 必带的 beta flag
-  } else if (config.upstreamAuthToken) {
-    headers['authorization'] = `Bearer ${config.upstreamAuthToken}`;
-  } else if (config.upstreamApiKey) {
-    headers['x-api-key'] = config.upstreamApiKey;
-  }
+  await upstreamAuth.apply(headers);
 }
 
 // A 兼容性:开启 spoofClaudeCode 且为订阅 OAuth 时,把请求头补成完整 Claude Code 身份
 //（UA/x-app/accept 等 + anthropic-beta 四件套),让自研客户端在上游看来像真 Claude Code。
 function applyClaudeCodeSpoof(headers, effectiveModel, overrides) {
-  if (!overrides || !overrides.spoofClaudeCode || !oauth) return [];
+  // 仅订阅模式有意义。inherit(级联)下这里刻意不做 —— 过订阅门禁该由真正持有订阅
+  // token 的那一级(上游那台 cc-trans)来做,两级都伪装只会把头改乱。
+  if (!overrides || !overrides.spoofClaudeCode || !upstreamAuth.isSubscription) return [];
   const changes = [];
   const ident = claudeCodeIdentityHeaders();
   for (const [k, v] of Object.entries(ident)) {
@@ -927,7 +978,17 @@ async function handleProxy(req, res, started) {
   const clientEntry = tokenMap.get(token);
   const clientName = clientEntry.name;
   // 全局默认(CC 伪装/注入/清洗默认开,伪装与注入仅订阅模式)+ 该客户端显式设置(可显式关闭)
-  const ov = effectiveOverrides(clientEntry.overrides, { subscription: !!oauth });
+  const ov = effectiveOverrides(clientEntry.overrides, { subscription: upstreamAuth.isSubscription });
+
+  // ── 环路防护:走过的 cc-trans 太多就在这里断掉 ──
+  // 508 而不是 502:502 会让客户端重试,而重试只会让环转得更快。
+  // 放在鉴权之后、读请求体之前 —— 环里的请求不值得再读一遍 body。
+  const hops = readHops(req.headers);
+  if (hopsExceeded(hops, config.maxHops)) {
+    log(`${req.method} ${req.url} 508 转发环路: 已过 ${hops} 跳(上限 ${config.maxHops}) [${clientName}]`);
+    recordMetric(req, started, 508, clientName);
+    return sendError(res, 508, 'api_error', loopMessage(hops, config.maxHops));
+  }
 
   // ── B 安全:客户端 UA 限制 ──
   if (ov.allowedClient && !clientAllowed(ov.allowedClient, req.headers['user-agent'])) {
@@ -948,7 +1009,9 @@ async function handleProxy(req, res, started) {
       await handleOpenAiCompat(req, res, {
         readBody,
         fetch: upstreamFetch,
-        upstreamBaseUrl: config.upstreamBaseUrl,
+        // 传函数而不是值:inherit 模式下地址跟着 settings.json 走,而 ctx 是在
+        // applyUpstreamAuth 之前组好的 —— 传快照就会用上一次的地址发这一次的请求
+        upstreamBaseUrl: () => upstreamAuth.baseUrl(),
         dispatcher: upstreamDispatcher,
         buildBaseHeaders: () => buildUpstreamHeaders(req),
         applyUpstreamAuth,
@@ -997,7 +1060,6 @@ async function handleProxy(req, res, started) {
   }
   const release = gate.release;
 
-  const url = config.upstreamBaseUrl + req.url;
   const headers = buildUpstreamHeaders(req);
   try {
     await applyUpstreamAuth(headers);
@@ -1007,6 +1069,10 @@ async function handleProxy(req, res, started) {
     recordMetric(req, started, 502, clientName, {}, model);
     return sendError(res, 502, 'api_error', `cc-trans 上游凭证不可用: ${err.message}`);
   }
+  // 地址在注入凭证【之后】才取:inherit 模式下两者来自 settings.json 的同一次读取,
+  // 顺序反了就可能出现"新地址配旧令牌"(改文件那一瞬间的窗口)。
+  const url = upstreamAuth.baseUrl() + req.url;
+
   // ── A 兼容性:Claude Code 身份伪装 ──
   const spoof = applyClaudeCodeSpoof(headers, effectiveModel, ov);
   if (spoof.length) log(`身份伪装 [${clientName}]: ${spoof.join(', ')}`);
@@ -1221,29 +1287,33 @@ function buildHealth() {
     service: 'cc-trans',
     version: PKG_VERSION,
     uptimeSec: Math.floor((Date.now() - HEALTH_STARTED) / 1000),
-    upstream: config.upstreamBaseUrl,
+    upstream: upstreamAuth.baseUrl(),
     upstreamProxy: upstream.describe,
     upstreamAuth: config.upstreamAuth,
+    maxHops: config.maxHops, // 0 = 环路防护关闭,探针据此可以告警
     clients: clientTokens.length,
     rssMB: Math.round(process.memoryUsage().rss / 1048576),
   };
-  if (oauth) {
-    try {
-      const info = oauth.peek ? oauth.peek() : null;
-      if (info) {
-        h.oauth = {
-          subscriptionType: info.subscriptionType || null,
-          expiresInMin: info.expiresAt ? Math.round((info.expiresAt - Date.now()) / 60000) : null,
-          hasRefresh: !!info.hasRefresh,
-        };
-        // token 读不到 / 无 refresh 视为降级(但仍存活,便于区分探针语义)
-        if (!info.hasRefresh) h.ok = true;
-      } else {
-        h.oauth = { error: '凭证读取失败' };
-      }
-    } catch {
-      h.oauth = { error: '凭证读取异常' };
+  try {
+    const info = upstreamAuth.peek();
+    if (upstreamAuth.kind === 'oauth') {
+      h.oauth = info.ok
+        ? {
+            subscriptionType: info.subscriptionType || null,
+            expiresInMin: info.expiresAt ? Math.round((info.expiresAt - Date.now()) / 60000) : null,
+            hasRefresh: !!info.hasRefresh,
+          }
+        : { error: info.error || '凭证读取失败' };
+      // token 读不到 / 无 refresh 视为降级(但仍存活,便于区分探针语义)
+      if (info.ok && !info.hasRefresh) h.ok = true;
+    } else if (upstreamAuth.kind === 'inherit') {
+      // 探针要能看出"上游是继承来的、来源文件还读不读得到"—— 令牌只给掩码
+      h.inherit = info.ok
+        ? { file: info.real || info.file, via: info.via, tokenMask: info.tokenMask }
+        : { file: info.file, error: info.error };
     }
+  } catch {
+    h.upstreamAuthError = '上游凭证状态读取异常';
   }
   if (dataDir) {
     try {
@@ -1295,18 +1365,29 @@ function lanIps() {
 }
 
 function printBanner() {
+  const info = upstreamAuth.peek();
   let cred;
-  if (config.upstreamAuth === 'oauth') {
-    const info = config.oauthInfo || {};
-    const left = info.expiresAt ? Math.round((info.expiresAt - Date.now()) / 60000) : null;
-    cred = `订阅OAuth(${info.subscriptionType || '?'}, token${left == null ? '' : left > 0 ? `还有${left}分钟到期` : '已过期,首个请求会自动刷新'})`;
+  if (upstreamAuth.kind === 'oauth') {
+    const oi = config.oauthInfo || {};
+    const left = oi.expiresAt ? Math.round((oi.expiresAt - Date.now()) / 60000) : null;
+    cred = `订阅OAuth(${oi.subscriptionType || '?'}, token${left == null ? '' : left > 0 ? `还有${left}分钟到期` : '已过期,首个请求会自动刷新'})`;
+  } else if (upstreamAuth.kind === 'inherit') {
+    cred = `继承本机配置(${info.via || '?'} ${info.tokenMask || '?'})`;
   } else {
     cred = config.upstreamAuthToken ? 'auth-token' : 'api-key';
   }
   log(`cc-trans 已启动`);
   log(`  监听:      ${config.host}:${config.port}`);
-  log(`  上游:      ${config.upstreamBaseUrl} (凭证类型: ${cred})`);
-  if (oauth) log(`  订阅凭证:  ${oauth.file}`);
+  log(`  上游:      ${upstreamAuth.baseUrl()} (凭证类型: ${cred})`);
+  if (upstreamAuth.kind === 'oauth') log(`  订阅凭证:  ${info.file}`);
+  if (upstreamAuth.kind === 'inherit') {
+    log(`  继承来源:  ${info.real || info.file}${info.viaLink ? '(经软链接)' : ''}`);
+    log(`             上游地址与令牌都跟着这个文件走,改完下一个请求就生效`);
+  }
+  // 只在【关闭】时说话:开着是常态,不值得占一行;关掉了才是需要知道的事
+  if (!(Number(config.maxHops) > 0)) {
+    log(`  ⚠️ 环路防护已关闭(maxHops=${config.maxHops}) —— 上游若被配回链路里的某一台,请求会无限绕圈`);
+  }
   log(`  客户端令牌: ${clientTokens.map((t) => `${t.name}(${maskToken(t.token)})`).join(', ') || '(无)'}`);
   if (admin) {
     const ips = lanIps();

@@ -7,6 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { du, createStorage } from '../src/storage.js';
+import { freePort } from './_ports.mjs';
 import { createChatStore } from '../src/chat_store.js';
 import { createLogStore } from '../src/logstore.js';
 
@@ -289,7 +290,7 @@ const dataDir = path.join(tmp, 'data');
 
 // ── HTTP:要登录才能看和清 ──
 {
-  const PORT = 19981;
+  const PORT = await freePort();
   const BASE = `http://127.0.0.1:${PORT}`;
   const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-sto-srv-'));
   const cfg = path.join(cfgDir, 'config.json');
@@ -364,7 +365,7 @@ const dataDir = path.join(tmp, 'data');
     const dir = c.sub ? path.join(base, c.sub) : base;
     fs.mkdirSync(dir, { recursive: true });
     const cfg = path.join(dir, 'config.json');
-    const port = 19983 + cases.indexOf(c);
+    const port = await freePort();
     fs.writeFileSync(cfg, JSON.stringify({
       host: '127.0.0.1', port, upstreamAuth: 'apiKey', upstreamApiKey: 'sk-test',
       adminEnabled: true, adminPassword: 'dd-pw-1234',
@@ -405,7 +406,7 @@ const dataDir = path.join(tmp, 'data');
   {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-dd-bad-'));
     const cfg = path.join(base, 'config.json');
-    const port = 19986;
+    const port = await freePort();
     fs.writeFileSync(cfg, JSON.stringify({
       host: '127.0.0.1', port, upstreamAuth: 'apiKey', upstreamApiKey: 'sk-test',
       dataDir: '/app/data', // 真实场景:容器路径被裸机读到(宿主机上 /app 不存在且建不了)

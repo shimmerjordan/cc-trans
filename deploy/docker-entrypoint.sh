@@ -7,6 +7,17 @@ set -e
 CONFIG="${CC_TRANS_CONFIG:-/app/data/config.json}"
 DATA_DIR="$(dirname "$CONFIG")"
 CRED="${CC_TRANS_OAUTH_CREDENTIALS:-/home/node/.claude/.credentials.json}"
+SETTINGS="${CC_TRANS_INHERIT_SETTINGS:-/home/node/.claude/settings.json}"
+
+# 配置里声明的上游鉴权方式(oauth / apiKey / inherit)。环境变量优先,与 config.js 同序。
+# 拿它决定下面预检哪一种来源文件 —— 检错了只会给出误导性的提示。
+upstream_auth() {
+  if [ -n "$CC_TRANS_UPSTREAM_AUTH" ]; then
+    echo "$CC_TRANS_UPSTREAM_AUTH"
+    return
+  fi
+  sed -n 's/.*"upstreamAuth"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" 2>/dev/null | head -1
+}
 
 # ── 权限自适应 ───────────────────────────────────────────────────────────
 # bind mount 的坑:宿主机 ./data 不存在时 Docker 会以 root:root 建目录,
@@ -100,20 +111,42 @@ if [ ! -f "$CONFIG" ]; then
   echo ""
 fi
 
-# 订阅模式提醒:凭证没挂进来时给出明确提示(而不是等第一个请求 502)
-if ! grep -q '"upstreamAuth"[[:space:]]*:[[:space:]]*"apiKey"' "$CONFIG" 2>/dev/null; then
-  if [ ! -f "$CRED" ]; then
-    echo "[entrypoint] ⚠️  订阅模式但没找到凭证:$CRED"
-    echo "[entrypoint]     请把宿主机 ~/.claude 挂进容器(compose 已写好该挂载),并确保已在宿主机 \`claude\` 登录。"
-    echo "[entrypoint]     或在管理台「设置 → 本地 AI 订阅」改用静态密钥模式。"
-  elif [ "$DROP" = "1" ] && [ "$(stat -c %u "$CRED" 2>/dev/null || echo "$DROP_UID")" != "$DROP_UID" ]; then
-    # 注意:此刻还是 root,test -w/-r 恒真,只能比属主。
-    # 凭证通常是 600/700,属主不对 → 降权后直接读不到 → 服务会启动失败,不是"以后才出问题"。
-    echo "[entrypoint] ❌ 凭证文件属主($(stat -c %u "$CRED"))与运行身份($DROP_UID)不一致:$CRED"
-    echo "[entrypoint]    凭证一般是 600 权限,属主不一致会导致【读不到 → 启动失败】。"
-    echo "[entrypoint]    去掉 PUID/PGID 让它自动取属主,或设成 PUID=$(stat -c %u "$CRED") PGID=$(stat -c %g "$CRED")。"
-  fi
-fi
+# 来源文件预检:没挂进来时立刻给出明确提示(而不是等服务启动失败或第一个请求 502)。
+# 按声明的鉴权方式检对应的那个文件 —— oauth 看凭证,inherit 看 settings.json。
+AUTH="$(upstream_auth)"
+case "$AUTH" in
+  apiKey)
+    : # 静态密钥不需要任何本机文件
+    ;;
+  inherit)
+    if [ ! -f "$SETTINGS" ]; then
+      echo "[entrypoint] ⚠️  继承(inherit)模式但没找到本机配置:$SETTINGS"
+      echo "[entrypoint]     请把宿主机 ~/.claude 挂进容器(compose 已写好该挂载);"
+      echo "[entrypoint]     该文件的 env.ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 就是要继承的上游。"
+    elif ! grep -q 'ANTHROPIC_BASE_URL' "$SETTINGS" 2>/dev/null; then
+      echo "[entrypoint] ⚠️  $SETTINGS 里没有 ANTHROPIC_BASE_URL —— 继承模式没有上游可用。"
+      echo "[entrypoint]     本机 Claude Code 直连官方时用不了 inherit,请改用 oauth 或 apiKey 模式。"
+    elif [ "$DROP" = "1" ] && [ ! -r "$SETTINGS" ]; then
+      echo "[entrypoint] ⚠️  $SETTINGS 当前身份可能读不到(运行 uid=$DROP_UID)。"
+    fi
+    # 与 oauth 不同:inherit 只需要【读】,不写回,所以不校验属主是否一致
+    ;;
+  *)
+    # 空值也走这里:config.js 在没有静态密钥时默认推断成 oauth
+    if [ ! -f "$CRED" ]; then
+      echo "[entrypoint] ⚠️  订阅模式但没找到凭证:$CRED"
+      echo "[entrypoint]     请把宿主机 ~/.claude 挂进容器(compose 已写好该挂载),并确保已在宿主机 \`claude\` 登录。"
+      echo "[entrypoint]     没有订阅就在管理台「设置 → 本地 AI 订阅」改用静态密钥;"
+      echo "[entrypoint]     本机 Claude Code 已经指向另一台 cc-trans 的话,改用「继承本机配置」(inherit)最省事。"
+    elif [ "$DROP" = "1" ] && [ "$(stat -c %u "$CRED" 2>/dev/null || echo "$DROP_UID")" != "$DROP_UID" ]; then
+      # 注意:此刻还是 root,test -w/-r 恒真,只能比属主。
+      # 凭证通常是 600/700,属主不对 → 降权后直接读不到 → 服务会启动失败,不是"以后才出问题"。
+      echo "[entrypoint] ❌ 凭证文件属主($(stat -c %u "$CRED"))与运行身份($DROP_UID)不一致:$CRED"
+      echo "[entrypoint]    凭证一般是 600 权限,属主不一致会导致【读不到 → 启动失败】。"
+      echo "[entrypoint]    去掉 PUID/PGID 让它自动取属主,或设成 PUID=$(stat -c %u "$CRED") PGID=$(stat -c %g "$CRED")。"
+    fi
+    ;;
+esac
 
 if [ "$DROP" = "1" ]; then
   exec node /app/deploy/drop-privs.mjs /app/src/server.js "$@"

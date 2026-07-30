@@ -61,10 +61,14 @@ function fail(code, message) {
   return err;
 }
 
-// 把凭证路径解析成真实文件路径(穿透软链接:文件本身的、以及路径中任何一层目录的)。
-// 读写都要先过这里 —— 见 writeCredentials 里为什么不能直接对软链接路径动手。
-// 每次调用都重新解析:claude 重新登录可能换掉链接目标。
-export function resolveCredentialsFile(file) {
+// 把 ~/.claude 下某个文件的路径解析成真实文件路径(穿透软链接:文件本身的、以及
+// 路径中任何一层目录的)。读写都要先过这里 —— 见 writeCredentials 里为什么不能
+// 直接对软链接路径动手。每次调用都重新解析:claude 重新登录可能换掉链接目标。
+//
+// label / bareHint 只影响报错措辞。订阅凭证(oauth 模式)与本机 settings.json
+// (inherit 模式)踩的是同一批坑 —— ~/.claude 链到别的盘、容器挂载源被换掉、
+// uid 与属主不一致 —— 所以两者共用这一套诊断,而不是各写一个 ENOENT。
+export function resolveLocalFile(file, { label = '文件', bareHint = '' } = {}) {
   try {
     const real = fs.realpathSync(file);
     return { real, viaLink: real !== path.resolve(file) };
@@ -74,7 +78,7 @@ export function resolveCredentialsFile(file) {
       if (broken) {
         throw fail(
           'EBROKENLINK',
-          `订阅凭证软链接已断: ${broken.link} → ${broken.target}(目标不存在)—— ` +
+          `${label}软链接已断: ${broken.link} → ${broken.target}(目标不存在)—— ` +
             `若目标在另一块盘/网络存储上,先确认它已挂载(systemd 可加 RequiresMountsFor=);` +
             `Docker 里还要注意软链接目标路径在容器内也得存在`,
         );
@@ -92,14 +96,19 @@ export function resolveCredentialsFile(file) {
       if (empty) {
         throw fail(
           'EEMPTYDIR',
-          `订阅凭证目录是空的: ${dir} —— Docker 里多为挂载源在容器启动后被换过` +
+          `${label}目录是空的: ${dir} —— Docker 里多为挂载源在容器启动后被换过` +
             `(比如宿主 ~/.claude 改成了软链接),容器仍绑着旧的挂载点,` +
-            `\`docker compose up -d --force-recreate\` 重建即可;裸机上则确实是没登录过`,
+            `\`docker compose up -d --force-recreate\` 重建即可${bareHint ? ';' + bareHint : ''}`,
         );
       }
     }
-    throw fail(err.code || 'EUNKNOWN', `读取订阅凭证失败 ${file}: ${err.message}`);
+    throw fail(err.code || 'EUNKNOWN', `读取${label}失败 ${file}: ${err.message}`);
   }
+}
+
+// 订阅凭证的解析(oauth 模式)。独立入口保留:调用点多,且它的报错是「没登录」语义。
+export function resolveCredentialsFile(file) {
+  return resolveLocalFile(file, { label: '订阅凭证', bareHint: '裸机上则确实是没登录过' });
 }
 
 // 给 config 校验用:确认凭证文件存在且含 accessToken

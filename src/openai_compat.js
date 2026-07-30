@@ -166,8 +166,10 @@ export function makeSseTranslator(model, createdSec) {
 }
 
 // ── HTTP 处理入口 ───────────────────────────────────────────────────
-// ctx: { readBody, upstreamBaseUrl, dispatcher, buildBaseHeaders(), applyUpstreamAuth, applyClaudeCodeSpoof,
+// ctx: { readBody, upstreamBaseUrl(), dispatcher, buildBaseHeaders(), applyUpstreamAuth, applyClaudeCodeSpoof,
 //        overrides, log, clientName, sendError, sendJson, recordOpenAi(status, usage, model) }
+// upstreamBaseUrl 是【函数】:inherit 模式下上游地址跟着本机 settings.json 走,
+// 必须在 applyUpstreamAuth 之后现取,不能用组 ctx 时的快照。
 export async function handleOpenAiCompat(req, res, ctx) {
   const started = Date.now();
   const createdSec = Math.floor(started / 1000);
@@ -203,7 +205,7 @@ export async function handleOpenAiCompat(req, res, ctx) {
 
   let upstreamRes;
   try {
-    upstreamRes = await upFetch(ctx.upstreamBaseUrl + '/v1/messages', {
+    upstreamRes = await upFetch(ctx.upstreamBaseUrl() + '/v1/messages', {
       method: 'POST', headers, body: bodyBuf, signal: abort.signal, dispatcher: ctx.dispatcher,
     });
   } catch (err) {

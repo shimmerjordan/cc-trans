@@ -174,7 +174,7 @@ open http://localhost:8787/admin      # 管理台(账号 admin + 日志里打印
 ## B. 跑自动化测试(不需要真凭证、不碰你的订阅)
 
 ```bash
-npm test        # 六套件共 258 项,全部打本地 mock 上游
+npm test        # 十套件共 537 项,全部打本地 mock 上游
 ```
 
 | 套件 | 覆盖 |
@@ -186,8 +186,13 @@ npm test        # 六套件共 258 项,全部打本地 mock 上游
 | `test/chat.mjs` | 网页聊天:Markdown **注入向量**(22 个)、渲染与高亮、artifact 抽取、会话 CRUD 与**路径穿越**、图片魔数校验与去重、流式事件与 usage、记账落到设备、强制模型生效、会话/消息上限可配(0=不限) |
 | `test/storage.mjs` | 存储统计与清理:`du` 不跟符号链接、**各类之和恒等于目录实测总量**、图片引用清扫(共享图不能误删)、孤儿宽限期、面板数量与真清理数量一致、只删轮转件、清理接口鉴权 |
 | `test/users.mjs` | 用户体系:scrypt 哈希、账号 CRUD 与持久化、**越权边界**(两套 session 互不相认、数据/日志隔离、伪造参数无效、禁用即时生效)、令牌明文回显与审计、**权限收窄**(创建时/事后改)、保留名、管理员聊天隔离、重启后仍可登录 |
+| `test/credentials.mjs` | 订阅凭证的路径解析与写回:软链接透明(目录链/文件链)、写回不吃掉软链接、跨设备 tmp 落点、**死链要说人话**(不能报成"没登录")、默认路径不受污染的 `HOME` 影响、写回失败不留垃圾 |
+| `test/inherit.mjs` | 级联模式:**自环判定**(本机各种写法 × 端口)、来源文件三类错误各自可辨(权限/断链/缺字段,权限问题不能报成"JSON 不合法")、继承来的令牌与地址真的生效而 config.json 里的静态密钥被忽略、**改文件不重启即跟随**(令牌与地址一起换)、`API_KEY` 走 `x-api-key`、来源坏掉是 502 且修回去自愈、管理台切换与探测(切走时地址还原为声明值) |
+| `test/hops.mjs` | 环路防护:跳数读取(缺失/非法/负数/天文数字)、官方上游剥头(含 `anthropic.com.evil` 后缀伪装不误判)、超限 508 且不打上游、**真实环路收敛**(假上游把请求打回自己,验证跳数累加并在上限处断开而不是耗尽资源)、`maxHops=0` 关闭后仍递增且横幅告警、客户端伪造值不会原样透给上游 |
 
 单跑某一套件:`node test/features.mjs`。
+
+监听端口全部由 [`test/_ports.mjs`](test/_ports.mjs) 动态分配,所以跑测试不会和机器上已有的服务抢端口 —— 包括你自己那个正在跑的 cc-trans。（写死端口撞上时的症状极具误导性:测试实例只是静默 `EADDRINUSE`,而请求打到了那个陌生服务、拿回一个莫名的 401。）
 
 对着**真实服务**做端到端自检(会真的打上游、消耗额度):
 
@@ -398,11 +403,13 @@ cp config.example.json config.json
 
 | 字段 | 说明 |
 | --- | --- |
-| `upstreamAuth` | `oauth`=转发订阅登录态(默认);`apiKey`=用静态密钥。不填则:有静态密钥走 apiKey,否则 oauth。 |
-| `upstreamBaseUrl` | 上游真实地址。官方填 `https://api.anthropic.com`;走中转/自建网关就填它的地址。 |
+| `upstreamAuth` | `oauth`=转发订阅登录态(默认);`apiKey`=用静态密钥;`inherit`=继承本机 Claude Code 已配的上游(级联,见下)。不填则:有静态密钥走 apiKey,否则 oauth —— `inherit` 必须显式写。 |
+| `upstreamBaseUrl` | 上游真实地址。官方填 `https://api.anthropic.com`;走中转/自建网关就填它的地址。`inherit` 模式下此项被忽略。 |
 | `oauthCredentialsPath` | oauth 模式的凭证文件路径,默认 `~/.claude/.credentials.json`,一般不用改。 |
+| `inheritSettingsPath` | inherit 模式的来源文件,默认 `~/.claude/settings.json`,一般不用改。 |
 | `upstreamApiKey` | apiKey 模式用:真实密钥(走 `x-api-key`)。与 `upstreamAuthToken` 二选一。 |
 | `upstreamAuthToken` | apiKey 模式用:真实密钥(走 `Authorization: Bearer`)。某些中转用这种。 |
+| `maxHops` | 环路防护:一个请求最多穿过几台 cc-trans(默认 4,`0`=关闭)。超限返回 508。 |
 | `clientTokens` | 分发给远端的访问令牌数组,`name` 仅用于日志区分设备。 |
 | `modelMap` | 可选。把客户端请求的模型名重映射到上游模型。留空则原样转发。 |
 | `port` / `host` | 监听端口(默认 8787)/ 网卡(默认 `0.0.0.0` 监听全部)。 |
@@ -412,9 +419,9 @@ cp config.example.json config.json
 也可以全部用环境变量代替配置文件(env 优先级最高):
 
 ```
-CC_TRANS_PORT, CC_TRANS_HOST, CC_TRANS_UPSTREAM_AUTH (oauth|apiKey),
-CC_TRANS_UPSTREAM_BASE_URL, CC_TRANS_OAUTH_CREDENTIALS,
-CC_TRANS_UPSTREAM_API_KEY, CC_TRANS_UPSTREAM_AUTH_TOKEN,
+CC_TRANS_PORT, CC_TRANS_HOST, CC_TRANS_UPSTREAM_AUTH (oauth|apiKey|inherit),
+CC_TRANS_UPSTREAM_BASE_URL, CC_TRANS_OAUTH_CREDENTIALS, CC_TRANS_INHERIT_SETTINGS,
+CC_TRANS_UPSTREAM_API_KEY, CC_TRANS_UPSTREAM_AUTH_TOKEN, CC_TRANS_MAX_HOPS,
 CC_TRANS_CLIENT_TOKENS (逗号分隔), CC_TRANS_CONFIG (指定配置文件路径)
 ```
 
@@ -423,6 +430,52 @@ CC_TRANS_CLIENT_TOKENS (逗号分隔), CC_TRANS_CONFIG (指定配置文件路径
 - 代理在每次请求时读取凭证文件取 access token;**到期前 5 分钟自动用 refresh token 刷新**,并把新 token 原子写回 `~/.claude/.credentials.json`(与服务器自己的 Claude Code 共用同一份登录,互不打架)。
 - 关键转发细节(已实测):`Authorization: Bearer <accessToken>` + `anthropic-beta: oauth-2025-04-20`,且**非 Haiku 模型要求请求 `system` 以 `You are Claude Code, ...` 开头** —— 真实 Claude Code 自带,故正常使用无感;但**裸 curl 测非 Haiku 模型且不带该 system 会被上游 400**(见测试一节)。
 - ⚠️ **合规提醒**:订阅 OAuth 凭证官方主要面向 Claude Code 客户端本身;经第三方代理转发属灰区,Team 订阅还涉及组织条款。仅建议**自用**(自己的订阅、自己的机器),并务必保证代理私有(靠 clientTokens 鉴权 + 私网/穿透,别裸挂公网)。token 理论上有被限流/吊销风险。
+
+### 级联模式(inherit):复用本机已配的中转
+
+**解决的问题**:内网机器 B 上跑着 cc-trans,本机 A 的 Claude Code 已经指向它;现在外网多了一台机器 C,它只连得到 A、连不到 B。想让 C 也用上那个中转,又不想把 B 的地址和令牌再抄一遍。
+
+在 A 上也跑一个 cc-trans,`upstreamAuth` 设成 `inherit`,它就会从 A 自己的 `~/.claude/settings.json` 里读出 `env.ANTHROPIC_BASE_URL` 和 `env.ANTHROPIC_AUTH_TOKEN` 当上游:
+
+```
+C (Claude Code)  ──►  A (cc-trans, inherit)  ──►  B (cc-trans, oauth)  ──►  api.anthropic.com
+   给 C 单发的令牌        读自己的 settings.json        注入订阅 token
+                         得到 B 的地址与令牌
+```
+
+A 上只改一行配置,`settings.json` 一个字不用动(A 本机的 claude 继续直连 B):
+
+```json
+{ "upstreamAuth": "inherit" }
+```
+
+- **自动跟随**:B 换了令牌或换了地址,你改的是 A 的 `settings.json`(本机 claude 本来就要改),这边下一个请求就跟上,**不用重启、不用改第二处**。与 oauth 模式"跟着本机登录态走"是同一个思路。
+- **C 有自己的身份**:给 C 单发一个 `clientToken`(`npm run gen-token`),就能在 A 的管理台单独限额、单独看日志、随时吊销 —— 这是它比"直接把 B 的端口用隧道透给 C"强的地方(那样 C 拿到的就是 B 的令牌,泄露等于 B 泄露)。
+- `ANTHROPIC_API_KEY` 也认(注入 `x-api-key`);两个都有时 `ANTHROPIC_AUTH_TOKEN` 优先,与 Claude Code 自身的优先级一致。
+- **禁止自环**:`settings.json` 里的地址不能指回这台 cc-trans 自己(`localhost`/`127.*`/本机 IP + 同端口),否则请求会在本进程里无限套娃。这种配置**启动时直接拒绝**并告诉你怎么改。所以想让 A 本机的 claude 也走本地 cc-trans 的话,得改用 `apiKey` 模式手填 B 的地址与令牌。自环检测抓不到的两类环由跳数防护兜住,见下。
+- **两件事发生在上游那一级**:① 订阅门禁的伪装(`spoofClaudeCode` / 注入 CC 前缀)由 B 做 —— 若 C 上跑的是自研客户端而非真 Claude Code,请到 **B** 的管理台给「A 用的那个令牌」打开订阅兼容三项;② 订阅余量也只有 B 看得到,A 的管理台「订阅用量」会提示去 B 查。
+- **用量会记两遍**:A 记一份(按 C 的令牌细分)、B 记一份(C 的请求在 B 上都归到「A 用的那个令牌」名下)。两级各自视角,不是重复计费。
+- **别把管理台一起暴露**:A 若要对公网开放,只放行 `/v1/*`,`/admin` 与 `/u` 留在内网。
+- **Docker 下开箱可用**:两份 compose 本来就把宿主机 `~/.claude` 整个挂进容器(oauth 模式需要),`settings.json` 就在里面,所以只需把 `upstreamAuth` 改成 `inherit`。与 oauth 不同的是它只需要**读**权限。
+
+### 环路防护(跳数)
+
+上面的自环检测只认得出「上游地址就是本机」这一种形状,有两类环它抓不到:
+
+- **容器盲区**:容器里 `os.networkInterfaces()` 只有容器自己的地址(`172.17.x.x`),`settings.json` 指向「宿主 IP:映射端口」时,它看不出那其实就是自己
+- **跨机器环**:A 的上游是 B,而 B 的上游又被配回了 A —— 单看任何一台都完全合法
+
+两种情况下请求都会真的绕圈,每一跳都是一次完整的 HTTP 转发(连同请求体),连接数与内存一起爆,而现场只看得到一串自己打给自己的请求。所以转发时会带一个计数头:
+
+```
+x-cc-trans-hops: 1        # 每经过一台 cc-trans +1;超过 maxHops(默认 4)返回 508
+```
+
+- **508 而不是 502**:502 会让客户端重试,而重试只会让环转得更快。
+- **官方 API 收不到这个头**:上游是 `*.anthropic.com` 时该头会被剥掉 —— 官方不会把请求转回来(没有环可防),而多带一个自定义头会削弱身份伪装。于是自建链路里始终累加,最后一跳自然清理干净。
+- **客户端伪造无害**:值只被用来计数,发往上游的永远是本机算出的 `收到值+1`;填大了只会让自己的请求被拒。
+- `/health` 会回 `maxHops`,探针可据此告警;设成 `0` 关闭防护时启动横幅会明确警告。
+- 正常级联 1~2 跳。确实需要更深的多级中转时调大 `maxHops`,别关掉它。
 
 ## 4. 启动服务器
 
@@ -682,10 +735,11 @@ export OPENAI_API_KEY="cct-你的客户端令牌"
 ### 设置里配置本地 AI 订阅
 管理台「设置 → 本地 AI 订阅」可在线完成(**保存即热应用,不用重启**):
 
-- 切换鉴权方式:**订阅 OAuth**(用本机 Claude 登录态)↔ **静态密钥**(官方 API Key / 第三方网关)
+- 切换鉴权方式:**订阅 OAuth**(用本机 Claude 登录态)↔ **静态密钥**(官方 API Key / 第三方网关)↔ **继承本机配置**(级联到另一台 cc-trans)
 - 改订阅凭证文件路径,并可「检测」某路径是否可用(显示订阅类型、token 到期、能否自动刷新)
-- 改上游地址、上游代理
-- 切换到订阅模式前会先校验凭证可用,不可用则拒绝保存并保持原状(不会把服务改坏)
+- 改继承来源文件路径,同样可「检测」(显示继承到的上游地址与令牌掩码,自环会被判为不可用)
+- 改上游地址、上游代理(继承模式下上游地址由来源文件决定,输入框会置灰)
+- 切换前会先校验目标模式可用(订阅要有凭证、静态密钥要有 key、继承要能解析出上游),不可用则拒绝保存并保持原状(不会把服务改坏)
 
 密钥只以掩码回显,明文不出服务端;想清空已存密钥填 `__clear__` 保存。
 

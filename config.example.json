@@ -2,14 +2,17 @@
   "host": "0.0.0.0",
   "port": 8787,
 
-  "_comment_auth": "上游鉴权方式:'oauth'=转发本机 Claude Code 的订阅(Pro/Max/Team)登录态(读 ~/.claude/.credentials.json,自动刷新);'apiKey'=用下面的静态密钥。不填则:有静态密钥走 apiKey,否则默认 oauth。",
+  "_comment_auth": "上游鉴权方式:'oauth'=转发本机 Claude Code 的订阅(Pro/Max/Team)登录态(读 ~/.claude/.credentials.json,自动刷新);'apiKey'=用下面的静态密钥;'inherit'=继承本机 Claude Code 已配的上游(读 ~/.claude/settings.json,级联到另一台 cc-trans)。不填则:有静态密钥走 apiKey,否则默认 oauth —— inherit 必须显式写,不会被自动推断。",
   "upstreamAuth": "oauth",
 
-  "_comment_upstream": "上游地址。官方填 https://api.anthropic.com;走中转/自建网关就改成对应地址。",
+  "_comment_upstream": "上游地址。官方填 https://api.anthropic.com;走中转/自建网关就改成对应地址。inherit 模式下此项被忽略(地址由 settings.json 决定)。",
   "upstreamBaseUrl": "https://api.anthropic.com",
 
   "_comment_oauth": "oauth 模式下订阅凭证文件路径,默认 ~/.claude/.credentials.json,一般不用改。",
   "oauthCredentialsPath": "",
+
+  "_comment_inherit": "inherit 模式的来源文件,默认 ~/.claude/settings.json,一般不用改。从它的 env 段读 ANTHROPIC_BASE_URL 与 ANTHROPIC_AUTH_TOKEN(或 ANTHROPIC_API_KEY)当上游 —— 本机 Claude Code 连的是哪台中转,这台就往那台转,对方换令牌/换地址会自动跟随,无需重启。用途:外网机器只连得到本机、连不到内网那台中转时,把本机当二级跳板,并给外网机器单独的 clientToken(可单独限额/吊销/审计)。注意 settings.json 不能指回本机自己(会无限自环,启动即拒绝)。",
+  "inheritSettingsPath": "",
 
   "_comment_apikey": "apiKey 模式才需要:二选一填。",
   "upstreamApiKey": "",
@@ -27,6 +30,9 @@
 
   "_comment_proxy": "可选:上游走代理(网络受限时用)。支持 http://、https://、socks5://[user:pass@]host:port。留空=直连。注意:启用代理需 `npm i undici`(核心默认零依赖)。",
   "upstreamProxy": "",
+
+  "_comment_maxHops": "环路防护:一个请求最多穿过几台 cc-trans。转发时带 x-cc-trans-hops 计数,超限返回 508;上游是官方 API 时该头会被剥掉(不削弱身份伪装,官方也不会把请求转回来)。正常级联 1~2 跳,4 是给多级中转的余量。级联时若上游被配回链路里的某一台(常见于容器里 settings.json 指向「宿主 IP:映射端口」,或两台机器互指),请求会无限绕圈 —— 这道防护是唯一能兜住所有环形状的手段。0 = 关闭(不建议)。",
+  "maxHops": 4,
 
   "_comment_dataDir": "可选:状态目录(指标/模型列表/请求日志分块)。留空 = config.json 同级的 data/;Docker 部署里指向挂载卷(如 /app/data),这样所有状态集中一个卷。",
   "dataDir": "",

@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CATALOG, CATALOG_VERSION, DEFAULT_OVERRIDES } from './models.js';
+import { applyHops } from './hops.js';
 import { PERMS, DEFAULT_PERMS, QUOTA_WINDOWS, effectiveQuota } from './users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -40,9 +41,12 @@ function idOf(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 12);
 }
 
-export function createAdmin({ prefix, credentials, config, getOauth, metrics, tokenAdmin, users, chat, chatUi, modelStore, logStore, storage, upstreamAdmin, maskToken, log }) {
-  // oauth provider 可被管理台热重建 —— 每次用时通过 getOauth() 取当前实例,别缓存
+export function createAdmin({ prefix, credentials, config, getOauth, getUpstreamAuth, metrics, tokenAdmin, users, chat, chatUi, modelStore, logStore, storage, upstreamAdmin, maskToken, log }) {
+  // provider 可被管理台热重建 —— 每次用时取当前实例,别缓存。
+  // oauthNow() 只给订阅专属功能用(订阅用量面板);凡是"发一个上游请求"都该走
+  // upstreamNow(),它对三种鉴权模式一视同仁。
   const oauthNow = () => (typeof getOauth === 'function' ? getOauth() : null);
+  const upstreamNow = () => (typeof getUpstreamAuth === 'function' ? getUpstreamAuth() : null);
   const sessions = new Map(); // sessionToken -> expiresAt
   let ui = '';
   try {
@@ -117,10 +121,12 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       }
     }
     const snap = metrics.snapshot();
+    const up = upstreamNow();
     return {
       service: 'cc-trans',
       upstreamAuth: config.upstreamAuth,
-      upstreamBaseUrl: config.upstreamBaseUrl,
+      // 实际生效的地址:inherit 模式下是继承来的那个,不是 config.json 里写的
+      upstreamBaseUrl: up ? up.baseUrl() : config.upstreamBaseUrl,
       subscriptionType: config.oauthInfo?.subscriptionType || null,
       oauthExpiresInMin,
       host: config.host,
@@ -241,10 +247,11 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
       return sendJson(res, 200, upstreamAdmin ? upstreamAdmin.read() : { canManage: false });
     }
 
-    // 探测某个凭证文件路径是否可用(前端"检测"按钮)
+    // 探测某个来源文件是否可用(前端"检测"按钮)。kind: oauth=订阅凭证(默认)、
+    // inherit=本机 Claude Code 配置 —— 两种文件格式不同,得按各自的解析器看。
     if (sub === '/api/upstream/probe' && req.method === 'POST') {
       const b = await readJson(req);
-      return sendJson(res, 200, upstreamAdmin ? upstreamAdmin.probe(b.path) : { ok: false, error: '不可用' });
+      return sendJson(res, 200, upstreamAdmin ? upstreamAdmin.probe(b.path, b.kind) : { ok: false, error: '不可用' });
     }
 
     // 保存并热应用上游设置(切换订阅/密钥、凭证路径、上游地址、代理)
@@ -417,16 +424,11 @@ export function createAdmin({ prefix, credentials, config, getOauth, metrics, to
     if (sub === '/api/models/refresh' && req.method === 'POST') {
       try {
         const headers = { 'anthropic-version': '2023-06-01' };
-        const oauth = oauthNow();
-        if (oauth) {
-          headers['authorization'] = `Bearer ${await oauth.getAccessToken()}`;
-          headers['anthropic-beta'] = oauth.beta;
-        } else if (config.upstreamAuthToken) {
-          headers['authorization'] = `Bearer ${config.upstreamAuthToken}`;
-        } else if (config.upstreamApiKey) {
-          headers['x-api-key'] = config.upstreamApiKey;
-        }
-        const r = await fetch(config.upstreamBaseUrl + '/v1/models?limit=100', { headers });
+        const up = upstreamNow();
+        if (!up) throw new Error('上游鉴权未就绪');
+        applyHops(headers, 0, up.baseUrl()); // 管理台自己发起,从 0 跳起算
+        await up.apply(headers); // 三种模式统一(inherit 也能拉列表 —— 上游那台会自己去问官方)
+        const r = await fetch(up.baseUrl() + '/v1/models?limit=100', { headers });
         const text = await r.text();
         if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 160)}`);
         const j = JSON.parse(text);

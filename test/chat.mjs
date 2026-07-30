@@ -9,9 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { renderMarkdown, highlight, extractArtifacts, escapeHtml } from '../src/md.js';
 import { createChatStore } from '../src/chat_store.js';
+import { freePorts } from './_ports.mjs';
 
-const PORT = 19975;
-const UP_PORT = 19976;
+// 端口动态分配,不写死 —— 开发机上随时有别的服务占着某个"看起来没人用"的号,
+// 撞上时测试实例只是静默 EADDRINUSE,而请求打到陌生服务、拿回莫名的 401,排查方向全跑偏
+const [PORT, UP_PORT] = await freePorts(2); // 代理 / 假上游
 const BASE = `http://127.0.0.1:${PORT}`;
 let pass = 0;
 let fail = 0;

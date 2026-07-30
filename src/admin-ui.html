@@ -760,7 +760,18 @@
           <select id="upAuth" onchange="onUpAuthChange()">
             <option value="oauth">订阅 OAuth(用本机 Claude 登录态,推荐)</option>
             <option value="apiKey">静态密钥(官方 API Key / 第三方网关)</option>
+            <option value="inherit">继承本机 Claude Code 配置(级联到另一台 cc-trans)</option>
           </select>
+        </div>
+        <div id="upInheritRows" hidden>
+          <div class="form-row"><label for="upInheritPath">本机配置文件</label>
+            <div class="stack">
+              <input id="upInheritPath" class="grow-1" placeholder="留空 = ~/.claude/settings.json" />
+              <button onclick="probeInherit()">检测</button>
+            </div>
+          </div>
+          <div class="form-row"><label></label><div id="upInheritMsg" class="muted" style="font-size:var(--fs-sm);min-height:16px"></div></div>
+          <p class="note" style="margin:0 0 var(--s3)">从本机 <span class="mono">settings.json</span> 的 <span class="mono">env</span> 段读 <span class="mono">ANTHROPIC_BASE_URL</span> 与 <span class="mono">ANTHROPIC_AUTH_TOKEN</span> 当上游 —— 本机 Claude Code 连的是哪台中转,这台就往那台转。<b>对方换令牌或换地址,改的是同一份文件,这边下一个请求自动跟上</b>,不用抄第二遍。上游地址由该文件决定,下面的「上游地址」在此模式下不生效。</p>
         </div>
         <div id="upOauthRows">
           <div class="form-row"><label for="upCredPath">订阅凭证文件</label>
@@ -991,6 +1002,8 @@ const COLORS = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)',
 let SESSION = sessionStorage.getItem('cc-trans-admin') || '';
 let statusTimer = null, es = null, curTab = 'overview';
 let LAST_STATUS = null; // 最近一次 /status,供订阅用量手动刷新时复用 rateLimit 回落
+// 上游鉴权模式的中文名。概览页与设置页共用一份,别在两处各写一套三目表达式
+const UP_AUTH_LABEL = { oauth: '订阅 OAuth', apiKey: '静态密钥', inherit: '继承本机配置(级联)' };
 
 const el = (id) => document.getElementById(id);
 const show = (id, on) => { el(id).hidden = !on; };
@@ -1210,7 +1223,11 @@ async function refreshOverview() {
     const t = s.totals || { inTokens: 0, outTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     const today = (s.daily || []).find((d) => d.date === localDay(Date.now())) || { requests: 0 };
     // 顶部 pill
-    const oauthPill = s.upstreamAuth === 'oauth' ? `订阅 <b>${s.subscriptionType || '?'}</b>` + (s.oauthExpiresInMin != null ? ` · ${s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + '分后到期' : '将刷新'}` : '') : `上游 <b>${s.upstreamAuth}</b>`;
+    const oauthPill = s.upstreamAuth === 'oauth'
+      ? `订阅 <b>${s.subscriptionType || '?'}</b>` + (s.oauthExpiresInMin != null ? ` · ${s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + '分后到期' : '将刷新'}` : '')
+      : s.upstreamAuth === 'inherit'
+        ? '上游 <b>级联</b>'
+        : `上游 <b>${esc(s.upstreamAuth)}</b>`;
     el('pills').innerHTML = [
       `<span class="pill">${oauthPill}</span>`,
       `<span class="pill">运行 <b>${fmtUptime(s.uptimeMs)}</b></span>`,
@@ -1219,10 +1236,11 @@ async function refreshOverview() {
     ].join('');
     // 服务信息
     const rows = [
-      ['上游模式', s.upstreamAuth === 'oauth' ? '订阅 OAuth' : s.upstreamAuth],
+      ['上游模式', UP_AUTH_LABEL[s.upstreamAuth] || esc(s.upstreamAuth)],
       ['订阅类型', s.subscriptionType || '—'],
       ['token 到期', s.oauthExpiresInMin != null ? (s.oauthExpiresInMin > 0 ? s.oauthExpiresInMin + ' 分钟后(自动刷新)' : '即将/已过期,将自动刷新') : '—'],
-      ['上游地址', `<span class="mono">${esc(s.upstreamBaseUrl)}</span>`],
+      // inherit 模式下这是继承来的地址,标一下来源,免得对不上 config.json 里那行
+      ['上游地址', `<span class="mono">${esc(s.upstreamBaseUrl)}</span>` + (s.upstreamAuth === 'inherit' ? ' <span class="muted xs">(继承自本机 settings.json)</span>' : '')],
       ['监听地址', `<span class="mono">${esc(s.host + ':' + s.port)}</span>`],
       ['配置文件', `<span class="mono">${esc(s.configFile || '—')}</span>`],
       ['运行时长', fmtUptime(s.uptimeMs) + ` <span class="muted">(启动于 ${new Date(s.startedAt).toLocaleString('zh-CN')})</span>`],
@@ -1292,7 +1310,14 @@ function renderUsage(s, us) {
     noteHtml = `数据来自最近一次转发的上游限额头(${ago(s.rateLimit.ts)})` + (st ? ` · 上游状态: <b>${esc(st)}</b>` : '');
   }
   if (!bars.length) {
-    box.innerHTML = `<span class="muted">${s.upstreamAuth === 'oauth' ? '暂无数据' + (us && us.reason ? '(' + esc(us.reason) + ')' : '') + ',有请求转发后会自动从上游响应头获取。' : '非订阅 OAuth 模式,无订阅用量。'}</span>`;
+    // inherit(级联)下订阅额度属于上游那台 cc-trans,这台看不到也不该假装看得到 ——
+    // 直接把人指去正确的地方,比一句"无订阅用量"有用
+    const empty = s.upstreamAuth === 'oauth'
+      ? '暂无数据' + (us && us.reason ? '(' + esc(us.reason) + ')' : '') + ',有请求转发后会自动从上游响应头获取。'
+      : s.upstreamAuth === 'inherit'
+        ? '级联模式:订阅额度属于上游那台 cc-trans,请到它的管理台查看。本机仍会记录经过这里的请求与费用。'
+        : '非订阅 OAuth 模式,无订阅用量。';
+    box.innerHTML = `<span class="muted">${empty}</span>`;
     note.textContent = '';
     return;
   }
@@ -1947,43 +1972,64 @@ function addLogRow(e, live, append) {
 
 // ── 设置:本地 AI 订阅 / 上游凭证 ──
 function onUpAuthChange() {
-  const isOauth = el('upAuth').value === 'oauth';
-  show('upOauthRows', isOauth);
-  show('upKeyRows', !isOauth);
+  const mode = el('upAuth').value;
+  show('upOauthRows', mode === 'oauth');
+  show('upKeyRows', mode === 'apiKey');
+  show('upInheritRows', mode === 'inherit');
+  // inherit 下上游地址由 settings.json 决定,留着一个可编辑却不生效的输入框只会误导
+  el('upBaseUrl').disabled = mode === 'inherit' || el('upAuth').disabled;
 }
 async function loadUpstream() {
   try {
     const d = await (await api('/upstream')).json();
-    el('upAuth').value = d.upstreamAuth || 'oauth';
+    const mode = d.upstreamAuth || 'oauth';
+    el('upAuth').value = mode;
     el('upCredPath').value = d.oauthCredentialsPath === d.defaultCredentialsPath ? '' : (d.oauthCredentialsPath || '');
     el('upCredPath').placeholder = '留空 = ' + (d.defaultCredentialsPath || '~/.claude/.credentials.json');
-    el('upBaseUrl').value = d.upstreamBaseUrl || '';
+    el('upInheritPath').value = d.inheritSettingsPath || '';
+    el('upInheritPath').placeholder = '留空 = ' + (d.defaultSettingsPath || '~/.claude/settings.json');
+    // 输入框填【配置里声明的】地址,而不是 inherit 继承到的那个 —— 否则一保存就把
+    // 继承值写死进 config.json,以后切回静态密钥时上游悄悄变了
+    el('upBaseUrl').value = d.configuredBaseUrl || d.upstreamBaseUrl || '';
     el('upProxy').value = d.upstreamProxy || '';
-    onUpAuthChange();
     const c = d.credentials || {};
-    const bits = [];
-    bits.push(`当前:<b>${d.upstreamAuth === 'oauth' ? '订阅 OAuth' : '静态密钥'}</b>`);
-    if (d.upstreamAuth === 'oauth') {
+    const inh = d.inherit || {};
+    const bits = [`当前:<b>${UP_AUTH_LABEL[mode] || esc(mode)}</b>`];
+    if (mode === 'oauth') {
       bits.push(c.ok
         ? `凭证正常 · 订阅 <b>${esc(c.subscriptionType || '?')}</b> · token ${c.expired ? '已过期(将自动刷新)' : (c.expiresInMin != null ? c.expiresInMin + ' 分钟后到期' : '?')} · ${c.hasRefresh ? '可自动刷新' : '<span class="st-5">无 refreshToken,过期后需重新登录</span>'}`
         : `<span class="st-5">凭证不可用:${esc(c.error || '')}</span>`);
       // 路径经软链接时(~/.claude 常被链到别的盘)把真实落点也显出来,省得上机器 readlink
       if (c.realFile) bits.push(`<span class="muted mono xs">软链接 → ${esc(c.realFile)}</span>`);
+    } else if (mode === 'inherit') {
+      bits.push(inh.ok
+        ? `继承正常 · 上游 <b>${esc(inh.baseUrl || '')}</b> · ${inh.via === 'api-key' ? 'x-api-key' : 'Bearer'} ${esc(inh.tokenMask || '')}`
+        : `<span class="st-5">继承来源不可用:${esc(inh.error || '')}</span>`);
+      bits.push(`<span class="muted mono xs">${esc(inh.real || inh.file || '')}${inh.viaLink ? '(经软链接)' : ''}</span>`);
     } else {
       bits.push(d.hasApiKey ? `API Key ${esc(d.apiKeyMask)}` : (d.hasAuthToken ? `Auth Token ${esc(d.authTokenMask)}` : '<span class="st-5">未配置密钥</span>'));
     }
     bits.push(`连接:${esc(d.proxyDescribe || '')}`);
     if (!d.canManage) bits.push('<span class="st-4">环境变量配置模式,不能在线修改</span>');
     el('upCurrent').innerHTML = bits.join(' · ');
-    for (const id of ['upAuth', 'upCredPath', 'upBaseUrl', 'upProxy', 'upApiKey', 'upAuthToken']) el(id).disabled = !d.canManage;
+    for (const id of ['upAuth', 'upCredPath', 'upInheritPath', 'upBaseUrl', 'upProxy', 'upApiKey', 'upAuthToken']) el(id).disabled = !d.canManage;
+    onUpAuthChange(); // 放在 disabled 之后:它要按模式再决定上游地址框的可编辑性
   } catch (e) {}
 }
 async function probeCreds() {
   el('upProbeMsg').textContent = '检测中…';
-  const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ path: el('upCredPath').value.trim() }) });
+  const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ kind: 'oauth', path: el('upCredPath').value.trim() }) });
   const d = await r.json();
   el('upProbeMsg').innerHTML = d.ok
     ? `✅ 可用 · 订阅 <b>${esc(d.subscriptionType || '?')}</b> · ${d.expired ? 'token 已过期(将自动刷新)' : (d.expiresInMin != null ? 'token ' + d.expiresInMin + ' 分钟后到期' : '')} · ${d.hasRefresh ? '可自动刷新' : '无 refreshToken'}<br><span class="muted mono xs">${esc(d.file)}${d.realFile ? ' → ' + esc(d.realFile) : ''}</span>`
+    : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono xs">${esc(d.file || '')}</span>`;
+}
+async function probeInherit() {
+  el('upInheritMsg').textContent = '检测中…';
+  const r = await api('/upstream/probe', { method: 'POST', body: JSON.stringify({ kind: 'inherit', path: el('upInheritPath').value.trim() }) });
+  const d = await r.json();
+  el('upInheritMsg').innerHTML = d.ok
+    ? `✅ 可用 · 上游 <b>${esc(d.baseUrl || '')}</b> · ${d.via === 'api-key' ? 'x-api-key' : 'Bearer'} ${esc(d.tokenMask || '')}<br><span class="muted mono xs">${esc(d.file)}${d.real && d.real !== d.file ? ' → ' + esc(d.real) : ''}</span>`
     : `<span class="st-5">❌ ${esc(d.error || '不可用')}</span><br><span class="muted mono xs">${esc(d.file || '')}</span>`;
 }
 async function saveUpstream() {
@@ -1992,6 +2038,7 @@ async function saveUpstream() {
   const body = {
     upstreamAuth: el('upAuth').value,
     oauthCredentialsPath: el('upCredPath').value.trim(),
+    inheritSettingsPath: el('upInheritPath').value.trim(),
     upstreamBaseUrl: el('upBaseUrl').value.trim(),
     upstreamProxy: el('upProxy').value.trim(),
   };

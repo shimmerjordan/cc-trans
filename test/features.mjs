@@ -4,10 +4,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { freePorts } from './_ports.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const UP = 19973;
-const PORT = 18775;
+// 端口动态分配,不写死 —— 开发机上随时有别的服务占着某个"看起来没人用"的号,
+// 撞上时测试实例只是静默 EADDRINUSE,而请求打到陌生服务、拿回莫名的 401,排查方向全跑偏
+const [UP, PORT] = await freePorts(2); // 假上游 / 代理
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-feat-'));
 const CFG = path.join(TMP, 'config.json');
 

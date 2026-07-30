@@ -34,6 +34,9 @@ services:
       # 状态目录走环境变量,不写进 config.json —— 那份配置与裸机部署共用,必须可移植
       - CC_TRANS_DATA_DIR=/app/data
       - CC_TRANS_OAUTH_CREDENTIALS=/home/node/.claude/.credentials.json
+      # inherit(级联)模式的来源文件。和上面一样显式写死 —— 容器里 PUID 可以是
+      # 任意值,uid 不在 passwd 里时家目录推断会落到别处,路径写死最省事
+      - CC_TRANS_INHERIT_SETTINGS=/home/node/.claude/settings.json
     logging:
       driver: json-file
       options:

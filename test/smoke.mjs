@@ -3,12 +3,14 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { freePorts } from './_ports.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-const UPSTREAM_PORT = 9999;
-const PROXY_PORT = 8788;
+// 端口动态分配,不写死 —— 开发机上随时有别的服务占着某个"看起来没人用"的号,
+// 撞上时测试实例只是静默 EADDRINUSE,而请求打到陌生服务、拿回莫名的 401,排查方向全跑偏
+const [UPSTREAM_PORT, PROXY_PORT] = await freePorts(2); // 假上游 / 代理
 const REAL_KEY = 'REAL-UPSTREAM-KEY';
 const CLIENT_TOKEN = 'cct-test-client-token';
 
