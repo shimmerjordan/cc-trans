@@ -174,7 +174,7 @@ open http://localhost:8787/admin      # 管理台(账号 admin + 日志里打印
 ## B. 跑自动化测试(不需要真凭证、不碰你的订阅)
 
 ```bash
-npm test        # 十套件共 537 项,全部打本地 mock 上游
+npm test        # 十一套件共 589 项,全部打本地 mock 上游
 ```
 
 | 套件 | 覆盖 |
@@ -189,6 +189,7 @@ npm test        # 十套件共 537 项,全部打本地 mock 上游
 | `test/credentials.mjs` | 订阅凭证的路径解析与写回:软链接透明(目录链/文件链)、写回不吃掉软链接、跨设备 tmp 落点、**死链要说人话**(不能报成"没登录")、默认路径不受污染的 `HOME` 影响、写回失败不留垃圾 |
 | `test/inherit.mjs` | 级联模式:**自环判定**(本机各种写法 × 端口)、来源文件三类错误各自可辨(权限/断链/缺字段,权限问题不能报成"JSON 不合法")、继承来的令牌与地址真的生效而 config.json 里的静态密钥被忽略、**改文件不重启即跟随**(令牌与地址一起换)、`API_KEY` 走 `x-api-key`、来源坏掉是 502 且修回去自愈、管理台切换与探测(切走时地址还原为声明值) |
 | `test/hops.mjs` | 环路防护:跳数读取(缺失/非法/负数/天文数字)、官方上游剥头(含 `anthropic.com.evil` 后缀伪装不误判)、超限 508 且不打上游、**真实环路收敛**(假上游把请求打回自己,验证跳数累加并在上限处断开而不是耗尽资源)、`maxHops=0` 关闭后仍递增且横幅告警、客户端伪造值不会原样透给上游 |
+| `test/params.mjs` | 请求体参数清洗:家族识别(**Opus 5 / 4.9 / Sonnet 6 等新 id 必须被认成新家族** —— 曾因两处正则漂移漏掉 opus-5,导致它的 temperature 没被清洗)、能力表自相一致、`temperature` 系清洗、effort 三条规则(模型不认该参数 / 无此档位则**降**不升 / **thinking 显式 disabled 时 xhigh·max 降到 high**)、Fable 的 thinking 特例、注入与清洗的先后顺序 |
 
 单跑某一套件:`node test/features.mjs`。
 
@@ -531,7 +532,7 @@ http://<本机IP>:8787/admin
 可改的是**登录名、备注、密码**:改登录名或密码要验当前密码,改备注不用(备注不是凭证)。「设置 → 管理台账号」是同一组字段的第二个入口,两边打同一个接口。
 - **聊天**:顶栏「💬 聊天」进 `/admin/chat` —— 管理员有全部功能,可选**任意一台设备记账**,且**不受该设备强制模型的限制**(那些 overrides 本来就是他自己配的,锁他只是让他绕路)。会话与普通用户完全隔离。
 - **模型/参数**:模型列表**不写死在代码里** —— 一键「从上游拉取并更新列表」即用订阅**实际可用的模型**替换列表并持久化到 `data/models.json`(重启保留),提示本次新增/移除了哪些;也可手动补/移除单个模型 id。各模型的 temperature/thinking/effort 规则由 **模型 id 自动推断**(上游出了新模型如 `claude-opus-4-9` 也能立刻识别到正确规则,无需改代码;完全不认识的 id 会标注「?规则推断」并按最保守规则处理)。附「可传入参数说明」。
-- **参数下发(按客户端)**:请求转发前自动改写该客户端的 `/v1/messages` 请求体,支持:**强制模型**(把客户端请求的模型改写为指定模型)、**thinking 覆盖**(adaptive/disabled,Fable 5 自动降级为移除)、**effort 注入**(`output_config.effort`)、**注入 Claude Code system 前缀**(非 Haiku 模型过订阅门禁,已有前缀则不动)、**清洗新模型不支持的参数**(Opus 4.7+/Sonnet 5/Fable 5 上删除 temperature/top_p/top_k、`thinking:enabled`→`adaptive`,避免 400)。全部默认关闭(纯透传);对合规请求(真实 Claude Code)开启也是无操作;给自研客户端接订阅时建议开启后两项。改动写回 config.json 并立即生效,日志会打印每次改写摘要。
+- **参数下发(按客户端)**:请求转发前自动改写该客户端的 `/v1/messages` 请求体,支持:**强制模型**(把客户端请求的模型改写为指定模型)、**thinking 覆盖**(adaptive/disabled,Fable 5 自动降级为移除)、**effort 注入**(`output_config.effort`)、**注入 Claude Code system 前缀**(非 Haiku 模型过订阅门禁,已有前缀则不动)、**清洗不支持的参数与组合**(新家族上删除 temperature/top_p/top_k、`thinking:enabled`→`adaptive`;并按模型逐档校正 `output_config.effort`:模型不认该参数就删掉、无此档位就降到不超过请求的最高档、**thinking 被显式 `disabled` 时把 xhigh/max 降到 high** —— 后者正是 Claude Code 内部请求(如 web 搜索那一跳)会撞的组合,不清洗就整条链路 400)。全部默认关闭(纯透传);对合规请求(真实 Claude Code)开启也是无操作;给自研客户端接订阅时建议开启后两项。改动写回 config.json 并立即生效,日志会打印每次改写摘要。
 - **实时日志**:分块持久化 + **分页浏览**(倒序、关键字/仅异常过滤)+ **按时间段删除**(N 天前 / 时间区间 / 全部)+ 自动过期;第一页可实时追加(SSE)。每行带来源 IP/UA。
 - **设置**:**本地 AI 订阅配置**(订阅 OAuth ↔ 静态密钥切换、凭证路径检测、上游地址、代理,保存即热应用)+ 修改管理台密码。
 - **每个页面一个 URL**:`/admin/overview`、`/admin/clients`、`/admin/users`、`/admin/models`、`/admin/logs`、`/admin/settings`,可直达/刷新/收藏/前进后退。

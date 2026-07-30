@@ -673,31 +673,37 @@
       </section>
       <section class="block">
         <h2>请求参数速查</h2>
-        <p class="note" style="margin-top:0">下面是经本服务转发时,各参数的实际可用性。<b>红色是会直接 400 的坑</b>,灰色是可选项。改动客户端参数下发在「客户端」页。</p>
+        <p class="note" style="margin-top:0">下面是经本服务转发时,各参数的实际可用性 —— 每一条都是拿真实上游逐个打出来的(最近核对 <span class="mono">2026-07-30</span>),不是照文档抄的。<b>红色是会直接 400 的坑</b>,灰色是可选项。改动客户端参数下发在「客户端」页。</p>
 
         <div class="param-grid">
           <div class="param must">
             <div class="pname">必填三件套</div>
             <div class="pval"><span class="mono">model</span> <span class="mono">max_tokens</span> <span class="mono">messages</span></div>
-            <div class="pnote"><span class="mono">system</span> 与 <span class="mono">tools</span> 可选。<span class="mono">stream:true</span> 正常透传,输出超过 ~16K token 建议开。</div>
+            <div class="pnote"><span class="mono">system</span> 与 <span class="mono">tools</span> 可选。<span class="mono">stream:true</span> 正常透传,输出超过 ~16K token 建议开。服务端工具(<span class="mono">web_search</span> 等)按普通 <span class="mono">tools</span> 原样透传,本服务不改动。</div>
           </div>
 
           <div class="param danger">
             <div class="pname">temperature / top_p / top_k</div>
             <div class="pval"><span class="tag err">新家族已移除</span></div>
-            <div class="pnote"><b>Opus 4.7 / 4.8 / 5、Sonnet 5、Fable 5 传了直接 400。</b>老模型(4.6 及更早、Haiku)仍可用。<br />客户端开「清洗不支持的参数」可自动删掉它们,不必改客户端代码。</div>
+            <div class="pnote"><b>Fable、Opus 4.7 / 4.8 / 5+、Sonnet 5+ 传了直接 400</b>(<span class="mono">`temperature` is deprecated for this model</span>)。老模型(4.6 及更早、Haiku)仍可用。<br />客户端开「清洗不支持的参数」会自动删掉它们,不必改客户端代码。</div>
           </div>
 
           <div class="param">
             <div class="pname mono">thinking</div>
             <div class="pval"><span class="mono">{"type":"adaptive"}</span></div>
-            <div class="pnote">新家族只认 <span class="mono">adaptive</span>。Opus 4.7+ / Sonnet 5 也接受 <span class="mono">disabled</span>;<b>Fable 5 不接受 <span class="mono">disabled</span></b>(只能省略)。老模型用 <span class="mono">enabled + budget_tokens</span>。</div>
+            <div class="pnote">新家族(Opus 4.7+/5+、Sonnet 5+)对 <span class="mono">adaptive</span> / <span class="mono">disabled</span> / <span class="mono">enabled+budget_tokens</span> <b>三种写法都接受</b>;省略 = 关。<b>Fable 不接受 <span class="mono">disabled</span></b>(只能省略,清洗会自动摘掉)。老模型用 <span class="mono">enabled + budget_tokens</span>。</div>
           </div>
 
           <div class="param">
             <div class="pname mono">output_config.effort</div>
             <div class="pval"><span class="mono">low</span> <span class="mono">medium</span> <span class="mono">high</span> <span class="mono">xhigh</span> <span class="mono">max</span></div>
-            <div class="pnote">控制思考深度,直接影响耗时与 token 消耗,默认 <span class="mono">high</span>。4.6+ 支持(4.6 无 <span class="mono">xhigh</span>);<b>Sonnet 4.5 / Haiku 4.5 不支持</b>。各模型的实际支持情况见上方目录表的 effort 列。</div>
+            <div class="pnote">控制思考深度,直接影响耗时与 token 消耗。逐档支持情况见上方目录表的 effort 列:<br />· 新家族 / Fable:五档全支持<br />· <b>4.6:只有 low/medium/high/max —— 没有 <span class="mono">xhigh</span></b>(传了报 <span class="mono">does not support effort level 'xhigh'</span>)<br />· 4.5:只到 high<br />· <b>Haiku、Sonnet 4.5:压根不认这个参数</b>(报 <span class="mono">does not support the effort parameter</span>)</div>
+          </div>
+
+          <div class="param danger">
+            <div class="pname">effort × thinking 相互约束</div>
+            <div class="pval"><span class="tag err">xhigh/max + 显式 disabled = 400</span></div>
+            <div class="pnote">新家族上,<span class="mono">thinking</span> 被<b>显式</b>设成 <span class="mono">{"type":"disabled"}</span> 时,<span class="mono">effort</span> 上限只到 <span class="mono">high</span>:<br /><span class="mono">effort 'xhigh' is not supported when thinking is disabled on this model</span><br /><b>注意「省略 thinking」不触发这条</b>,只有显式 disabled 才会。这个组合正是 Claude Code 某些内部请求(例如 web 搜索那一跳)会发出来的 —— 所以在客户端看来会变成「搜索功能坏了」,而实际是这条参数约束。<br />开「清洗不支持的参数」后本服务会自动把 effort 降到 <span class="mono">high</span> 放行(改写记录在实时日志里可查),不必改客户端。</div>
           </div>
 
           <div class="param warn-card">
@@ -707,7 +713,7 @@
           </div>
         </div>
 
-        <p class="note">自研客户端接订阅时,把「注入前缀 / 伪装 Claude Code / 清洗参数」三项都开着最稳——它们对合规请求是无操作。</p>
+        <p class="note">自研客户端接订阅时,把「注入前缀 / 伪装 Claude Code / 清洗参数」三项都开着最稳——它们对合规请求是无操作。<b>「清洗参数」这一项对所有鉴权模式都建议开着</b>:上面那些 400 与订阅无关,官方密钥同样会撞。</p>
       </section>
     </section>
 
