@@ -9,6 +9,9 @@
 // 客户端直接吃 400。所以下面对每个家族都同时断言"识别"与"清洗结果"。
 import {
   applyOverrides,
+  effectiveOverrides,
+  normalizeOverrides,
+  DEFAULT_OVERRIDES,
   inferModelMeta,
   isNewFamily,
   isFable,
@@ -165,6 +168,76 @@ function run(model, body, ov = STRIP) {
   // override 强制模型后,清洗要按【新】模型的规则走
   const r3 = run('claude-opus-4-6', { temperature: 0.5 }, { stripUnsupported: true, model: 'claude-opus-5' });
   ck('8 强制换模型后按新模型清洗', r3.temp === false && r3.obj.model === 'claude-opus-5', r3.changes.join(','));
+}
+
+// ── 9. thinking:必须尊重客户端的原生设置 ──────────────────────────────
+// VSCode / Claude CLI 里那个思考开关是用户的显式意图。中转把它改掉,用户看到的
+// 现象是"开关坏了"且毫无提示 —— 这种静默夺权比少个功能糟得多。
+{
+  const AUTO = { stripUnsupported: true, thinking: 'auto' };
+  ck('9 全局默认就是 auto', DEFAULT_OVERRIDES.thinking === 'auto', String(DEFAULT_OVERRIDES.thinking));
+  ck('9 effectiveOverrides 会带上 auto', effectiveOverrides({}).thinking === 'auto');
+  ck('9 normalizeOverrides 接受 auto', normalizeOverrides({ thinking: 'auto' }).thinking === 'auto');
+  ck('9 normalizeOverrides 拒绝乱值', normalizeOverrides({ thinking: 'nonsense' }).thinking === undefined);
+
+  // 客户端传了什么就是什么
+  const keepDisabled = run('claude-opus-5', { thinking: { type: 'disabled' } }, AUTO);
+  ck('9 auto: 客户端的 disabled 被原样保留', keepDisabled.thinking === 'disabled', keepDisabled.changes.join(','));
+  const keepAdaptive = run('claude-opus-5', { thinking: { type: 'adaptive' } }, AUTO);
+  ck('9 auto: 客户端的 adaptive 被原样保留', keepAdaptive.thinking === 'adaptive');
+
+  // 只在客户端没传时补,而且要看模型支不支持
+  const fill = run('claude-opus-5', {}, AUTO);
+  ck('9 auto: 未传 + 支持 → 补 adaptive', fill.thinking === 'adaptive', fill.changes.join(','));
+  ck('9 auto: 补的时候写进 changes(日志可查)', fill.changes.some((c) => /未指定/.test(c)));
+  for (const id of ['claude-haiku-4-5-20251001', 'claude-opus-4-5', 'claude-sonnet-4-5']) {
+    const r = run(id, {}, AUTO);
+    // 实测这些模型会 400 `adaptive thinking is not supported on this model`,
+    // 无条件补就是把一个修复变成新 bug
+    ck(`9 auto: 未传 + ${id} 不支持 adaptive → 不补`, r.hasThinking === false, JSON.stringify(r.changes));
+  }
+  const unknown = run('claude-brandnew-9', {}, AUTO);
+  ck('9 auto: 未知模型保守不补', unknown.hasThinking === false);
+  const o46 = run('claude-opus-4-6', {}, AUTO);
+  ck('9 auto: 4.6 支持 → 补', o46.thinking === 'adaptive');
+
+  // 强制档位仍然能覆盖客户端(管理员显式选了才覆盖)
+  const forceA = run('claude-opus-5', { thinking: { type: 'disabled' } }, { stripUnsupported: true, thinking: 'adaptive' });
+  ck('9 强制 adaptive 覆盖客户端的 disabled', forceA.thinking === 'adaptive', forceA.changes.join(','));
+  const forceD = run('claude-opus-5', { thinking: { type: 'adaptive' } }, { stripUnsupported: true, thinking: 'disabled' });
+  ck('9 强制 disabled 覆盖客户端的 adaptive', forceD.thinking === 'disabled', forceD.changes.join(','));
+  const forceDFable = run('claude-fable-5', { thinking: { type: 'adaptive' } }, { stripUnsupported: true, thinking: 'disabled' });
+  ck('9 强制 disabled 在 Fable 上改为移除', forceDFable.hasThinking === false, forceDFable.changes.join(','));
+
+  // 与 effort 规则协同:保留 disabled 的同时把 xhigh 降下来
+  const combo = run('claude-opus-5', { thinking: { type: 'disabled' }, output_config: { effort: 'xhigh' } }, AUTO);
+  ck('9 auto + 客户端 disabled + xhigh → 保 disabled、降 effort', combo.thinking === 'disabled' && combo.effort === 'high', combo.changes.join(','));
+  // 补了 adaptive 之后,xhigh 就不该被降(adaptive 下它是合法的)
+  const combo2 = run('claude-opus-5', { output_config: { effort: 'xhigh' } }, AUTO);
+  ck('9 auto 补 adaptive 后 xhigh 保持不动', combo2.thinking === 'adaptive' && combo2.effort === 'xhigh', combo2.changes.join(','));
+
+  // adaptive 支持矩阵:逐个锁住实测结论(2026-07-30 真实上游打过)。
+  // 不用"描述串里有没有 adaptive 这个词"来对账 —— 不支持的那几条描述恰好写着
+  // 「不支持 adaptive」,关键词匹配会把它判成支持,那种断言只会自欺。
+  const ADAPTIVE_EXPECT = {
+    'claude-fable-5': true,
+    'claude-opus-5': true,
+    'claude-opus-4-8': true,
+    'claude-sonnet-5': true,
+    'claude-opus-4-6': true,
+    'claude-sonnet-4-6': true,
+    'claude-opus-4-5': false,
+    'claude-sonnet-4-5': false,
+    'claude-sonnet-4': false,
+    'claude-haiku-4-5-20251001': false,
+    'claude-brandnew-9': false, // 未知模型:保守
+  };
+  let matrixOk = true;
+  for (const [id, want] of Object.entries(ADAPTIVE_EXPECT)) {
+    const got = inferModelMeta(id).thinkingAdaptive;
+    if (got !== want) { matrixOk = false; console.log(`  ${id}: thinkingAdaptive=${got},实测应为 ${want}`); }
+  }
+  ck('9 adaptive 支持矩阵与实测一致', matrixOk);
 }
 
 const fails = results.filter((x) => !x).length;

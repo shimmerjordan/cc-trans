@@ -41,10 +41,21 @@ const CFG_OFF = path.join(TMP, 'config-off.json');
 const CFG_LOOP = path.join(TMP, 'config-loop.json');
 
 // 普通假上游:记录收到的头
-const seen = { headers: null, hits: 0 };
+const seen = { headers: null, hits: 0, failNext: 0, failStatus: 529 };
 const up = http.createServer((req, res) => {
   seen.headers = req.headers;
   seen.hits++;
+  // 前 failNext 次故意回过载状态码,用来验证 cc-trans 会自己退避重试
+  if (seen.failNext > 0) {
+    seen.failNext--;
+    const chunks0 = [];
+    req.on('data', (c) => chunks0.push(c));
+    req.on('end', () => {
+      res.writeHead(seen.failStatus, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }));
+    });
+    return;
+  }
   // 先注册再消费:先 resume() 再挂 'end' 有竞态,小请求体可能在挂监听前就读完了,
   // 那样这个 handler 永远不回响应,表现是整个测试静默挂死(踩过一次)
   const chunks = [];
@@ -167,6 +178,43 @@ async function main() {
     ck('2 错误里提示常见成因(容器/互指)', /宿主|互相/.test(bodyOver.error.message));
     ck('2 超限请求没有打到上游', seen.hits === hitsBefore, `hits ${hitsBefore} → ${seen.hits}`);
     ck('2 刚好在上限内仍放行', (await msg({ [HOPS_HEADER]: String(MAX_HOPS - 1) })).status === 200);
+
+    // ── 6. 上游过载:cc-trans 自己退避重试,客户端不该看到 529 ──
+    // 529 是官方明确说"临时、应当指数退避重试"的状态码。原样透传只是把重试的活
+    // 推给客户端,而客户端重试一样会撞;更糟的是 Claude Code 会把它显示成
+    // "Repeated 529 Overloaded errors",看不出是中转没做重试。
+    {
+      seen.failNext = 1; // 第一次 529,第二次正常
+      const t0 = Date.now();
+      const r = await msg();
+      const waited = Date.now() - t0;
+      ck('6 上游先 529:客户端最终拿到 200', r.status === 200, String(r.status));
+      ck('6 确实重试了(上游被打了两次)', seen.hits >= 2, 'hits=' + seen.hits);
+      ck('6 重试前有退避(不是立刻重打)', waited >= 900, waited + 'ms');
+
+      seen.failNext = 99; // 一直 529 → 重试用尽后如实透传
+      seen.hits = 0;
+      const r2 = await msg();
+      ck('6 一直 529:重试用尽后透传 529 给客户端', r2.status === 529, String(r2.status));
+      ck('6 总尝试次数受 UPSTREAM_ATTEMPTS 约束(3 次)', seen.hits === 3, 'hits=' + seen.hits);
+      seen.failNext = 0;
+
+      // 503 同样重试(上游/链路里的另一台 cc-trans 暂时不可用)
+      seen.failStatus = 503;
+      seen.failNext = 1;
+      seen.hits = 0;
+      const r3 = await msg();
+      ck('6 503 也会重试并最终成功', r3.status === 200 && seen.hits >= 2, `${r3.status} hits=${seen.hits}`);
+
+      // 429 刻意【不】重试:那是配额用尽,重试无益且会让限流更凶
+      seen.failStatus = 429;
+      seen.failNext = 1;
+      seen.hits = 0;
+      const r4 = await msg();
+      ck('6 429 不重试,直接透传', r4.status === 429 && seen.hits === 1, `${r4.status} hits=${seen.hits}`);
+      seen.failStatus = 529;
+      seen.failNext = 0;
+    }
 
     // ── 3. 真实环路:假上游把请求打回自己,跳数必须收敛 ──
     // 未防护时这里会一直转到端口/内存耗尽;防护生效则在上限处断开并把 508 沿链路传回。

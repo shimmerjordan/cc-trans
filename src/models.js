@@ -5,6 +5,10 @@
 //     → `temperature` is deprecated for this model.
 //   - thinking: 新家族 adaptive / disabled / enabled+budget_tokens 都接受
 //     (旧注释说"只认 adaptive"并不准确);Fable 不接受 disabled,只能省略
+//   - **adaptive 只有 4.6 及以后支持**。Haiku / Opus 4.5 / Sonnet 4.5 传了直接
+//     → adaptive thinking is not supported on this model.
+//     所以 thinking:'auto' 补缺省值时必须看 thinkingAdaptive,不能无条件补 —— 
+//     无条件补就是把一个修复变成新的 400
 //   - effort: output_config.effort。Haiku / Sonnet 4.5 压根不认这个参数
 //     → This model does not support the effort parameter.
 //     4.6 认 low/medium/high/max 但【没有 xhigh】
@@ -70,7 +74,8 @@ const CAPABILITY_RULES = [
     re: FABLE_RE,
     tier: 'Fable',
     temperature: false,
-    thinking: '常开(只能省略或 adaptive,disabled 会 400)',
+    thinking: '常开(adaptive / enabled+budget;disabled 会 400,清洗会摘掉)',
+    thinkingAdaptive: true,
     effortLevels: ALL_EFFORT,
     // thinking 恒非 disabled(disabled 会被清洗掉),所以没有这条额外上限
     effortCapNoThinking: null,
@@ -81,6 +86,7 @@ const CAPABILITY_RULES = [
     tier: null, // 由 tierOf 推断
     temperature: false,
     thinking: 'adaptive / disabled / enabled+budget 都接受(省略=关)',
+    thinkingAdaptive: true,
     effortLevels: ALL_EFFORT,
     effortCapNoThinking: 'high', // 实测:显式 disabled 时 xhigh/max 会 400
     note: '',
@@ -90,6 +96,7 @@ const CAPABILITY_RULES = [
     tier: null,
     temperature: true,
     thinking: 'adaptive(推荐)/ enabled+budget(弃用)',
+    thinkingAdaptive: true,
     effortLevels: NO_XHIGH,
     effortCapNoThinking: null,
     note: '',
@@ -98,7 +105,8 @@ const CAPABILITY_RULES = [
     re: /opus-4-5/,
     tier: 'Opus',
     temperature: true,
-    thinking: 'adaptive / enabled+budget',
+    thinking: 'enabled+budget_tokens(实测不支持 adaptive)',
+    thinkingAdaptive: false,
     effortLevels: ['low', 'medium', 'high'],
     effortCapNoThinking: null,
     note: '旧款',
@@ -107,7 +115,8 @@ const CAPABILITY_RULES = [
     re: /haiku/,
     tier: 'Haiku',
     temperature: true,
-    thinking: 'enabled+budget_tokens',
+    thinking: 'enabled+budget_tokens(实测不支持 adaptive)',
+    thinkingAdaptive: false,
     effortLevels: [], // 空数组 = 明确不支持,传了会 400
     effortCapNoThinking: null,
     note: '最快最省;订阅门禁豁免(免 CC system 前缀)',
@@ -116,7 +125,8 @@ const CAPABILITY_RULES = [
     re: /sonnet-4-5|sonnet-4(?!-)/,
     tier: 'Sonnet',
     temperature: true,
-    thinking: 'enabled+budget_tokens',
+    thinking: 'enabled+budget_tokens(实测不支持 adaptive)',
+    thinkingAdaptive: false,
     effortLevels: [],
     effortCapNoThinking: null,
     note: '旧款',
@@ -130,6 +140,8 @@ const FALLBACK_RULE = {
   tier: '其它',
   temperature: true,
   thinking: '未知(建议留空不传)',
+  // 未知模型保守按【不支持】处理:auto 模式宁可不补 adaptive,也不能补出一个 400
+  thinkingAdaptive: false,
   effortLevels: null,
   effortCapNoThinking: null,
   note: '未识别的模型,参数规则为保守推断',
@@ -162,6 +174,7 @@ export function inferModelMeta(id) {
         tier: r.tier || tierOf(s),
         temperature: r.temperature,
         thinking: r.thinking,
+        thinkingAdaptive: !!r.thinkingAdaptive,
         effortLevels: r.effortLevels,
         effortCapNoThinking: r.effortCapNoThinking,
         effort: effortLabel(r.effortLevels, r.effortCapNoThinking), // 给前端展示
@@ -217,17 +230,36 @@ export function applyOverrides(obj, overrides) {
     obj.model = ov.model;
   }
   const model = obj.model;
+  const meta = inferModelMeta(model);
 
-  // 2) thinking 覆盖(fable 不接受 disabled → 直接移除该字段)
-  if (ov.thinking === 'adaptive') {
+  // 2) thinking。四态语义,默认是 'auto':
+  //    'auto'      —— **尊重客户端**:它传了什么就是什么,一个字不改;只在它【没传】
+  //                   且该模型支持 adaptive 时,补一个 {type:'adaptive'}
+  //    'adaptive'  —— 强制 adaptive(覆盖客户端的显式设置)
+  //    'disabled'  —— 强制关闭(覆盖客户端的显式设置)
+  //    未设置      —— 完全不管,纯透传
+  //
+  // 默认为什么是 auto:VSCode / Claude CLI 里那个 thinking 开关是用户的显式意图。
+  // 中转把它改掉,用户看到的现象是"开关坏了",而且没有任何提示 —— 这种静默夺权
+  // 比少一个功能糟得多。只有管理员显式选了 adaptive/disabled 才该覆盖。
+  //
+  // 为什么补 adaptive 还要看模型:实测 Haiku / Opus 4.5 / Sonnet 4.5 会直接
+  // 400 `adaptive thinking is not supported on this model`(4.6 及以后才支持)。
+  // 无条件补就是把一个修复变成新 bug,所以不支持的模型宁可不补。
+  if (ov.thinking === 'auto') {
+    if (!('thinking' in obj) && meta.thinkingAdaptive) {
+      obj.thinking = { type: 'adaptive' };
+      changes.push('+thinking=adaptive(客户端未指定)');
+    }
+  } else if (ov.thinking === 'adaptive') {
     obj.thinking = { type: 'adaptive' };
-    changes.push('thinking=adaptive');
+    changes.push('thinking=adaptive(强制)');
   } else if (ov.thinking === 'disabled') {
     if (isFable(model)) {
       if ('thinking' in obj) { delete obj.thinking; changes.push('-thinking(fable不认disabled)'); }
     } else {
       obj.thinking = { type: 'disabled' };
-      changes.push('thinking=disabled');
+      changes.push('thinking=disabled(强制)');
     }
   }
 
@@ -256,7 +288,7 @@ export function applyOverrides(obj, overrides) {
     // 4b) effort。三种会 400 的情形,都在这里摆平。
     //     注意必须放在 thinking 改写【之后】—— 下面第三条要看 thinking 的最终形态。
     //     也适用于老模型(Haiku 压根不认 effort),所以不在 isNewFamily 分支里。
-    applyEffortRules(obj, model, changes);
+    applyEffortRules(obj, meta, changes);
   }
 
   // 5) 订阅门禁:非 Haiku 模型注入 Claude Code system 前缀
@@ -273,11 +305,11 @@ export function applyOverrides(obj, overrides) {
 // 而 thinking 是它同样显式写的。两个显式意图撞上了官方约束时,降 effort 是损失最小
 // 的一侧 —— 官方的报错自己也是这么建议的("Use effort 'high' or below")。
 // 反过来删掉 thinking 会让一个明确要求"别思考"的请求开始思考,更慢更贵,意外更大。
-function applyEffortRules(obj, model, changes) {
+function applyEffortRules(obj, meta, changes) {
   const oc = obj.output_config;
   const effort = oc && oc.effort;
   if (!effort) return;
-  const { effortLevels, effortCapNoThinking } = inferModelMeta(model);
+  const { effortLevels, effortCapNoThinking } = meta;
   if (effortLevels === null) return; // 未知模型:不猜,原样透传
 
   // 一、该模型压根不认这个参数(Haiku / Sonnet 4.5)
@@ -365,6 +397,9 @@ export const DEFAULT_OVERRIDES = Object.freeze({
   injectClaudeCodeSystem: true,
   spoofClaudeCode: true,
   stripUnsupported: true,
+  // 'auto' = 尊重客户端的 thinking 设置,只在它没传时补 adaptive(见 applyOverrides 第 2 步)。
+  // 不默认成 'adaptive':那会覆盖 VSCode / CLI 里的开关,用户会以为开关失灵了。
+  thinking: 'auto',
 });
 const SUBSCRIPTION_ONLY_DEFAULTS = ['injectClaudeCodeSystem', 'spoofClaudeCode'];
 
@@ -382,7 +417,7 @@ export function normalizeOverrides(raw) {
   const out = {};
   // A 兼容性
   if (o.model && typeof o.model === 'string') out.model = o.model.trim();
-  if (['adaptive', 'disabled'].includes(o.thinking)) out.thinking = o.thinking;
+  if (['auto', 'adaptive', 'disabled'].includes(o.thinking)) out.thinking = o.thinking;
   if (['low', 'medium', 'high', 'xhigh', 'max'].includes(o.effort)) out.effort = o.effort;
   for (const k of ['injectClaudeCodeSystem', 'stripUnsupported', 'spoofClaudeCode']) {
     if (typeof o[k] === 'boolean') out[k] = o[k]; // 显式 true / false 都记录

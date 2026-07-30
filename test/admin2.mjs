@@ -35,11 +35,36 @@ const mkCreds = (p, type) => fs.writeFileSync(p, JSON.stringify({
 mkCreds(CREDS, 'team');
 mkCreds(CREDS2, 'max');
 
+// 订阅用量的【真实响应结构】(2026-07-30 从官方抓的形状,数值改成固定值便于断言)。
+// 关键点:模型细分用量藏在 limits[].scope.model.display_name 里,而顶层那些
+// seven_day_opus/seven_day_sonnet 实测全是 null —— 照着顶层键找细分会一无所获。
+const USAGE_FIXTURE = {
+  five_hour: { utilization: 48.0, resets_at: '2026-07-30T09:59:59+00:00' },
+  seven_day: { utilization: 44.0, resets_at: '2026-08-02T02:59:59+00:00' },
+  seven_day_opus: null,
+  seven_day_sonnet: null,
+  extra_usage: {
+    is_enabled: true, monthly_limit: 5000, used_credits: 5008.0, utilization: 100.0,
+    currency: 'USD', decimal_places: 2, disabled_reason: null, user_disabled: false,
+    spend_limit_reached: false, credits_ever_enabled: true,
+  },
+  limits: [
+    { kind: 'session', group: 'session', percent: 48, severity: 'normal', resets_at: '2026-07-30T09:59:59+00:00', scope: null, is_active: true },
+    { kind: 'weekly_all', group: 'weekly', percent: 44, severity: 'normal', resets_at: '2026-08-02T02:59:59+00:00', scope: null, is_active: false },
+    { kind: 'weekly_scoped', group: 'weekly', percent: 13, severity: 'normal', resets_at: '2026-08-02T03:00:00+00:00', scope: { model: { id: null, display_name: 'Fable' }, surface: null }, is_active: false },
+  ],
+  spend: {
+    used: { amount_minor: 5008, currency: 'USD', exponent: 2 },
+    limit: { amount_minor: 5000, currency: 'USD', exponent: 2 },
+    percent: 100, severity: 'critical', enabled: true, disabled_reason: null,
+  },
+};
 const up = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
     res.writeHead(200, { 'content-type': 'application/json' });
+    if ((req.url || '').startsWith('/api/oauth/usage')) return res.end(JSON.stringify(USAGE_FIXTURE));
     res.end(JSON.stringify({ id: 'm1', model: 'claude-opus-4-8', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 2 } }));
   });
 });
@@ -90,6 +115,27 @@ async function main() {
     ck('4 切订阅但凭证不可用 → 拒绝并保持原状', badSwitch.ok === false && !!badSwitch.error);
     const backOauth = await (await fetch(base + '/admin/api/upstream', { method: 'POST', headers: H, body: JSON.stringify({ upstreamAuth: 'oauth', oauthCredentialsPath: CREDS }) })).json();
     ck('4 切回订阅模式', backOauth.ok && backOauth.state.upstreamAuth === 'oauth' && backOauth.state.credentials.subscriptionType === 'team');
+
+    // ── 6 订阅用量归一化 ──
+    // 面板曾经因为解析的是【过时字段】(limit/remaining,官方早就换成 utilization/status)
+    // 而永远显示"暂无数据" —— 头明明抓到了、数据就躺在 metrics 里。所以这里连
+    // "字段名对不对"一起锁住,而不只是"接口通不通"。
+    const usage = await (await fetch(base + '/admin/api/usage?force=1', { headers: H })).json();
+    ck('6 用量接口可用', usage.available === true, JSON.stringify(usage.reason || ''));
+    ck('6 顶层窗口被收下(five_hour/seven_day/extra_usage)', (usage.windows || []).length === 3, String((usage.windows || []).length));
+    ck('6 limits 三条都在', (usage.limits || []).length === 3, String((usage.limits || []).length));
+    const scoped = (usage.limits || []).find((l) => l.kind === 'weekly_scoped');
+    ck('6 **模型细分用量带出模型名**', !!scoped && scoped.model === 'Fable', JSON.stringify(scoped || null));
+    ck('6 模型细分的百分比正确', !!scoped && scoped.percent === 13, scoped && String(scoped.percent));
+    const sess = (usage.limits || []).find((l) => l.kind === 'session');
+    ck('6 当前生效的窗口被标出来', !!sess && sess.isActive === true);
+    ck('6 severity 原样带出(前端按它上色,比按百分比猜准)', !!sess && sess.severity === 'normal');
+    // 金额:官方用 minor unit + 指数,5008/10^2 = $50.08。算错会把 $50 显示成 $5008
+    ck('6 spend 金额换算正确($50.08 / $50.00)', usage.spend && usage.spend.used.amount === 50.08 && usage.spend.limit.amount === 50, JSON.stringify(usage.spend));
+    ck('6 spend 的 critical 被带出(529 真凶)', usage.spend && usage.spend.percent === 100 && usage.spend.severity === 'critical');
+    // extra_usage 的指数字段叫 decimal_places(不是 exponent),照抄 spend 那套会算错
+    ck('6 extraUsage 金额也换算正确', usage.extraUsage && usage.extraUsage.used.amount === 50.08 && usage.extraUsage.limit.amount === 50, JSON.stringify(usage.extraUsage));
+    ck('6 extraUsage 利用率 100%', usage.extraUsage && usage.extraUsage.utilization === 100);
 
     // ── 7 异常请求标注来源 ──
     // 无令牌 + 错误令牌(带自定义 UA),应记为异常来源并带 IP/UA/路径

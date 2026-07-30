@@ -896,6 +896,12 @@ function ts() {
 
 // 上游网络层瞬时故障的重试次数(仅在客户端尚未收到任何字节时重试,对客户端完全透明)
 const UPSTREAM_ATTEMPTS = 3;
+// 首字节前值得整体重试的上游状态码。
+//   529 = Anthropic 的 Overloaded,官方文档明确说它是临时的、应当指数退避重试
+//   503 = 上游(或链路中的另一台 cc-trans)暂时不可用,同理
+// 刻意不含 429(配额用尽,重试只会让限流更凶)和 5xx 其余项(可能是确定性错误,
+// 重试三次只是把同一个失败拖长三倍)。
+const RETRYABLE_UPSTREAM_STATUS = new Set([503, 529]);
 
 // SSE 静默保活:上游超过 SSE_KEEPALIVE_MS 没吐字节,就往客户端写一个 SSE 注释帧(客户端忽略),
 // 保证每隔一段就有字节穿过 frp/NAT/中转的每一跳,不让空闲超时掐断长思考期间的连接。
@@ -1144,9 +1150,12 @@ async function handleProxy(req, res, started) {
     recordMetric(req, started, status, clientName, sniffer.usage(), model, effectiveModel);
   };
 
+  // 下一次重试前等多久。连接失败用短退避(链路抖动,马上再试就行);
+  // 上游过载(529)用指数退避 —— 容量问题需要给对面一点时间,300ms 后再打基本还是过载。
+  let backoffMs = 0;
   for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt++) {
     if (attempt > 1) {
-      await sleep(300 * (attempt - 1));
+      await sleep(backoffMs);
       if (clientGone) return finish(`(客户端已断开·首字节前 ${diag()})`);
       try {
         await applyUpstreamAuth(headers); // 订阅 token 可能刚轮换,重试前重新取
@@ -1166,6 +1175,7 @@ async function handleProxy(req, res, started) {
     } catch (err) {
       if (clientGone) return finish(`(客户端已断开·首字节前 ${diag()})`);
       if (attempt < UPSTREAM_ATTEMPTS) {
+        backoffMs = 300 * attempt;
         log(`${req.method} ${req.url} 上游连接失败,重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1}: ${err.message} [${clientName}]`);
         continue;
       }
@@ -1180,6 +1190,31 @@ async function handleProxy(req, res, started) {
       if (k.startsWith('anthropic-ratelimit-')) rl[k] = v;
     });
     if (Object.keys(rl).length) metrics.setRateLimit({ ts: Date.now(), headers: rl });
+
+    // ── 上游过载:首字节前整体重试,客户端完全感知不到 ──
+    // 529 是官方明确说"临时、应当指数退避重试"的状态码,原样透传只是把重试的活
+    // 推给客户端(而客户端重试一样会撞)。这里替它做掉。
+    // 只在【首字节前】重试:已经开始回传就不能重来了(现有 wroteHead 正是为此)。
+    // 注意 429 刻意【不】重试 —— 那是配额用尽,重试无益且会让限流更凶。
+    if (RETRYABLE_UPSTREAM_STATUS.has(upstreamRes.status) && attempt < UPSTREAM_ATTEMPTS && !wroteHead) {
+      // 必须把响应体丢掉,否则这条连接不会归还连接池(泄漏到耗尽为止)
+      try {
+        await upstreamRes.body?.cancel();
+      } catch {
+        /* 已经没有 body 或已关闭 */
+      }
+      backoffMs = Math.min(1000 * 2 ** (attempt - 1), 8000); // 1s、2s、…最多 8s
+      log(`${req.method} ${req.url} ${upstreamRes.status} 上游过载,${backoffMs}ms 后重试 ${attempt}/${UPSTREAM_ATTEMPTS - 1} [${clientName}]`);
+      continue;
+    }
+    // 重试用尽仍是过载:如实透传给客户端,并在日志里点出最可能的成因 ——
+    // 529 的官方文案只说 "Overloaded",看不出可能是自己账户的额外用量额度满了。
+    if (RETRYABLE_UPSTREAM_STATUS.has(upstreamRes.status)) {
+      log(
+        `${req.method} ${req.url} ${upstreamRes.status} 上游过载,已重试 ${UPSTREAM_ATTEMPTS - 1} 次仍未通过 [${clientName}]` +
+          ` —— 若持续出现,请看管理台「订阅用量」:额外用量额度(credits)耗尽时,主配额有余量也会被拒`,
+      );
+    }
 
     if (!upstreamRes.body) {
       writeHeadOnce();

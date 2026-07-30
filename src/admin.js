@@ -160,14 +160,59 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
       const text = await r.text();
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 120)}`);
       const j = JSON.parse(text);
-      // 归一化:凡是带 utilization 的窗口都收进来(five_hour / seven_day / seven_day_opus …)
+      // 归一化。三处数据源各有各的用处,都要收(实测 2026-07-30 的真实响应):
+      //   · limits[]  —— 最全的一处:含【模型细分】窗口(scope.model.display_name,如 "Fable")
+      //                  与官方自己给的 severity。顶层那些 seven_day_opus/seven_day_sonnet
+      //                  在实测账号上全是 null,细分数据其实只在这个数组里。
+      //   · 顶层带 utilization 的对象 —— 老结构(five_hour/seven_day/extra_usage),继续收着兜底。
+      //   · spend —— 额外用量额度(credits)的消费上限。**它满了会让主配额还有余量时也吃 529**,
+      //              最容易被忽略、却最要紧,所以单独拎出来给前端做醒目告警。
       const windows = [];
       for (const [k, v] of Object.entries(j)) {
         if (v && typeof v === 'object' && typeof v.utilization === 'number') {
           windows.push({ key: k, utilization: v.utilization, resetsAt: v.resets_at || null });
         }
       }
-      const data = { available: true, fetchedAt: Date.now(), windows, raw: j };
+      const limits = (Array.isArray(j.limits) ? j.limits : []).map((l) => ({
+        kind: l.kind || '',
+        group: l.group || '',
+        percent: Number(l.percent) || 0,
+        severity: l.severity || 'normal',
+        resetsAt: l.resets_at || null,
+        isActive: !!l.is_active,
+        // 模型细分窗口把模型名带出来。id 实测常为 null,display_name 才是 "Fable" 这种可读名
+        model: l.scope && l.scope.model ? l.scope.model.display_name || l.scope.model.id || null : null,
+        surface: l.scope ? l.scope.surface || null : null,
+      }));
+      // 金额:官方用 minor unit + 指数(5008 / 10^2 = $50.08)。两个对象的指数字段名还不一样。
+      const money = (m, expKey = 'exponent') => {
+        if (!m || typeof m.amount_minor !== 'number') return null;
+        const exp = Number(m[expKey]);
+        return {
+          amount: m.amount_minor / 10 ** (Number.isFinite(exp) ? exp : 2),
+          currency: m.currency || 'USD',
+        };
+      };
+      const sp = j.spend;
+      const spend = sp ? {
+        used: money(sp.used),
+        limit: money(sp.limit),
+        percent: Number(sp.percent) || 0,
+        severity: sp.severity || 'normal',
+        enabled: !!sp.enabled,
+        disabledReason: sp.disabled_reason || null,
+      } : null;
+      const eu = j.extra_usage;
+      const extraUsage = eu ? {
+        isEnabled: !!eu.is_enabled,
+        utilization: Number(eu.utilization) || 0,
+        // 这里的指数字段叫 decimal_places(不是 exponent),别照抄 spend 那套
+        used: money({ amount_minor: eu.used_credits, currency: eu.currency, decimal_places: eu.decimal_places }, 'decimal_places'),
+        limit: money({ amount_minor: eu.monthly_limit, currency: eu.currency, decimal_places: eu.decimal_places }, 'decimal_places'),
+        spendLimitReached: !!eu.spend_limit_reached,
+        disabledReason: eu.disabled_reason || null,
+      } : null;
+      const data = { available: true, fetchedAt: Date.now(), windows, limits, spend, extraUsage };
       usageCache = { ts: Date.now(), data };
       return { ...data, cachedTtlMs: USAGE_TTL_MS };
     } catch (err) {
