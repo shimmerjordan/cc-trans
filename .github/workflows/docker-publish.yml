@@ -4,8 +4,12 @@
 # 触发:
 #   1) 打版本标签(推荐):git tag v0.2.0 && git push origin v0.2.0
 #      → 发布 0.2.0 / 0.2 / latest / sha-xxxxxxx
-#   2) 手动运行(Actions 页 Run workflow):只发 sha-xxxxxxx,不动 latest —— 适合验证流水线本身
-#   平时推 main 【不会】发布镜像,避免每次提交都动 latest。
+#   2) 手动运行(Actions 页 Run workflow):发 latest + sha-xxxxxxx
+#      → 用途:改完代码想立刻让各机器 `docker compose pull` 拿到,又还不想打版本号
+#      → ⚠️ 它会把 latest 指向这次构建,所有拉 latest 的部署下次 pull 都会跟着走
+#      → 只有在 main 上手动运行才动 latest(见下方 enable 条件):从功能分支跑
+#        流水线是为了验证流水线本身,把 latest 指到未合并的代码几乎不会是本意
+#   平时推 main 【不会】发布镜像 —— 想发就手动运行一次,把时机攥在自己手里。
 #
 # 用仓库自带的 GITHUB_TOKEN 推送,不需要配任何 secret。
 #
@@ -16,7 +20,7 @@ name: Publish Docker image to GHCR
 on:
   push:
     tags: ['v*'] # 只在打版本标签时发布
-  workflow_dispatch: # 手动跑一次(只产出 sha- 标签,不影响 latest)
+  workflow_dispatch: # 手动跑一次(在 main 上跑会同时更新 latest)
 
 env:
   REGISTRY: ghcr.io
@@ -49,9 +53,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # 生成 tag:
-      #   打 v1.2.3       → 1.2.3、1.2、latest、sha-xxxxxxx
-      #   打 v1.2.3-rc.1  → 1.2.3-rc.1、sha-xxxxxxx(预发布不动 latest)
-      #   手动运行(无 tag)→ 只有 sha-xxxxxxx(semver 不产出,latest=auto 因此不加)
+      #   打 v1.2.3            → 1.2.3、1.2、latest、sha-xxxxxxx
+      #   打 v1.2.3-rc.1       → 1.2.3-rc.1、sha-xxxxxxx(预发布【不】动 latest)
+      #   在 main 上手动运行    → latest、sha-xxxxxxx
+      #   在其它分支手动运行    → 只有 sha-xxxxxxx
+      #
+      # latest 由两条独立规则产出,各管一段,互不干扰:
+      #   · flavor 的 latest=auto —— 只在有 semver 且非预发布时加。预发布保护就靠它,
+      #     所以【不能】改成 latest=true(那会让 rc 也变成 latest)。
+      #   · 下面那条 type=raw —— 补上手动运行这一路(它没有 semver,auto 管不到)。
+      #   两条都命中时 metadata-action 会去重,不会产出重复 tag。
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -63,6 +74,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.ref_name == (github.event.repository.default_branch || 'main') }}
           labels: |
             org.opencontainers.image.title=cc-trans
             org.opencontainers.image.description=零依赖 Anthropic API 反向代理(转发本机 Claude 订阅)+ Web 管理台
@@ -91,9 +103,17 @@ jobs:
           push-to-registry: true
 
       - name: Summary
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           echo "### 镜像已发布 🎉" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "$TAGS" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "拉取部署:\`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          # 有没有更新 latest 要照实说 —— 预发布和非默认分支的手动运行都不动它,
+          # 无条件写"pull latest"会让人以为各机器 pull 一下就能拿到本次构建。
+          if printf '%s\n' "$TAGS" | grep -q ':latest$'; then
+            echo "本次**已更新 \`latest\`**,各机器 \`docker compose pull && docker compose up -d\` 即可拿到。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "本次**未更新 \`latest\`**(预发布标签,或在非默认分支上手动运行)——请按上面的精确 tag 拉取。" >> $GITHUB_STEP_SUMMARY
+          fi

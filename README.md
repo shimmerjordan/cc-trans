@@ -25,7 +25,7 @@ Anthropic API 反向代理。让**其他电脑**上的 Claude Code 把请求发�
 
 # 🚀 快速部署(Docker Compose + GHCR,推荐)
 
-镜像由 GitHub Actions 在**打版本标签时**构建并发布到 **GHCR(GitHub Container Registry)**:`ghcr.io/shimmerjordan/cc-trans`。
+镜像由 GitHub Actions 构建并发布到 **GHCR(GitHub Container Registry)**:`ghcr.io/shimmerjordan/cc-trans`。触发时机有两个:**打版本标签**(`v*`),或在默认分支上**手动运行一次** workflow —— 两者都会更新 `latest`,所以改完代码想让各机器立刻拉到、又还不想打版本号时,手动跑一次即可。
 部署只需**下载一个 compose 文件 + 一条命令**,不用 clone、不用本地构建。**首次启动自动生成配置、客户端令牌和管理员密码。**
 
 支持 `linux/amd64` 与 `linux/arm64`(x86 服务器、树莓派、ARM 云主机、Apple Silicon 都能直接跑)。
@@ -211,6 +211,8 @@ docker compose -f docker-compose.build.yml logs -f      # 首启令牌 + 管理�
 curl http://localhost:8787/health
 ```
 
+每次 `--build` 都把构建产物打成 **`cc-trans:latest`**,所以 `docker run cc-trans`(不写标签时 Docker 默认找 `:latest`)拿到的总是最新一次构建。它与 GHCR 那个 `ghcr.io/shimmerjordan/cc-trans:latest` 是两个不同的镜像(前者无 registry 前缀,解析为 `docker.io/library/cc-trans`),`docker images` 里 REPOSITORY 列可区分,不会互相覆盖。
+
 <details>
 <summary>要改端口 / 换镜像源 / 开代理支持</summary>
 
@@ -362,13 +364,13 @@ git push origin v0.2.0
 
 顺手建议:在同一页把包 **Link** 到本仓库(Connect repository),这样包页面会显示源码与 README。
 
-发布结果可在 Actions 运行摘要里看到具体 tag;镜像地址:
+发布结果可在 Actions 运行摘要里看到具体 tag,并会明确写出**本次是否更新了 `latest`**(预发布标签 `v1.2.3-rc.1`、以及在非默认分支上手动运行,都不会动 `latest`)。镜像地址:
 
 ```
-ghcr.io/shimmerjordan/cc-trans:latest         # 最新正式版(打 v* 标签时更新)
+ghcr.io/shimmerjordan/cc-trans:latest         # 打 v* 标签、或在默认分支手动运行时更新
 ghcr.io/shimmerjordan/cc-trans:0.2.0          # 精确版本
 ghcr.io/shimmerjordan/cc-trans:0.2            # 次版本线
-ghcr.io/shimmerjordan/cc-trans:sha-abc1234    # 精确提交(手动 Run workflow 也会产出)
+ghcr.io/shimmerjordan/cc-trans:sha-abc1234    # 精确提交(每次发布都产出)
 ```
 
 ---
