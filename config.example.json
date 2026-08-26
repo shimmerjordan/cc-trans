@@ -45,10 +45,31 @@
   "_comment_logRetention": "请求日志分块(<dataDir>/logs/<日期>/<小时>.jsonl)保留天数,超过自动删除;0 = 不自动删。管理台「实时日志」可分页查看、按时间段手动清理。",
   "logRetentionDays": 14,
 
-  "_comment_admin": "Web 管理台(客户端监控/令牌生成/实时日志)。adminEnabled=true 开启,访问 http://<本机IP>:端口/admin。账号密码登录:adminPassword 留空则首次启动自动生成随机密码并打印到控制台,登录后可在网页里改。",
+  "_comment_admin": "Web 管理台(客户端监控/令牌生成/实时日志)。adminEnabled=true 开启,访问 http://<本机IP>:端口/admin。账号密码登录:adminPassword 留空则首次启动自动生成随机密码并打印到控制台,登录后可在网页里改。开启后 http://<本机IP>:端口/ 就是【统一登录入口】—— 管理员和普通用户同一个地址,验完自动进各自的门(发给同事时只需给这一条链接;根路径对探活脚本仍返回健康检查 JSON)。三个登录接口都有失败节流:同一 IP 或同一账号连续失败 5 次锁 30 秒,继续试则逐级加长。",
   "adminEnabled": false,
   "adminUser": "admin",
   "adminPassword": "",
+
+  "_comment_skills": "可选:「技能」= 一组命名的预设提示词。聊天页「＋ → 技能」可多选,选中的按顺序拼进那一轮的 system。形状 [{ id, name, desc, prompt }],管理台「设置 → 技能库」也能改。注意这【不是】Anthropic 的 Agent Skills —— 那个要 code execution 工具 + skills scope,而订阅 OAuth 凭证没有这个 scope(实测 GET /v1/skills 回 permission_error)。所以它不会读文件、也不会跑脚本,就是一段提示词。",
+  "skills": [],
+
+  "_comment_announcement": "可选:公告,显示在用户端与聊天页顶部(管理台「设置」页也能改)。level 可选 info / warn / err。text 留空或整个字段为 null = 没有公告。",
+  "announcement": null,
+
+  "_comment_chat": "网页聊天。前两项是【磁盘保护】不是额度:超了删最旧的,不拒绝请求,也不区分管理员;0 = 不限。",
+  "chatMaxSessions": 200,
+  "chatMaxMessages": 500,
+
+  "_comment_chatGrace": "断线保活:最后一个客户端断开后,这一轮生成还能自己跑多久(毫秒)。手机锁屏、切后台、刷新页面、地铁里断一下网 —— 这些都不该让已经烧掉的额度白烧,回来还能接着看。只有在界面上显式点「停止」才是真的取消。0 = 断开即取消(旧行为)。",
+  "chatDisconnectGraceMs": 300000,
+  "chatMaxConcurrentTurns": 3,
+
+  "_comment_chatExtras": "chatAutoTitle:第一轮说完后用最便宜的模型(haiku)生成一个 3~7 词的标题,跟随你提问的语言;手动改过标题的会话不会被覆盖。chatPromptCache:长对话打提示缓存断点(短对话不打 —— 缓存写要 1.25 倍价,短对话打了是净亏)。chatMaxRetries:上游 429/529/5xx 时退避重试几次,只在一个字都还没收到时重试(否则用户会看到重复的开头)。",
+  "_comment_chatWeb": "联网靠 Anthropic 的【服务端工具】,跑在上游那边,所以这个转发代理不需要任何本地 agent 循环。聊天页「＋」里可开「联网搜索」(web_search,回答带来源)或「深度研究」(搜索 + 抓原文 + 研究提示词 + 更多轮次)。用的是基础版 web_search_20250305 而不是新版 20260209:后者的动态过滤在底层走 code execution,实测这条订阅通路会撞 too_many_requests。",
+
+  "chatAutoTitle": true,
+  "chatPromptCache": true,
+  "chatMaxRetries": 2,
 
   "_comment_logBody": "调试用,打印请求体(可能含敏感内容),默认 false。",
   "logBody": false

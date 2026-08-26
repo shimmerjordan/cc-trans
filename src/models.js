@@ -156,6 +156,16 @@ function effortLabel(levels, capNoThinking) {
   return capNoThinking ? `${s}(thinking 显式 disabled 时上限 ${capNoThinking})` : s;
 }
 
+// 上下文窗口。用途是聊天页那个"已用 x%"的指示器 —— 它只需要一个够准的分母,
+// 不需要精确到 token:1M 变体带 [1m] 后缀,其余按 200k 算。
+// 未知模型也给 200k 而不是 null:给个保守分母,总比指示器整块消失有用。
+const CONTEXT_1M = 1_000_000;
+const CONTEXT_DEFAULT = 200_000;
+export function contextWindowOf(id) {
+  const s = String(id || '').toLowerCase();
+  return /\[1m\]|-1m\b/.test(s) ? CONTEXT_1M : CONTEXT_DEFAULT;
+}
+
 function tierOf(id) {
   const s = String(id || '').toLowerCase();
   if (/fable|mythos/.test(s)) return 'Fable';
@@ -178,6 +188,7 @@ export function inferModelMeta(id) {
         effortLevels: r.effortLevels,
         effortCapNoThinking: r.effortCapNoThinking,
         effort: effortLabel(r.effortLevels, r.effortCapNoThinking), // 给前端展示
+        contextWindow: contextWindowOf(s),
         note: r.note,
         unknown: false,
       };
@@ -187,6 +198,7 @@ export function inferModelMeta(id) {
     ...FALLBACK_RULE,
     tier: tierOf(s),
     effort: effortLabel(FALLBACK_RULE.effortLevels, null),
+    contextWindow: contextWindowOf(s),
   };
 }
 

@@ -19,6 +19,12 @@ import crypto from 'node:crypto';
 const DEFAULT_MAX_SESSIONS = 200; // 每用户会话上限,超了删最旧
 const DEFAULT_MAX_MESSAGES = 500; // 每会话消息上限,超了删最早
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// PDF 走 document block 直接进上下文。上游整个请求上限 32MB(base64 后会胀 ~33%),
+// 所以原文卡在 20MB —— 再大就不是"附一份文档"而是该先切分了。
+const MAX_PDF_BYTES = 20 * 1024 * 1024;
+// 文本类文件是内联进消息正文的,受 token 而不是磁盘约束。1MB 已经约 25 万 token,
+// 远超任何模型的窗口,再大只会让请求直接被拒。
+const MAX_TEXT_BYTES = 1024 * 1024;
 // 孤儿图片的宽限期:刚上传还没发送的图按引用判定就是孤儿,清扫必须绕开它们
 export const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 const MIME_EXT = {
@@ -27,6 +33,39 @@ const MIME_EXT = {
   'image/webp': 'webp',
   'image/gif': 'gif',
 };
+
+// 非图片附件。三类走三条完全不同的路,所以类型判定必须在存的时候就定下来:
+//   image → image block(base64)
+//   pdf   → document block(base64),放在文字块【前面】,这是 API 要求的顺序
+//   text  → 不进 block,发送时内联进消息正文(带文件名的围栏代码块)
+const PDF_MIME = 'application/pdf';
+// 文本类:按【扩展名】认,不认 mime。浏览器给 .ts / .py / .go 的 mime 五花八门
+// (video/mp2t、text/x-python、空串都见过),扩展名反而是稳定的那个。
+const TEXT_EXT = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'csv', 'tsv', 'log', 'yaml', 'yml', 'toml', 'ini', 'env',
+  'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h',
+  'cpp', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'sql', 'html', 'css', 'scss', 'xml', 'svg',
+  'vue', 'svelte', 'dart', 'lua', 'r', 'jl', 'diff', 'patch', 'gitignore', 'dockerfile', 'makefile',
+]);
+
+function extOf(name) {
+  const s = String(name || '').toLowerCase();
+  // Dockerfile / Makefile 这类没有扩展名的,用整个文件名当扩展名去比
+  const base = s.split('/').pop().split('\\').pop();
+  if (!base.includes('.')) return base;
+  return base.split('.').pop();
+}
+
+// 这个附件属于哪一类。返回 null = 不支持。
+export function kindOf(mime, name) {
+  const m = String(mime || '').toLowerCase().split(';')[0].trim();
+  if (MIME_EXT[m]) return 'image';
+  if (m === PDF_MIME || extOf(name) === 'pdf') return 'pdf';
+  if (TEXT_EXT.has(extOf(name))) return 'text';
+  // mime 说自己是纯文本、扩展名又不认识时仍然按文本收(比如没有扩展名的配置文件)
+  if (m.startsWith('text/')) return 'text';
+  return null;
+}
 
 // 只允许安全的单段路径片段。这是防路径穿越的唯一关口。
 function safeSeg(s) {
@@ -99,10 +138,15 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     writeJsonAtomic(f, { version: 1, sessions });
   }
 
+  // 置顶的排前面,其余按最近更新。置顶是"我还要回来看这条"的显式标记,
+  // 它必须压过时间序 —— 否则聊几句别的就被挤下去了,等于没置顶。
   function list(user) {
     return loadIndex(user)
       .slice()
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      .sort((a, b) => {
+        if (!!b.pinned !== !!a.pinned) return b.pinned ? 1 : -1;
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
   }
 
   function create(user, { title = '', model = '' } = {}) {
@@ -146,14 +190,18 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     return s;
   }
 
-  function save(user, session) {
+  // touch=false:只落盘,不动 updatedAt。
+  // updatedAt 的语义是【最后说话的时间】,不是"最后被碰过的时间" —— 改名或置顶
+  // 也去刷新它,会让一个三周前的对话因为改了个标题就跳到列表的「今天」里,
+  // 而排序恰恰是列表唯一的导航方式。
+  function save(user, session, { touch = true } = {}) {
     const f = sessionFile(user, session && session.id);
     if (!f) return { ok: false, error: '非法会话 id' };
     // 消息超上限:丢最早的(保留完整的一问一答对不做特别处理,简单可预期);0 = 不限
     if (MAX_MESSAGES > 0 && Array.isArray(session.messages) && session.messages.length > MAX_MESSAGES) {
       session.messages = session.messages.slice(-MAX_MESSAGES);
     }
-    session.updatedAt = Date.now();
+    if (touch || !session.updatedAt) session.updatedAt = Date.now();
     writeJsonAtomic(f, session);
     const idx = loadIndex(user);
     const row = idx.find((x) => x.id === session.id);
@@ -164,6 +212,12 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
       updatedAt: session.updatedAt,
       messages: (session.messages || []).length,
       model: session.model || '',
+      pinned: !!session.pinned,
+      // 'excerpt' = 第一句话截断,'ai' = 模型生成,'manual' = 用户手改。
+      // 前端据此决定要不要显示「重新生成标题」,也让 AI 不去覆盖手改的标题。
+      titleFrom: session.titleFrom || '',
+      // 摘要:列表里第二行显示最后说了什么,不用把整个会话读进来
+      preview: previewOf(session),
     };
     if (row) Object.assign(row, meta);
     else idx.push(meta);
@@ -187,11 +241,43 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     return { ok: true };
   }
 
+  // 手改的标题打上 manual + titleLocked:AI 生成的那一路必须绕开它,
+  // 不然用户刚起好的名字过两秒被模型改掉,这种"自己会动的界面"最劝退。
   function rename(user, id, title) {
     const s = get(user, id);
     if (!s) return { ok: false, error: '会话不存在' };
     s.title = String(title || '').slice(0, 80);
-    return save(user, s);
+    s.titleFrom = 'manual';
+    s.titleLocked = true;
+    return save(user, s, { touch: false });
+  }
+
+  function setPinned(user, id, pinned) {
+    const s = get(user, id);
+    if (!s) return { ok: false, error: '会话不存在' };
+    s.pinned = !!pinned;
+    return save(user, s, { touch: false });
+  }
+
+  // 列表第二行的摘要。取最后一条有正文的消息 —— 「你刚才聊到哪儿了」比
+  // 「这个会话开头是什么」更有用。markdown 记号在这一行只是噪音,剥掉。
+  function previewOf(session) {
+    const msgs = (session && session.messages) || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const raw = String(msgs[i].content || '');
+      if (!raw.trim()) continue;
+      const flat = raw
+        .replace(/```[\s\S]*?```/g, ' [代码] ')
+        .replace(/!\[[^\]]*]\([^)]*\)/g, ' [图片] ')
+        .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+        .replace(/[`*_>#~|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!flat) continue;
+      const who = msgs[i].role === 'assistant' ? '' : '你:';
+      return (who + flat).slice(0, 120);
+    }
+    return '';
   }
 
   function clear(user) {
@@ -223,10 +309,13 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
   // ── 图片的引用清扫 ──
   // 图片按内容寻址存在 media/,消息里只存文件名。会话删了图片不会自动消失,
   // 所以每个删会话的入口都得回头看一眼:这张图还有别人引用吗?
+  // 附件的引用清扫。images 与 files 共用 media/ 这一个目录,所以两边都要数进来 ——
+  // 只数 images 的话,PDF/文本附件会在删掉会话之后永远留在盘上。
   function imageIdsOf(session) {
     const out = new Set();
     for (const m of (session && session.messages) || []) {
       for (const im of m.images || []) if (im && im.id) out.add(String(im.id));
+      for (const f of m.files || []) if (f && f.id) out.add(String(f.id));
     }
     return out;
   }
@@ -355,6 +444,106 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     return { ok: true, id: name, mime: String(mime).toLowerCase(), bytes: buf.length };
   }
 
+  // ── 用户自己的技能(预设提示词)────────────────────────────────
+  // 存在 <dataDir>/chats/<user>/skills.json —— 跟会话同一个按用户分的目录,
+  // 于是【隔离是目录级的】:路径由 safeSeg(user) 推出,读写都进不了别人的目录。
+  // 管理员那份(config.skills)是全站共享的"团队技能",两者在界面上分开列。
+  const MAX_USER_SKILLS = 20;
+  function skillsFile(user) {
+    const ud = userDir(user);
+    return ud ? path.join(ud, 'skills.json') : null;
+  }
+  function listSkills(user) {
+    const f = skillsFile(user);
+    if (!f) return [];
+    const j = readJson(f, { skills: [] });
+    return Array.isArray(j.skills) ? j.skills : [];
+  }
+  // 整份覆盖写。校验放在这里而不是 HTTP 层:将来多一个入口也走同一道关。
+  function saveSkills(user, list) {
+    const f = skillsFile(user);
+    if (!f) return { ok: false, error: '非法用户名或未启用数据目录' };
+    if (!Array.isArray(list)) return { ok: false, error: '格式不对' };
+    if (list.length > MAX_USER_SKILLS) return { ok: false, error: `自己的技能最多 ${MAX_USER_SKILLS} 个` };
+    const seen = new Set();
+    const clean = [];
+    for (const k of list) {
+      const id = String((k && k.id) || '').trim().slice(0, 40);
+      const name = String((k && k.name) || '').trim().slice(0, 60);
+      const prompt = String((k && k.prompt) || '').trim().slice(0, 20000);
+      if (!id || !name || !prompt) return { ok: false, error: '每个技能都要有 id、名称和提示词' };
+      if (!/^[a-zA-Z0-9._-]{1,40}$/.test(id)) return { ok: false, error: `id "${id}" 只能用字母数字与 . _ -` };
+      if (seen.has(id)) return { ok: false, error: `id "${id}" 重复了` };
+      seen.add(id);
+      clean.push({ id, name, desc: String((k && k.desc) || '').trim().slice(0, 200), prompt });
+    }
+    writeJsonAtomic(f, { version: 1, skills: clean });
+    return { ok: true, skills: clean };
+  }
+
+  // 通用附件入口。图片仍走 putImage(保持旧路径可用),PDF 与文本走这里。
+  // 三类共用同一个内容寻址的 media/ 目录,但发送时走三条不同的路 —— 见 kindOf()。
+  function putFile(user, { data, mime, name }) {
+    const md = mediaDir(user);
+    if (!md) return { ok: false, error: '非法用户名或未启用数据目录' };
+    const kind = kindOf(mime, name);
+    if (!kind) return { ok: false, error: `不支持这种文件(${String(name || mime || '未知')})—— 可传图片、PDF,或文本/代码文件` };
+    if (kind === 'image') return putImage(user, { data, mime });
+
+    let buf;
+    try {
+      buf = Buffer.from(String(data || ''), 'base64');
+    } catch {
+      return { ok: false, error: '文件数据无法解析' };
+    }
+    if (!buf.length) return { ok: false, error: '文件是空的' };
+
+    const clean = String(name || '').split(/[\\/]/).pop().slice(0, 120) || '未命名';
+    if (kind === 'pdf') {
+      if (buf.length > MAX_PDF_BYTES) {
+        return { ok: false, error: `PDF 超过 ${Math.round(MAX_PDF_BYTES / 1048576)}MB 上限` };
+      }
+      // 校验魔数:声明是 PDF 不算,得真的是(和图片同一个道理)
+      if (buf.slice(0, 5).toString('latin1') !== '%PDF-') {
+        return { ok: false, error: '文件内容不是 PDF' };
+      }
+    } else {
+      if (buf.length > MAX_TEXT_BYTES) {
+        return { ok: false, error: `文本文件超过 ${Math.round(MAX_TEXT_BYTES / 1024)}KB 上限` };
+      }
+      // 必须是合法 UTF-8。二进制文件改个扩展名就传上来的话,内联进正文
+      // 会变成一大片乱码,白烧一次额度才发现。
+      const text = buf.toString('utf8');
+      if (Buffer.from(text, 'utf8').length !== buf.length || text.includes('\u0000')) {
+        return { ok: false, error: '这个文件不是纯文本(可能是二进制)' };
+      }
+    }
+
+    const ext = kind === 'pdf' ? 'pdf' : 'txt';
+    const hash = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
+    const id = `${hash}.${ext}`;
+    const file = path.join(md, id);
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(md, { recursive: true });
+      fs.writeFileSync(file, buf, { mode: 0o600 });
+    }
+    return { ok: true, id, kind, name: clean, mime: kind === 'pdf' ? PDF_MIME : 'text/plain', bytes: buf.length };
+  }
+
+  // 读回一个附件的原始字节(发送时要转 base64 或取文本)
+  function getFile(user, id) {
+    const md = mediaDir(user);
+    const seg = safeSeg(id);
+    if (!md || !seg) return null;
+    const file = path.join(md, seg);
+    if (!fs.existsSync(file)) return null;
+    try {
+      return { buf: fs.readFileSync(file), ext: seg.split('.').pop() };
+    } catch {
+      return null;
+    }
+  }
+
   function getImage(user, id) {
     const md = mediaDir(user);
     const seg = safeSeg(id);
@@ -411,12 +600,20 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     save,
     remove,
     rename,
+    setPinned,
     clear,
+    listSkills,
+    saveSkills,
+    MAX_USER_SKILLS,
     putImage,
+    putFile,
+    getFile,
     getImage,
     stats,
     sweepOrphanMedia,
     listUsers,
     MAX_IMAGE_BYTES,
+    MAX_PDF_BYTES,
+    MAX_TEXT_BYTES,
   };
 }

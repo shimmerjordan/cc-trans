@@ -33,6 +33,20 @@ const DEFAULTS = {
   // 网页聊天的磁盘保护(不是额度:超了删最旧的,不拒绝请求,也不区分管理员)。0=不限
   chatMaxSessions: 200, // 每用户会话数上限
   chatMaxMessages: 500, // 每会话消息数上限
+  // 断线保活:最后一个客户端断开后,这一轮还能自己跑多久(毫秒)。
+  // 手机锁屏、切后台、刷新页面、地铁里断一下网 —— 这些都不该让已经烧掉的额度白烧。
+  // 0 = 断开即取消(改造前的行为)。只有显式点「停止」才是真的不要了。
+  chatDisconnectGraceMs: 5 * 60 * 1000,
+  chatMaxConcurrentTurns: 3, // 同一用户同时进行的回合数上限
+  chatAutoTitle: true, // 第一回合结束后用便宜模型生成一个像样的标题
+  chatPromptCache: true, // 长对话打提示缓存断点(短对话不打,缓存写要 1.25 倍价)
+  chatMaxRetries: 2, // 上游 429/529/5xx 时的退避重试次数(只在一个字都没收到时重试)
+  announcement: null, // 公告 { text, level: info|warn|err, updatedAt };管理台设置页可改
+  // 「技能」= 一组命名的预设提示词,聊天页可多选,选中的拼进 system。
+  // 形状:[{ id, name, desc, prompt }]。注意这【不是】Anthropic 的 Agent Skills ——
+  // 那个要 code execution + skills scope,订阅 OAuth token 拿不到(实测 /v1/skills
+  // 回 permission_error)。所以这里是提示词预设,不会读文件也不会跑脚本。
+  skills: [],
   adminEnabled: false,
   adminUser: 'admin',
   adminPassword: '',
@@ -164,6 +178,20 @@ export function loadConfig() {
     chatMaxMessages: Number(
       process.env.CC_TRANS_CHAT_MAX_MESSAGES ?? file.chatMaxMessages ?? DEFAULTS.chatMaxMessages,
     ),
+    // 同样用 ??:显式配 0(断开即取消)是有意义的选择,不能被 `||` 换回默认的 5 分钟
+    chatDisconnectGraceMs: Number(
+      process.env.CC_TRANS_CHAT_DISCONNECT_GRACE_MS ?? file.chatDisconnectGraceMs ?? DEFAULTS.chatDisconnectGraceMs,
+    ),
+    chatMaxConcurrentTurns: Number(
+      process.env.CC_TRANS_CHAT_MAX_CONCURRENT_TURNS ?? file.chatMaxConcurrentTurns ?? DEFAULTS.chatMaxConcurrentTurns,
+    ),
+    chatMaxRetries: Number(process.env.CC_TRANS_CHAT_MAX_RETRIES ?? file.chatMaxRetries ?? DEFAULTS.chatMaxRetries),
+    chatAutoTitle: parseBool(process.env.CC_TRANS_CHAT_AUTO_TITLE) ?? file.chatAutoTitle ?? DEFAULTS.chatAutoTitle,
+    chatPromptCache:
+      parseBool(process.env.CC_TRANS_CHAT_PROMPT_CACHE) ?? file.chatPromptCache ?? DEFAULTS.chatPromptCache,
+    // 公告是个对象,原样带过去(server.js 的 readAnnouncement 负责归一与截断)
+    announcement: file.announcement ?? DEFAULTS.announcement,
+    skills: Array.isArray(file.skills) ? file.skills : DEFAULTS.skills,
     adminEnabled: parseBool(process.env.CC_TRANS_ADMIN_ENABLED) ?? file.adminEnabled ?? DEFAULTS.adminEnabled,
     adminUser: process.env.CC_TRANS_ADMIN_USER || file.adminUser || DEFAULTS.adminUser,
     adminPassword: process.env.CC_TRANS_ADMIN_PASSWORD || file.adminPassword || DEFAULTS.adminPassword,
