@@ -452,6 +452,10 @@
   .login p { color: var(--muted); margin: 0 0 var(--s5); font-size: var(--fs-md); text-align: center; }
   .login input { width: 100%; margin-bottom: var(--s3); min-height: 38px; }
   .login button { width: 100%; justify-content: center; min-height: 38px; }
+  /* 登录卡底部那行指路。只在系统里确实有普通用户账号时才出现 ——
+     单人自用的部署上摆它只是噪音。 */
+  .login .alt-link { margin: var(--s4) 0 0; font-size: var(--fs-sm); text-align: center; color: var(--muted); }
+  .login .alt-link a { color: var(--accent); }
   .err-msg { color: var(--err); font-size: var(--fs-md); min-height: 18px; margin-top: var(--s2); text-align: center; }
   .ok-msg { color: var(--ok); font-size: var(--fs-md); min-height: 18px; }
 
@@ -552,6 +556,7 @@
   <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
   <button class="primary" onclick="doLogin()">登录</button>
   <div id="loginErr" class="err-msg"></div>
+  <p class="alt-link" id="loginAlt" hidden>普通用户请走 <a href="/u">用户端</a>,或用<a href="/">统一入口</a></p>
 </div>
 
 <div id="appView" hidden>
@@ -754,6 +759,54 @@
     </section>
 
     <section id="tab-settings" hidden>
+      <!-- 公告:自建服务里「今晚重启」「额度调整了」这类事此前只能靠口头通知,
+           而用户端和聊天页恰恰是所有人都会打开的地方。 -->
+      <section class="block set">
+        <div class="set-grid">
+        <div class="set-head">
+          <h2>公告</h2>
+          <p class="note">显示在<b>用户端和聊天页顶部</b>。每个用户可以关掉当前这条;内容改过之后会重新出现。清空内容 = 撤下公告。</p>
+        </div>
+        <div class="set-body">
+          <div class="form-row"><label for="annText">内容</label>
+            <textarea id="annText" rows="2" maxlength="500" class="grow-1" style="width:100%"
+              placeholder="例如:今晚 23:00 重启升级,预计中断 5 分钟"></textarea>
+          </div>
+          <div class="form-row"><label for="annLevel">语气</label>
+            <select id="annLevel">
+              <option value="info">普通(蓝)</option>
+              <option value="warn">提醒(琥珀)</option>
+              <option value="err">重要(红)</option>
+            </select>
+          </div>
+          <div class="form-row"><label></label><div>
+            <button class="primary" onclick="saveAnnouncement()">保存</button>
+            <button onclick="clearAnnouncement()">撤下</button>
+            <span id="annMsg" class="muted xs"></span>
+          </div></div>
+        </div>
+        </div>
+      </section>
+
+      <!-- 技能库 = 命名的预设提示词。刻意不叫 Agent Skills:那个要 code execution
+           + skills scope,订阅 OAuth token 拿不到(实测 /v1/skills 回 permission_error)。 -->
+      <section class="block set">
+        <div class="set-grid">
+        <div class="set-head">
+          <h2>技能库</h2>
+          <p class="note">给聊天页用的<b>预设提示词</b>:用户在输入框「＋ → 技能」里多选,选中的会按顺序拼进那一轮的 <span class="mono">system</span>。<br /><b>它不会读文件、也不会跑脚本</b> —— 那需要 Anthropic 的 Agent Skills,而订阅凭证没有相应权限。</p>
+        </div>
+        <div class="set-body">
+          <div id="skillRows"></div>
+          <div class="form-row" style="margin-top:var(--s3)"><label></label><div>
+            <button onclick="addSkill()">＋ 新增技能</button>
+            <button class="primary" onclick="saveSkills()">保存</button>
+            <span id="skillMsg" class="muted xs"></span>
+          </div></div>
+        </div>
+        </div>
+      </section>
+
       <section class="block set">
         <div class="set-grid">
         <div class="set-head">
@@ -931,8 +984,16 @@
   <div class="form-row"><label for="uName">用户名</label><input id="uName" placeholder="2~32 位,字母数字与 . _ -" /></div>
   <div class="form-row" id="uPwRow"><label for="uPw">初始密码</label>
     <div class="stack">
-      <input id="uPw" class="grow-1" placeholder="至少 8 位" />
+      <input id="uPw" class="grow-1" autocomplete="off" spellcheck="false" placeholder="可直接输入,或点右边随机生成" oninput="gradeNewPw()" />
       <button class="sm" onclick="genPw()">随机生成</button>
+    </div>
+  </div>
+  <div class="form-row" id="uPwGradeRow"><label></label><div class="muted xs" id="uPwGrade"></div></div>
+  <!-- 编辑模式下不在这里改密码(避免手滑改掉),给一个明确的入口过去 -->
+  <div class="form-row" id="uPwEditRow" hidden><label>密码</label>
+    <div class="stack">
+      <button class="sm" type="button" onclick="userDlg.close(); openUserPw(EDIT_USER)">设置新密码…</button>
+      <span class="muted xs">服务端只存哈希,看不到现在的密码,只能设一个新的</span>
     </div>
   </div>
   <div class="form-row"><label>分配设备</label>
@@ -983,6 +1044,33 @@
   <dl class="dl" id="aFixed"></dl>
   <div id="aMsg" class="err-msg" style="text-align:left"></div>
   <div class="dlg-actions"><button onclick="adminDlg.close()">取消</button> <button class="primary" onclick="saveAdminUser()">保存</button></div>
+</dialog>
+
+<!-- 设置某个用户的密码。此前这里只有一个「重置密码」按钮 —— 点下去直接生成一串
+     随机字符,管理员无法指定密码。而真实场景里指定密码是常事:当面告诉对方、
+     沿用团队约定的初始口令、或者对方就是要一个自己记得住的。
+     两条路(手输 / 随机)走同一个接口,随机只是其中一个按钮。 -->
+<dialog id="pwDlg">
+  <h3 id="pwDlgTitle">设置密码</h3>
+  <div class="form-row"><label for="pwNew">新密码</label>
+    <div class="stack">
+      <input id="pwNew" class="grow-1" type="text" autocomplete="off" spellcheck="false" placeholder="至少 8 位" oninput="gradeSetPw()" />
+      <button class="sm" onclick="el('pwNew').value = randomPw(); gradeSetPw()">随机生成</button>
+    </div>
+  </div>
+  <div class="form-row"><label for="pwNew2">再输一次</label>
+    <div class="stack">
+      <input id="pwNew2" class="grow-1" type="text" autocomplete="off" spellcheck="false" oninput="gradeSetPw()" />
+      <span class="muted xs">随机生成时可留空</span>
+    </div>
+  </div>
+  <div class="form-row"><label></label><div class="muted xs" id="pwGrade"></div></div>
+  <div class="form-row"><label></label>
+    <label class="check"><input type="checkbox" id="pwKeep" /> 保留该用户已登录的会话</label>
+  </div>
+  <p class="note">默认<b>不保留</b>:改别人的密码通常正是因为怀疑这个号被别人拿到了,旧会话留着等于只做了一半。勾上则只换密码、不打断对方正在做的事。</p>
+  <div id="pwMsg2" class="err-msg" style="text-align:left"></div>
+  <div class="dlg-actions"><button onclick="pwDlg.close()">取消</button> <button class="primary" id="pwSaveBtn" onclick="saveUserPw()">保存</button></div>
 </dialog>
 
 <dialog id="genDlg">
@@ -1076,12 +1164,29 @@ async function api(path, opts = {}) {
 function toLogin() {
   SESSION = ''; sessionStorage.removeItem('cc-trans-admin'); stopLive();
   show('appView', false); show('loginView', true); el('pw').focus();
+  // 有普通用户账号存在时才提这句 —— 单人自用的部署上它只是噪音
+  fetch(API + '/meta')
+    .then((r) => r.json())
+    .then((m) => { if (m && m.hasUsers) show('loginAlt', true); })
+    .catch(() => {});
 }
 async function doLogin() {
   el('loginErr').textContent = '';
   const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
-  if (!r.ok) { el('loginErr').textContent = '登录失败:账号或密码错误'; return; }
-  SESSION = (await r.json()).session; sessionStorage.setItem('cc-trans-admin', SESSION);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    // 普通用户拿自己的账号来管理台登录 —— 这是最常见的走错门。服务端已经验过
+    // 密码,所以可以直接把用户端的地址指给他,而不是回一句"账号或密码错误"
+    // 让他反复怀疑自己记错了密码。
+    if (r.status === 409 && d.redirect) {
+      el('loginErr').innerHTML = `${esc(d.error)} · <a href="${esc(d.redirect)}" style="color:var(--accent)">去用户端登录</a>`;
+      return;
+    }
+    if (r.status === 429) { el('loginErr').textContent = d.error || '尝试过于频繁,请稍后再试'; return; }
+    el('loginErr').textContent = d.error || '登录失败:账号或密码错误';
+    return;
+  }
+  SESSION = d.session; sessionStorage.setItem('cc-trans-admin', SESSION);
   el('pw').value = ''; enterApp();
 }
 function logout() { toLogin(); }
@@ -1117,9 +1222,99 @@ function switchTab(t, opts = {}) {
   if (t === 'users') loadUsers();
   if (t === 'models') loadModels();
   if (t === 'logs') reloadLogs(0);
-  if (t === 'settings') { loadUpstream(); loadAccount(); }
+  if (t === 'settings') { loadUpstream(); loadAccount(); loadAnnouncement(); loadSkills(); }
 }
 window.addEventListener('popstate', () => switchTab(tabFromPath(), { noPush: true }));
+
+// ── 技能库(预设提示词)──
+let SKILLS = [];
+async function loadSkills() {
+  try {
+    const d = await (await api('/skills')).json();
+    SKILLS = d.skills || [];
+    drawSkills(!d.canManage);
+    el('skillMsg').textContent = d.canManage ? '' : '用环境变量配置时技能无法落盘';
+  } catch {}
+}
+function drawSkills(ro) {
+  if (!SKILLS.length) {
+    el('skillRows').innerHTML = '<p class="note" style="margin:0">还没有技能。点下面「新增技能」加一个 —— 比如「代码审阅」「中文润色」「先问清需求再动手」。</p>';
+    return;
+  }
+  el('skillRows').innerHTML = SKILLS.map((k, i) => `
+    <div class="block" style="padding:var(--s3);margin:0 0 var(--s3)">
+      <div class="form-row"><label for="sk-id-${i}">id</label>
+        <div class="stack">
+          <input id="sk-id-${i}" value="${esc(k.id)}" placeholder="code-review" style="width:180px" ${ro ? 'disabled' : ''} />
+          <input id="sk-name-${i}" value="${esc(k.name)}" placeholder="显示名(如 代码审阅)" class="grow-1" ${ro ? 'disabled' : ''} />
+          <button class="sm danger" onclick="rmSkill(${i})" ${ro ? 'disabled' : ''}>删除</button>
+        </div>
+      </div>
+      <div class="form-row"><label for="sk-desc-${i}">一句话说明</label>
+        <input id="sk-desc-${i}" value="${esc(k.desc || '')}" placeholder="出现在选择器里的副标题" class="grow-1" ${ro ? 'disabled' : ''} />
+      </div>
+      <div class="form-row"><label for="sk-prompt-${i}">提示词</label>
+        <textarea id="sk-prompt-${i}" rows="4" class="grow-1" style="width:100%;font-family:var(--mono);font-size:var(--fs-sm)" ${ro ? 'disabled' : ''}>${esc(k.prompt)}</textarea>
+      </div>
+    </div>`).join('');
+}
+function collectSkills() {
+  return SKILLS.map((_, i) => ({
+    id: (el('sk-id-' + i) || {}).value || '',
+    name: (el('sk-name-' + i) || {}).value || '',
+    desc: (el('sk-desc-' + i) || {}).value || '',
+    prompt: (el('sk-prompt-' + i) || {}).value || '',
+  }));
+}
+function addSkill() {
+  // 先把界面上已改的收下来,否则新增会把未保存的编辑冲掉
+  if (SKILLS.length) SKILLS = collectSkills();
+  SKILLS.push({ id: '', name: '', desc: '', prompt: '' });
+  drawSkills();
+}
+function rmSkill(i) {
+  SKILLS = collectSkills();
+  SKILLS.splice(i, 1);
+  drawSkills();
+}
+async function saveSkills() {
+  const list = collectSkills();
+  const r = await api('/skills', { method: 'POST', body: JSON.stringify({ skills: list }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '保存失败', 'err'); return; }
+  SKILLS = d.skills || [];
+  drawSkills();
+  toast(`技能库已保存(${SKILLS.length} 个)`);
+}
+
+// ── 公告 ──
+async function loadAnnouncement() {
+  try {
+    const d = await (await api('/announcement')).json();
+    const a = d.announcement;
+    el('annText').value = a ? a.text : '';
+    el('annLevel').value = a ? a.level : 'info';
+    el('annMsg').textContent = d.canManage
+      ? (a ? `当前生效,更新于 ${new Date(a.updatedAt).toLocaleString('zh-CN')}` : '当前没有公告')
+      : '用环境变量配置时公告无法落盘';
+    el('annText').disabled = !d.canManage;
+    el('annLevel').disabled = !d.canManage;
+  } catch {}
+}
+async function saveAnnouncement() {
+  const r = await api('/announcement', {
+    method: 'POST',
+    body: JSON.stringify({ text: el('annText').value, level: el('annLevel').value }),
+  });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '保存失败', 'err'); return; }
+  toast(el('annText').value.trim() ? '公告已发布' : '公告已撤下');
+  loadAnnouncement();
+}
+async function clearAnnouncement() {
+  el('annText').value = '';
+  await saveAnnouncement();
+}
 
 function fmtUptime(ms) { const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return d ? `${d}天${h}时` : h ? `${h}时${m}分` : `${m}分`; }
 function fmtTime(ts) { return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }); }
@@ -1542,6 +1737,9 @@ let USER_TOKENS = []; // 可分配的令牌清单(掩码)
 let LAST_USERS = []; // 最近一次拉取的用户列表(编辑对话框要回填当前绑定)
 let PERM_META = {}, PERM_DEFAULTS = {}; // 权限项与默认值,由服务端下发(前端不写死)
 let QUOTA_WINDOWS = { month: '每月' };
+// 密码长度下限由服务端下发(users.js 的 MIN_PASSWORD_LEN 是唯一权威),
+// 前端这份只是提前告知 —— 写死两个数字迟早对不上
+let MIN_PW = 8;
 let EDIT_USER = null; // null = 创建模式
 async function loadUsers() {
   try {
@@ -1551,6 +1749,7 @@ async function loadUsers() {
     PERM_META = d.permMeta || {};
     PERM_DEFAULTS = d.permDefaults || {};
     QUOTA_WINDOWS = d.quotaWindows || QUOTA_WINDOWS;
+    if (d.minPasswordLen) MIN_PW = d.minPasswordLen;
     el('addUserBtn').disabled = !d.canManage;
     el('userHint').textContent = d.canManage ? '' : '当前用环境变量配置,无法在线管理用户(改用 config.json 即可)';
     el('userPortalUrl').textContent = location.origin + '/u';
@@ -1600,7 +1799,8 @@ function rowActions(u, canManage) {
   }
   if (!canManage) return '';
   return `<button class="sm" onclick="openUser('${esc(u.name)}')">编辑</button>
-    <button class="sm" onclick="resetUserPw('${esc(u.name)}')">重置密码</button>
+    <button class="sm" onclick="openUserPw('${esc(u.name)}')">设置密码</button>
+    <button class="sm" onclick="kickUser('${esc(u.name)}')" title="不改密码,只把该用户所有登录会话踢下线">强制下线</button>
     <button class="sm" onclick="toggleUser('${esc(u.name)}', ${!u.disabled})">${u.disabled ? '启用' : '禁用'}</button>
     <button class="sm danger" onclick="removeUser('${esc(u.name)}')">删除</button>`;
 }
@@ -1630,7 +1830,17 @@ function randomPw(n = 14) {
   const cs = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   return [...crypto.getRandomValues(new Uint32Array(n))].map((x) => cs[x % cs.length]).join('');
 }
-function genPw() { el('uPw').value = randomPw(); }
+function genPw() { el('uPw').value = randomPw(); gradeNewPw(); }
+function gradeNewPw() {
+  const v = el('uPw').value;
+  if (!v) { el('uPwGrade').textContent = ''; return; }
+  const bits = [];
+  if (v.length < MIN_PW) bits.push(`还差 ${MIN_PW - v.length} 位(至少 ${MIN_PW} 位)`);
+  else if (v.length < 12) bits.push('够用');
+  else bits.push('不错,越长越好');
+  if (/^\d+$/.test(v)) bits.push('全是数字容易被猜到');
+  el('uPwGrade').textContent = bits.join(' · ');
+}
 function openUser(name) {
   EDIT_USER = name || null;
   el('userDlgTitle').textContent = EDIT_USER ? `编辑用户 · ${EDIT_USER}` : '创建用户';
@@ -1638,8 +1848,11 @@ function openUser(name) {
   el('uName').value = EDIT_USER || '';
   el('uName').disabled = !!EDIT_USER; // 用户名是主键,不支持改名(要改就删了重建)
   el('uMsg').textContent = '';
-  show('uPwRow', !EDIT_USER); // 编辑模式改密走「重置密码」,避免误改
-  if (!EDIT_USER) el('uPw').value = randomPw();
+  // 编辑模式不在这个表单里改密码(避免手滑改掉),换成一个明确的入口
+  show('uPwRow', !EDIT_USER);
+  show('uPwGradeRow', !EDIT_USER);
+  show('uPwEditRow', !!EDIT_USER);
+  if (!EDIT_USER) { el('uPw').value = randomPw(); gradeNewPw(); }
   // 当前绑定
   let bound = new Set();
   if (EDIT_USER) {
@@ -1701,16 +1914,68 @@ async function saveUser() {
   el('genResult').querySelector('p').innerHTML = `用户 <b>${esc(name)}</b> 已创建。下面是<b>账号 / 初始密码</b>(服务端只存哈希,<b>只显示这一次</b>),发给对方后让他在 <span class="mono">${esc(location.origin)}/u</span> 登录:`;
   genDlg.showModal();
 }
-async function resetUserPw(name) {
-  const pw = randomPw();
-  if (!await askConfirm('重置密码', `为 ${name} 生成一个新的随机密码?旧密码立即失效。`, '重置')) return;
-  const r = await api('/users/password', { method: 'POST', body: JSON.stringify({ name, password: pw }) });
+// 设置密码。手输和随机走同一条路 —— 随机只是输入框旁边的一个按钮,
+// 而不是唯一的选项(这是这次要补的那个缺口)。
+const pwDlg = el('pwDlg');
+let PW_USER = null;
+function openUserPw(name) {
+  PW_USER = name;
+  el('pwDlgTitle').textContent = `设置 ${name} 的密码`;
+  el('pwNew').value = '';
+  el('pwNew2').value = '';
+  el('pwKeep').checked = false;
+  el('pwMsg2').textContent = '';
+  el('pwGrade').textContent = '';
+  pwDlg.showModal();
+  el('pwNew').focus();
+}
+// 长度是唯一真正线性提高破解成本的维度,所以只提示长度,不强制字符类别 ——
+// 那种规则只会把人赶向 Password1! 这类可预测写法。
+function gradeSetPw() {
+  const v = el('pwNew').value;
+  const v2 = el('pwNew2').value;
+  const bits = [];
+  if (!v) { el('pwGrade').textContent = ''; return; }
+  if (v.length < MIN_PW) bits.push(`还差 ${MIN_PW - v.length} 位(至少 ${MIN_PW} 位)`);
+  else if (v.length < 12) bits.push('够用');
+  else bits.push('不错,越长越好');
+  if (/^\d+$/.test(v)) bits.push('全是数字容易被猜到');
+  if (v2 && v !== v2) bits.push('两次输入不一致');
+  el('pwGrade').textContent = bits.join(' · ');
+}
+async function saveUserPw() {
+  const name = PW_USER;
+  const pw = el('pwNew').value;
+  const pw2 = el('pwNew2').value;
+  const msg = el('pwMsg2');
+  msg.textContent = '';
+  if (!pw) { msg.textContent = '请输入密码,或点「随机生成」'; return; }
+  if (pw2 && pw !== pw2) { msg.textContent = '两次输入的密码不一致'; return; }
+  if (pw.length < MIN_PW) { msg.textContent = `密码至少 ${MIN_PW} 位`; return; }
+  const keepSessions = el('pwKeep').checked;
+  el('pwSaveBtn').disabled = true;
+  const r = await api('/users/password', { method: 'POST', body: JSON.stringify({ name, password: pw, keepSessions }) });
   const d = await r.json();
-  if (!r.ok || !d.ok) { toast(d.error || '重置失败', 'err'); return; }
+  el('pwSaveBtn').disabled = false;
+  if (!r.ok || !d.ok) { msg.textContent = d.error || '保存失败'; return; }
+  pwDlg.close();
+  loadUsers();
+  // 服务端只存哈希,所以这一刻是唯一能把密码交给对方的机会 —— 用可复制的
+  // 对话框而不是一闪而过的 toast
   el('newToken').textContent = `${name} / ${pw}`;
   show('genForm', false); show('genResult', true);
-  el('genResult').querySelector('p').innerHTML = `<b>${esc(name)}</b> 的新密码(<b>只显示这一次</b>):`;
+  el('genResult').querySelector('p').innerHTML =
+    `<b>${esc(name)}</b> 的新密码(服务端只存哈希,<b>只显示这一次</b>)` +
+    (keepSessions ? ',其已登录的会话保留:' : ',其所有登录会话已失效:');
   genDlg.showModal();
+}
+
+async function kickUser(name) {
+  if (!await askConfirm('强制下线', `把 ${name} 在所有设备上的登录都踢下线?密码不变,他重新登录即可继续使用。`, '强制下线')) return;
+  const r = await api('/users/revoke', { method: 'POST', body: JSON.stringify({ name }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '操作失败', 'err'); return; }
+  toast(`${name} 的所有登录会话已失效`);
 }
 async function toggleUser(name, disabled) {
   const r = await api('/users/disable', { method: 'POST', body: JSON.stringify({ name, disabled }) });
