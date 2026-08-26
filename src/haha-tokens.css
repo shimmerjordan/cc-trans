@@ -1,0 +1,633 @@
+/* cc-trans 聊天页设计令牌 —— 直接取自 cc-haha 的「纸 · 墨 · 印」体系。
+   来源:cc-haha/desktop/src/theme/globals.css(MIT),六套色板与语义层原样搬运,
+   只去掉了 Tailwind 的 @theme 包装(本项目零构建,不跑 Tailwind)。
+
+   为什么整块搬而不是挑几个颜色:六套主题里每套 61 个 --cc-* 原始值是一整套配好的
+   关系(前景/底/描边/软底/各自的 ink 都两两校过对比度)。挑着抄必然出现"某个变量
+   只在一个主题里定义了" —— 那一个主题下它渲染成透明,而且只有那一个主题。
+   原作者在语义层的注释里明说踩过这个坑。
+
+   分层:--cc-*(每套主题各一份原始值)→ --color-*(语义层,只定义一次)。
+   加主题 = 加一个 --cc-* 块,永远不动语义层。 */
+
+/* 纯白 pure-white(默认) */
+:root,
+[data-theme="white"] {
+  color-scheme: light;
+
+  --cc-bg: #FFFFFF;
+  --cc-s0: #F6F6F3;
+  --cc-s1: #F0EFE9;
+  --cc-s2: #FAFAF8;
+  --cc-bd: #EBE9E2;
+  --cc-bd2: #D8D5CC;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #918E87;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. */
+  --cc-tab-edge: #D9D5CC;
+  --cc-tab-sep: #E3DFD6;
+  --cc-t1: #1F1C17;
+  --cc-t2: #5D5850;
+  --cc-t3: #777269;
+
+  --cc-ac: #96442B;
+  --cc-ac2: #7C3620;
+  --cc-ac-soft: #F6ECE5;
+  --cc-ac-soft-hover: #EFDED4;
+  --cc-ac-border: #E6CDBF;
+  --cc-ac-ink: #96442B;
+  --cc-on-ac: #FBF6EC;
+
+  --cc-ok: #3E8153;
+  --cc-ok-soft: #E8F2E9;
+  --cc-ok-ink: #3A784D;
+  --cc-wn: #A8751F;
+  --cc-wn-soft: #F8F0DC;
+  --cc-wn-ink: #90641B;
+  --cc-er: #C74436;
+  --cc-er-soft: #FAECE8;
+  --cc-er-soft-hover: #F5DBD6;
+  --cc-er-ink: #BD4133;
+  --cc-info: #96442B;
+  --cc-info-soft: #F5ECEA;
+  --cc-info-ink: #96442B;
+
+  --cc-teal: #3B7068;
+  --cc-teal-soft: #F1F5F4;
+  --cc-teal-border: #C0D1CF;
+  --cc-teal-icon: #EBF1F0;
+
+  --cc-diff-add: #E8F3E9;
+  --cc-diff-add-gutter: #D9EBDC;
+  --cc-diff-add-word: #DEEDE0;
+  --cc-diff-del: #FAEEED;
+  --cc-diff-del-gutter: #F6E1DF;
+  --cc-diff-del-word: #F0CECB;
+  --cc-diff-mark: #F4EDE2;
+  --cc-diff-mark-gutter: #ECE1CE;
+  --cc-code: #F7F7F4;
+
+  --cc-heat-0: #F0EFE9;
+  --cc-heat-1: #E8D6D0;
+  --cc-heat-2: #D1ADA2;
+  --cc-heat-3: #B8806F;
+  --cc-heat-4: #9C4F38;
+
+  --cc-shadow-card: 0 1px 3px rgba(30, 28, 22, 0.04), 0 6px 24px rgba(30, 28, 22, 0.06);
+  --cc-shadow-composer: 0 1px 2px rgba(30, 28, 22, 0.05), 0 14px 44px rgba(30, 28, 22, 0.08);
+  --cc-shadow-overlay: 0 8px 24px rgba(30, 28, 22, 0.10), 0 24px 64px rgba(30, 28, 22, 0.15);
+
+  --cc-bg-rgb: 255, 255, 255;
+  --cc-s1-rgb: 240, 239, 233;
+  --cc-t1-rgb: 31, 28, 23;
+  --cc-t2-rgb: 93, 88, 80;
+  --cc-bd2-rgb: 216, 213, 204;
+  --cc-ac-rgb: 150, 68, 43;
+  --cc-er-rgb: 199, 68, 54;
+  --cc-scrim-rgb: 19, 17, 14;
+}
+
+/* 纸墨 paper */
+[data-theme="paper"] {
+  color-scheme: light;
+
+  --cc-bg: #FBF9F4;
+  --cc-s0: #F3EFE5;
+  --cc-s1: #ECE6D8;
+  --cc-s2: #F7F4EC;
+  --cc-bd: #E7E0CF;
+  --cc-bd2: #D5C9B0;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #938A76;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. */
+  --cc-tab-edge: #DBCFB5;
+  --cc-tab-sep: #E5D9BE;
+  --cc-t1: #231D12;
+  --cc-t2: #6E6350;
+  --cc-t3: #796E5B;
+
+  --cc-ac: #96442B;
+  --cc-ac2: #7C3620;
+  --cc-ac-soft: #F3E6DA;
+  --cc-ac-soft-hover: #EBD8C8;
+  --cc-ac-border: #E2C7B3;
+  --cc-ac-ink: #96442B;
+  --cc-on-ac: #FBF6EC;
+
+  --cc-ok: #477C52;
+  --cc-ok-soft: #E8EFE1;
+  --cc-ok-ink: #43754D;
+  --cc-wn: #A8751F;
+  --cc-wn-soft: #F6EED9;
+  --cc-wn-ink: #8E631A;
+  --cc-er: #C24532;
+  --cc-er-soft: #F7E7DF;
+  --cc-er-soft-hover: #F2D7CE;
+  --cc-er-ink: #B6412F;
+  --cc-info: #96442B;
+  --cc-info-soft: #F1E7E0;
+  --cc-info-ink: #96442B;
+
+  --cc-teal: #3B7068;
+  --cc-teal-soft: #EEEFEA;
+  --cc-teal-border: #BECDC7;
+  --cc-teal-icon: #E8EBE6;
+
+  --cc-diff-add: #E9EFDC;
+  --cc-diff-add-gutter: #DCE7C9;
+  --cc-diff-add-word: #E0E9CF;
+  --cc-diff-del: #F6E9E3;
+  --cc-diff-del-gutter: #F2DCD5;
+  --cc-diff-del-word: #ECCAC2;
+  --cc-diff-mark: #F0E8D8;
+  --cc-diff-mark-gutter: #E9DCC5;
+  --cc-code: #F5F1E4;
+
+  --cc-heat-0: #ECE6D8;
+  --cc-heat-1: #E5D1C8;
+  --cc-heat-2: #CFA99C;
+  --cc-heat-3: #B67E6B;
+  --cc-heat-4: #9C4F37;
+
+  --cc-shadow-card: 0 1px 3px rgba(64, 49, 26, 0.05), 0 6px 24px rgba(64, 49, 26, 0.07);
+  --cc-shadow-composer: 0 1px 2px rgba(64, 49, 26, 0.06), 0 14px 44px rgba(64, 49, 26, 0.10);
+  --cc-shadow-overlay: 0 8px 24px rgba(64, 49, 26, 0.12), 0 24px 64px rgba(64, 49, 26, 0.16);
+
+  --cc-bg-rgb: 251, 249, 244;
+  --cc-s1-rgb: 236, 230, 216;
+  --cc-t1-rgb: 35, 29, 18;
+  --cc-t2-rgb: 110, 99, 80;
+  --cc-bd2-rgb: 213, 201, 176;
+  --cc-ac-rgb: 150, 68, 43;
+  --cc-er-rgb: 194, 69, 50;
+  --cc-scrim-rgb: 21, 17, 11;
+}
+
+/* 暖旧 warm-classic */
+[data-theme="warm-classic"] {
+  color-scheme: light;
+
+  --cc-bg: #F6F0E1;
+  --cc-s0: #EDE5D1;
+  --cc-s1: #E5DBC3;
+  --cc-s2: #F1EBDA;
+  --cc-bd: #DED2B8;
+  --cc-bd2: #C8B897;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #908369;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. */
+  --cc-tab-edge: #D6C5A2;
+  --cc-tab-sep: #E2CFAA;
+  --cc-t1: #251E11;
+  --cc-t2: #6E6146;
+  --cc-t3: #746951;
+
+  --cc-ac: #96442B;
+  --cc-ac2: #7C3620;
+  --cc-ac-soft: #F0E1D0;
+  --cc-ac-soft-hover: #E8D2BE;
+  --cc-ac-border: #DFC0A8;
+  --cc-ac-ink: #96442B;
+  --cc-on-ac: #FBF6EC;
+
+  --cc-ok: #3E8153;
+  --cc-ok-soft: #E8F2E9;
+  --cc-ok-ink: #3A784D;
+  --cc-wn: #A8751F;
+  --cc-wn-soft: #F8F0DC;
+  --cc-wn-ink: #90641B;
+  --cc-er: #C74436;
+  --cc-er-soft: #FAECE8;
+  --cc-er-soft-hover: #F5DBD6;
+  --cc-er-ink: #BD4133;
+  --cc-info: #96442B;
+  --cc-info-soft: #ECDFCF;
+  --cc-info-ink: #96442B;
+
+  --cc-teal: #3E6B58;
+  --cc-teal-soft: #E9E7D7;
+  --cc-teal-border: #BBC5B5;
+  --cc-teal-icon: #E4E3D3;
+
+  --cc-diff-add: #E6ECD3;
+  --cc-diff-add-gutter: #D8E2BF;
+  --cc-diff-add-word: #DCE5C5;
+  --cc-diff-del: #F2E1D2;
+  --cc-diff-del-gutter: #EED4C6;
+  --cc-diff-del-word: #EAC3B5;
+  --cc-diff-mark: #ECE0C8;
+  --cc-diff-mark-gutter: #E5D5B6;
+  --cc-code: #EFE8D3;
+
+  --cc-heat-0: #E5DBC3;
+  --cc-heat-1: #E1CAB9;
+  --cc-heat-2: #CCA491;
+  --cc-heat-3: #B57B65;
+  --cc-heat-4: #9C4E36;
+
+  --cc-shadow-card: 0 1px 3px rgba(64, 49, 26, 0.05), 0 6px 24px rgba(64, 49, 26, 0.07);
+  --cc-shadow-composer: 0 1px 2px rgba(64, 49, 26, 0.06), 0 14px 44px rgba(64, 49, 26, 0.10);
+  --cc-shadow-overlay: 0 8px 24px rgba(64, 49, 26, 0.12), 0 24px 64px rgba(64, 49, 26, 0.16);
+
+  --cc-bg-rgb: 246, 240, 225;
+  --cc-s1-rgb: 229, 219, 195;
+  --cc-t1-rgb: 37, 30, 17;
+  --cc-t2-rgb: 110, 97, 70;
+  --cc-bd2-rgb: 200, 184, 151;
+  --cc-ac-rgb: 150, 68, 43;
+  --cc-er-rgb: 199, 68, 54;
+  --cc-scrim-rgb: 22, 18, 10;
+}
+
+/* 青瓷 celadon */
+[data-theme="celadon"] {
+  color-scheme: light;
+
+  --cc-bg: #F5F8F5;
+  --cc-s0: #EAF0EB;
+  --cc-s1: #E0E9E2;
+  --cc-s2: #F0F4F0;
+  --cc-bd: #DCE5DE;
+  --cc-bd2: #C6D4C9;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #818D84;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. */
+  --cc-tab-edge: #C5D3C8;
+  --cc-tab-sep: #CEDCD1;
+  --cc-t1: #1C231D;
+  --cc-t2: #5D6B60;
+  --cc-t3: #667268;
+
+  --cc-ac: #96442B;
+  --cc-ac2: #7C3620;
+  --cc-ac-soft: #F0E7DC;
+  --cc-ac-soft-hover: #E8DACB;
+  --cc-ac-border: #DFC9B6;
+  --cc-ac-ink: #96442B;
+  --cc-on-ac: #FBF6EC;
+
+  --cc-ok: #3E8153;
+  --cc-ok-soft: #E3EFE5;
+  --cc-ok-ink: #39764C;
+  --cc-wn: #A8751F;
+  --cc-wn-soft: #F8F0DC;
+  --cc-wn-ink: #90641B;
+  --cc-er: #C74436;
+  --cc-er-soft: #FAECE8;
+  --cc-er-soft-hover: #F5DBD6;
+  --cc-er-ink: #BD4133;
+  --cc-info: #96442B;
+  --cc-info-soft: #ECE6E1;
+  --cc-info-ink: #96442B;
+
+  --cc-teal: #2F6E63;
+  --cc-teal-soft: #E7EEEB;
+  --cc-teal-border: #B6CCC6;
+  --cc-teal-icon: #E1EAE6;
+
+  --cc-diff-add: #E4F0E5;
+  --cc-diff-add-gutter: #D4E6D7;
+  --cc-diff-add-word: #D9E9DB;
+  --cc-diff-del: #F1E8E4;
+  --cc-diff-del-gutter: #EEDBD6;
+  --cc-diff-del-word: #E9C9C3;
+  --cc-diff-mark: #EBE7D9;
+  --cc-diff-mark-gutter: #E4DBC6;
+  --cc-code: #EFF4F0;
+
+  --cc-heat-0: #E0E9E2;
+  --cc-heat-1: #E0D0C9;
+  --cc-heat-2: #CBA99C;
+  --cc-heat-3: #B47E6C;
+  --cc-heat-4: #9C4F37;
+
+  --cc-shadow-card: 0 1px 3px rgba(28, 42, 32, 0.05), 0 6px 24px rgba(28, 42, 32, 0.06);
+  --cc-shadow-composer: 0 1px 2px rgba(28, 42, 32, 0.05), 0 14px 44px rgba(28, 42, 32, 0.08);
+  --cc-shadow-overlay: 0 8px 24px rgba(28, 42, 32, 0.10), 0 24px 64px rgba(28, 42, 32, 0.15);
+
+  --cc-bg-rgb: 245, 248, 245;
+  --cc-s1-rgb: 224, 233, 226;
+  --cc-t1-rgb: 28, 35, 29;
+  --cc-t2-rgb: 93, 107, 96;
+  --cc-bd2-rgb: 198, 212, 201;
+  --cc-ac-rgb: 150, 68, 43;
+  --cc-er-rgb: 199, 68, 54;
+  --cc-scrim-rgb: 17, 21, 17;
+}
+
+/* 暗色 dark */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cc-bg: #201D17;
+  --cc-s0: #1A1813;
+  --cc-s1: #2B271F;
+  --cc-s2: #252119;
+  --cc-bd: #383226;
+  --cc-bd2: #4C4433;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #756D5C;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. Both go
+     *lighter* than the trough here: an ink theme's paper is already so dark
+     that pure black is only 1.26:1 against it, so there is no room downward. */
+  --cc-tab-edge: #353024;
+  --cc-tab-sep: #2D281F;
+  --cc-t1: #EDE6D6;
+  --cc-t2: #A79B83;
+  --cc-t3: #918777;
+
+  --cc-ac: #D07B52;
+  --cc-ac2: #DE8F66;
+  --cc-ac-soft: #3B2A1E;
+  --cc-ac-soft-hover: #493424;
+  --cc-ac-border: #59402C;
+  --cc-ac-ink: #D2815B;
+  --cc-on-ac: #201D17;
+
+  --cc-ok: #84B383;
+  --cc-ok-soft: #28301D;
+  --cc-ok-ink: #84B383;
+  --cc-wn: #D3A34C;
+  --cc-wn-soft: #332916;
+  --cc-wn-ink: #D3A34C;
+  --cc-er: #E06B52;
+  --cc-er-soft: #3A241B;
+  --cc-er-soft-hover: #552F24;
+  --cc-er-ink: #E17058;
+  --cc-info: #D07B52;
+  --cc-info-soft: #3C2C20;
+  --cc-info-ink: #D3845E;
+
+  --cc-teal: #7DD3C7;
+  --cc-teal-soft: #2B332C;
+  --cc-teal-border: #3C544C;
+  --cc-teal-icon: #313E37;
+
+  --cc-diff-add: #2B331E;
+  --cc-diff-add-gutter: #354026;
+  --cc-diff-add-word: #323C24;
+  --cc-diff-del: #3B281F;
+  --cc-diff-del-gutter: #462D23;
+  --cc-diff-del-word: #563328;
+  --cc-diff-mark: #39301E;
+  --cc-diff-mark-gutter: #443822;
+  --cc-code: #1A1813;
+
+  --cc-heat-0: #2B271F;
+  --cc-heat-1: #473224;
+  --cc-heat-2: #6D4631;
+  --cc-heat-3: #985D3F;
+  --cc-heat-4: #C5754E;
+
+  --cc-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 24px rgba(0, 0, 0, 0.35);
+  --cc-shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 44px rgba(0, 0, 0, 0.50);
+  --cc-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.50), 0 24px 64px rgba(0, 0, 0, 0.55);
+
+  --cc-bg-rgb: 32, 29, 23;
+  --cc-s1-rgb: 43, 39, 31;
+  --cc-t1-rgb: 237, 230, 214;
+  --cc-t2-rgb: 167, 155, 131;
+  --cc-bd2-rgb: 76, 68, 51;
+  --cc-ac-rgb: 208, 123, 82;
+  --cc-er-rgb: 224, 107, 82;
+  --cc-scrim-rgb: 6, 6, 6;
+}
+
+/* 靛墨 ink-blue */
+[data-theme="ink-blue"] {
+  color-scheme: dark;
+
+  --cc-bg: #1A1D24;
+  --cc-s0: #15181E;
+  --cc-s1: #252A35;
+  --cc-s2: #20242D;
+  --cc-bd: #2F3441;
+  --cc-bd2: #434A5B;
+  /* Control boundary — clears WCAG 1.4.11's 3:1 on the card lining. */
+  --cc-bd-strong: #6A707E;
+  /* Tab strip. Trough stays --cc-s0, so these two carry the shape. Both go
+     *lighter* than the trough here: an ink theme's paper is already so dark
+     that pure black is only 1.25:1 against it, so there is no room downward. */
+  --cc-tab-edge: #2C303C;
+  --cc-tab-sep: #252833;
+  --cc-t1: #E8EAF0;
+  --cc-t2: #9AA1B2;
+  --cc-t3: #858B97;
+
+  --cc-ac: #D07B52;
+  --cc-ac2: #DE8F66;
+  --cc-ac-soft: #37281F;
+  --cc-ac-soft-hover: #453326;
+  --cc-ac-border: #57402F;
+  --cc-ac-ink: #D17E56;
+  --cc-on-ac: #1A1D24;
+
+  --cc-ok: #6FB58C;
+  --cc-ok-soft: #213026;
+  --cc-ok-ink: #6FB58C;
+  --cc-wn: #D3A34C;
+  --cc-wn-soft: #2F2917;
+  --cc-wn-ink: #D3A34C;
+  --cc-er: #E0685E;
+  --cc-er-soft: #37211D;
+  --cc-er-soft-hover: #522C27;
+  --cc-er-ink: #E06A60;
+  --cc-info: #8FA8E8;
+  --cc-info-soft: #2D3343;
+  --cc-info-ink: #8FA8E8;
+
+  --cc-teal: #7DD3C7;
+  --cc-teal-soft: #263338;
+  --cc-teal-border: #385455;
+  --cc-teal-icon: #2C3E41;
+
+  --cc-diff-add: #233028;
+  --cc-diff-add-gutter: #2C3B31;
+  --cc-diff-add-word: #29382E;
+  --cc-diff-del: #36282C;
+  --cc-diff-del-gutter: #422C30;
+  --cc-diff-del-word: #513234;
+  --cc-diff-mark: #34302A;
+  --cc-diff-mark-gutter: #3F382C;
+  --cc-code: #15181E;
+
+  --cc-heat-0: #252A35;
+  --cc-heat-1: #42322E;
+  --cc-heat-2: #6A4638;
+  --cc-heat-3: #965D43;
+  --cc-heat-4: #C5754F;
+
+  --cc-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 24px rgba(0, 0, 0, 0.35);
+  --cc-shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 44px rgba(0, 0, 0, 0.50);
+  --cc-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.50), 0 24px 64px rgba(0, 0, 0, 0.55);
+
+  --cc-bg-rgb: 26, 29, 36;
+  --cc-s1-rgb: 37, 42, 53;
+  --cc-t1-rgb: 232, 234, 240;
+  --cc-t2-rgb: 154, 161, 178;
+  --cc-bd2-rgb: 67, 74, 91;
+  --cc-ac-rgb: 208, 123, 82;
+  --cc-er-rgb: 224, 104, 94;
+  --cc-scrim-rgb: 6, 6, 6;
+}
+
+/* ─── 语义层 ──────────────────────────────────────────────────────
+   页面消费的每个 --color-* 只在这里定义一次,全部指向上面的 --cc-*。
+   这一层与主题无关,所以加主题不必碰它。
+   (只保留聊天页真正用到的那一部分;diff / heat / pet 那些是 cc-haha
+   独有面板的,本项目没有对应的东西。) */
+:root {
+  /* 底:页面(--bg)、侧栏与次级面板(--s0)、悬停/选中(--s1)、卡片衬底(--s2) */
+  --color-background: var(--cc-bg);
+  --color-surface: var(--cc-bg);
+  --color-surface-container: var(--cc-s2);
+  --color-surface-container-low: var(--cc-s0);
+  --color-surface-container-high: var(--cc-s1);
+  --color-surface-container-lowest: var(--cc-bg);
+  --color-surface-variant: var(--cc-s0);
+  --color-surface-sidebar: var(--cc-s0);
+  --color-surface-hover: var(--cc-s1);
+  --color-surface-selected: var(--cc-s1);
+  /* 用户消息的底。cc-haha 里它不是个小气泡,而是一整块浅底卡 */
+  --color-surface-user-msg: var(--cc-s1);
+
+  /* 描边 */
+  --color-outline: var(--cc-bd2);
+  --color-outline-variant: var(--cc-bd);
+  --color-border: var(--cc-bd);
+  /* 交互控件的边界。--color-border 是 ~1.2:1 的分隔发丝线,
+     一旦要去勾勒一个可点的控件就过不了 WCAG 1.4.11 */
+  --color-border-strong: var(--cc-bd-strong);
+  --color-border-focus: var(--cc-ac);
+
+  /* 文字 */
+  --color-text-primary: var(--cc-t1);
+  --color-text-secondary: var(--cc-t2);
+  --color-text-tertiary: var(--cc-t3);
+  --color-text-accent: var(--cc-info);
+
+  /* 赤陶印 —— 品牌主色 */
+  --color-brand: var(--cc-ac);
+  --color-brand-hover: var(--cc-ac2);
+  /* 刻意用不透明色:/10 这类 alpha 修饰会编译成 Safari 15 WebView 解析不了的
+     color 函数(cc-haha 的 vite-config.test.ts 专门守着这条) */
+  --color-brand-soft: var(--cc-ac-soft);
+  --color-brand-soft-hover: var(--cc-ac-soft-hover);
+  /* 压在 --color-brand-soft 上的字。不能直接用 --color-brand:
+     两套墨色主题里赤陶压在自己的软底上只有 4.3~4.5:1 */
+  --color-on-brand-soft: var(--cc-ac-ink);
+  --color-on-primary: var(--cc-on-ac);
+
+  /* 状态色。--color-on-<tone>-container 才是该软底上校过 AA 的前景;
+     单用 --color-<tone> 压在自己的底上太浅(那就是 2.66:1 的警告徽标) */
+  --color-success: var(--cc-ok);
+  --color-success-container: var(--cc-ok-soft);
+  --color-on-success-container: var(--cc-ok-ink);
+  --color-warning: var(--cc-wn);
+  --color-warning-container: var(--cc-wn-soft);
+  --color-on-warning-container: var(--cc-wn-ink);
+  --color-error: var(--cc-er);
+  --color-error-container: var(--cc-er-soft);
+  --color-on-error-container: var(--cc-er-ink);
+  --color-info: var(--cc-info);
+  --color-info-container: var(--cc-info-soft);
+  --color-on-info-container: var(--cc-info-ink);
+  --color-teal: var(--cc-teal);
+  --color-teal-soft: var(--cc-teal-soft);
+  --color-code-bg: var(--cc-code);
+
+  --shadow-card: var(--cc-shadow-card);
+  --shadow-composer: var(--cc-shadow-composer);
+  --shadow-overlay: var(--cc-shadow-overlay);
+
+  /* 字体角色。标题走衬线 —— 那是「纸 · 墨 · 印」里"墨"的那一半。
+     Noto Serif SC 只自托管了 latin 子集(CJK 一套要 ~6MB),中文回落到
+     系统衬线,这也正是 cc-haha 自己的做法。 */
+  --font-headline: 'Noto Serif SC', 'Songti SC', 'Source Han Serif SC', 'Noto Serif CJK SC', 'SimSun', Georgia, serif;
+  --font-body: 'Inter', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* 圆角刻度,来自设计交付:6~7 徽标 / 9~11 控件 / 12~14 内层卡 /
+     16~18 卡片 / 20 输入框 / 24 弹窗 / 99 胶囊 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 13px;
+  --radius-xl: 17px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+  --radius-full: 9999px;
+
+  /* 布局尺寸 */
+  --sidebar-width: 280px;
+  --motion-duration: 280ms;
+  --motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 上面漏掉但页面要用的两个 */
+:root {
+  --color-surface-info: var(--cc-s0);
+  --color-code-fg: var(--cc-t1);
+
+  /* ─── 间距与字号 ───────────────────────────────────────────────
+     字号取自 cc-haha 聊天组件里的实测值(不是我估的):
+     正文与用户消息 14.5px,行内码 13px,状态行 13.5px,次级说明 12.5px,
+     时间戳/徽标 11px。行高 leading-relaxed = 1.625。 */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px;
+  --fs-stamp: 11px;   /* 时间戳、徽标 */
+  --fs-note: 12.5px;  /* 次级说明 */
+  --fs-code: 13px;    /* 行内码 */
+  --fs-status: 13.5px;/* 生成状态行 */
+  --fs-body: 14.5px;  /* 正文 / 用户消息 */
+  --fs-title: 20px;   /* 会话标题(衬线) */
+  --lh-relaxed: 1.625;
+  /* 触控目标下限 */
+  --touch: 44px;
+  --z-sticky: 10; --z-backdrop: 40; --z-modal: 50; --z-toast: 60;
+}
+
+/* ─── 触控与移动端(与 ui-tokens.css 同源的那套规则)─────────────
+   按【指针类型】而不是视口宽度分档:带触摸屏的笔记本同样按不准 36px 的按钮。
+   选择器都带 html 前缀把权重抬到 0,0,2 —— 本文件是注入到页面 <style> 最前面的,
+   页面自己的 `button { min-height: 34px }` 在后面、同权重会赢。 */
+@media (pointer: coarse), (max-width: 640px) {
+  html button,
+  html select,
+  html summary,
+  html input:not([type="checkbox"]),
+  html textarea {
+    min-height: var(--touch);
+  }
+  html button.sm { min-height: 40px; }
+  html button.icon { min-width: var(--touch); }
+  html input[type="checkbox"] { width: 24px; height: 24px; min-height: 24px; }
+}
+/* iOS Safari 会在聚焦 font-size < 16px 的输入框时【整页放大】,而且退出后不复位。
+   这不是审美取舍 —— 是页面当着用户的面跳一下,之后还能横向滑。控件一律 16px。 */
+@media (max-width: 640px) {
+  html input, html select, html textarea { font-size: 16px; }
+}
+
+/* ─── 自托管字体 ───────────────────────────────────────────────
+   由 server.js 的 /fonts/*.woff2 路由提供(一年不可变缓存)。
+   不走 CDN:这台服务常在内网/离线跑,外链的结果是字体直接不生效。
+   只有 latin 子集,中文回落系统字体 —— 见 src/fonts/NOTICE.md。 */
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter'; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Noto Serif SC'; font-style: normal; font-weight: 600 900; font-display: swap;
+  src: url('/fonts/noto-serif-sc-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

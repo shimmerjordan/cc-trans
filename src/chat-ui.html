@@ -8,6 +8,14 @@
 <style>
   /*__TOKENS__*/
 
+  /* ─────────────────────────────────────────────────────────────────
+     聊天页外观 = cc-haha 的「纸 · 墨 · 印」。
+     底是暖纸、主色是赤陶印 #96442B、标题走衬线;侧栏是【浅色】不是深色,
+     用户消息是【整块浅底卡】不是右侧小气泡,输入框是【带圆形发送键的大圆角卡】。
+     所有颜色一律走 --color-*(语义层,见 haha-tokens.css),页面里不写死色值 ——
+     六套主题就是靠这一点一次性全对。
+     ───────────────────────────────────────────────────────────────── */
+
   * { box-sizing: border-box; }
   /* 必须在所有 display 规则之前:给元素设了 display:grid/flex 会【覆盖】浏览器
      默认的 [hidden]{display:none},于是 hidden 的容器照样参与布局。
@@ -15,272 +23,770 @@
   [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
-    margin: 0; font: var(--fs-base)/1.6 var(--sans);
-    background: var(--bg); color: var(--ink);
+    margin: 0;
+    font: 400 var(--fs-body)/var(--lh-relaxed) var(--font-body);
+    background: var(--color-background); color: var(--color-text-primary);
     -webkit-font-smoothing: antialiased; overflow: hidden;
   }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+  :focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
   :focus:not(:focus-visible) { outline: none; }
 
   button {
-    font: inherit; cursor: pointer; border: 1px solid var(--line-strong);
-    background: var(--card); color: var(--ink); border-radius: var(--r-sm);
-    padding: 6px var(--s3); min-height: 32px; display: inline-flex; align-items: center; gap: 6px;
-    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+    font: inherit; cursor: pointer;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-primary); border-radius: var(--radius-md);
+    padding: 6px var(--s3); min-height: 32px;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background 150ms var(--motion-easing), border-color 150ms var(--motion-easing), color 150ms var(--motion-easing);
   }
-  button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 550; }
-  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-  button.ghost { background: none; border-color: transparent; color: var(--muted); }
-  button.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
-  button.sm { min-height: 26px; padding: 2px var(--s2); font-size: var(--fs-sm); }
+  button:hover:not(:disabled) { background: var(--color-surface-hover); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--color-brand); color: var(--color-on-primary); border-color: var(--color-brand); font-weight: 550; }
+  button.primary:hover:not(:disabled) { background: var(--color-brand-hover); border-color: var(--color-brand-hover); }
+  button.ghost { background: none; border-color: transparent; color: var(--color-text-secondary); }
+  button.ghost:hover:not(:disabled) { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  button.sm { min-height: 26px; padding: 2px var(--s2); font-size: var(--fs-note); }
   button.icon { padding: 6px; min-width: 32px; justify-content: center; }
-  button.icon svg { width: 15px; height: 15px; }
-  select, input, textarea {
-    font: inherit; font-size: var(--fs-md); color: var(--ink);
-    background: var(--card); border: 1px solid var(--line-strong);
-    border-radius: var(--r-sm); padding: 5px var(--s2); min-height: 30px; max-width: 100%;
-  }
-  select { appearance: none; padding-right: 24px; cursor: pointer;
-    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
-    background-position: right 11px center, right 6px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
-  select:focus-visible, input:focus-visible, textarea:focus-visible {
-    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
-  }
-  select:disabled { opacity: .6; cursor: not-allowed; background: var(--surface-2); }
+  button.icon svg { width: 16px; height: 16px; }
+  button.danger { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 35%, var(--color-border)); }
 
-  /* ── 三栏骨架 ──
+  select, input, textarea {
+    font: inherit; font-size: var(--fs-note); color: var(--color-text-primary);
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); padding: 5px var(--s2); min-height: 30px; max-width: 100%;
+  }
+  select { appearance: none; padding-right: 22px; cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 10px center, right 5px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: none; border-color: var(--color-border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 18%, transparent);
+  }
+  select:disabled { opacity: .6; cursor: not-allowed; background: var(--color-surface-variant); }
+
+  dialog {
+    border: 1px solid var(--color-border); border-radius: var(--radius-3xl);
+    background: var(--color-surface); color: var(--color-text-primary);
+    padding: var(--s6); box-shadow: var(--shadow-overlay);
+    max-width: min(460px, calc(100vw - var(--s6)));
+  }
+  dialog::backdrop { background: rgba(var(--cc-scrim-rgb), .42); }
+  dialog h3 { margin: 0 0 var(--s3); font-size: 17px; font-family: var(--font-headline); font-weight: 600; }
+  dialog p { margin: 0 0 var(--s4); color: var(--color-text-secondary); font-size: var(--fs-note); }
+  dialog input[type=text] { width: 100%; min-height: 38px; font-size: var(--fs-body); }
+  .dlg-acts { display: flex; gap: var(--s2); justify-content: flex-end; margin-top: var(--s5); }
+
+  /* ── 骨架 ──
      grid-template-rows: minmax(0,1fr) + 子项 min-height:0 是必须的:
-     默认 auto 行高会被"消息流"的内容撑到远超视口(实测 1732px vs 视口 1000px),
-     结果输入框被挤出屏幕、iframe 高度也跟着算错。 */
-  .app { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+     默认 auto 行高会被"消息流"的内容撑到远超视口,结果输入框被挤出屏幕。 */
+  .app {
+    display: grid; grid-template-columns: var(--sidebar-width) 1fr;
+    grid-template-rows: minmax(0, 1fr); height: 100dvh; overflow: hidden;
+    background: var(--color-background);
+  }
   .app > * { min-height: 0; }
-  .app.with-panel { grid-template-columns: 260px 1fr minmax(360px, 38%); }
+  .app.with-panel { grid-template-columns: var(--sidebar-width) 1fr minmax(360px, 38%); }
   .app.rail { grid-template-columns: 0 1fr; }
   .app.rail.with-panel { grid-template-columns: 0 1fr minmax(360px, 38%); }
 
-  /* ── 左栏:会话列表 ── */
+  /* ── 左栏 ──
+     cc-haha 的侧栏是【浅色】的,和正文同一族纸底,只靠一条发丝线分开。
+     原来那版是深色导航条 —— 那是 cc-trans 自己的观感,不是这套。 */
   aside {
-    background: var(--nav-bg); color: var(--nav-ink); display: flex; flex-direction: column;
-    min-width: 0; overflow: hidden; border-right: 1px solid oklch(0 0 0 / .2);
+    background: var(--color-surface-sidebar); color: var(--color-text-primary);
+    display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+    border-right: 1px solid var(--color-border);
   }
-  aside .top { padding: var(--s3); display: flex; gap: var(--s2); align-items: center; }
-  aside .brand { font-weight: 650; font-size: var(--fs-md); flex: 1; letter-spacing: .2px; white-space: nowrap; }
-  aside button { background: oklch(1 0 0 / .1); border-color: oklch(1 0 0 / .14); color: var(--nav-ink); }
-  aside button:hover:not(:disabled) { background: oklch(1 0 0 / .2); border-color: oklch(1 0 0 / .3); }
-  .new-chat { margin: 0 var(--s3) var(--s3); }
-  .new-chat button { width: 100%; justify-content: center; }
-  .sessions { flex: 1; overflow-y: auto; padding: 0 var(--s2) var(--s3); }
+  aside .top { padding: var(--s5) var(--s5) var(--s3); display: flex; gap: var(--s2); align-items: center; }
+  /* 字标走衬线,后半截是赤陶 —— cc-haha 的 "cc-haha" 就是这么排的 */
+  .brand {
+    flex: 1; min-width: 0; font-family: var(--font-headline); font-size: 19px;
+    font-weight: 600; letter-spacing: .01em; white-space: nowrap; color: var(--color-text-primary);
+  }
+  .brand em { font-style: normal; color: var(--color-brand); }
+  aside .top button { border-color: transparent; background: none; color: var(--color-text-tertiary); }
+  aside .top button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+
+  .new-chat { padding: 0 var(--s4) var(--s3); }
+  .new-chat button {
+    width: 100%; justify-content: flex-start; gap: var(--s3);
+    min-height: 40px; padding: 0 var(--s4); font-size: var(--fs-body); font-weight: 500;
+    background: none; border-color: transparent; color: var(--color-text-primary);
+    border-radius: var(--radius-lg);
+  }
+  .new-chat button:hover { background: var(--color-surface-hover); }
+  .new-chat button svg { width: 18px; height: 18px; color: var(--color-text-secondary); }
+
+  .find { padding: 0 var(--s4) var(--s4); position: relative; }
+  .find input {
+    width: 100%; background: var(--color-surface); border-color: var(--color-border);
+    color: var(--color-text-primary); padding-left: 32px; min-height: 36px;
+    font-size: var(--fs-note); border-radius: var(--radius-lg);
+  }
+  .find input::placeholder { color: var(--color-text-tertiary); }
+  .find > svg { position: absolute; left: calc(var(--s4) + 10px); top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--color-text-tertiary); pointer-events: none; }
+  .find kbd {
+    position: absolute; right: calc(var(--s4) + 8px); top: 50%; transform: translateY(-50%);
+    font: 400 10px/1 var(--font-mono); color: var(--color-text-tertiary);
+    border: 1px solid var(--color-border); border-radius: 4px; padding: 3px 5px; pointer-events: none;
+  }
+
+  .sessions { flex: 1; overflow-y: auto; padding: 0 var(--s3) var(--s4); }
+  .grp {
+    font-size: var(--fs-stamp); color: var(--color-text-tertiary);
+    padding: var(--s4) var(--s3) var(--s1); letter-spacing: .04em; font-weight: 500;
+  }
+  /* 选中的会话是一张【浮起来的白卡】(描边 + 微阴影),不是一块高亮底 */
   .sess {
-    display: flex; align-items: center; gap: 6px; padding: 7px var(--s2);
-    border-radius: var(--r-sm); cursor: pointer; color: oklch(1 0 0 / .72);
-    font-size: var(--fs-md); white-space: nowrap;
+    display: flex; align-items: flex-start; gap: var(--s2);
+    padding: 9px var(--s3); border-radius: var(--radius-lg); cursor: pointer;
+    color: var(--color-text-secondary); font-size: var(--fs-note);
+    border: 1px solid transparent; position: relative;
   }
-  .sess:hover { background: oklch(1 0 0 / .08); color: var(--nav-ink); }
-  .sess.active { background: oklch(1 0 0 / .14); color: var(--nav-ink); }
-  .sess .t { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .sess .acts { display: none; gap: 2px; }
-  .sess:hover .acts, .sess.active .acts { display: flex; }
-  .sess .acts button { padding: 2px 5px; min-height: 0; font-size: var(--fs-xs); background: none; border: 0; color: oklch(1 0 0 / .6); }
-  .sess .acts button:hover { color: var(--nav-ink); background: oklch(1 0 0 / .16); }
-  /* 底栏:身份一行、操作一行。之前挤在一行会把"admin(管理员) · 0/200 对话"
-     和两个按钮压成折行,窄栏里必然溢出 */
+  .sess:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .sess.active {
+    background: var(--color-surface); border-color: var(--color-border);
+    color: var(--color-text-primary); box-shadow: var(--shadow-card);
+  }
+  .sess .txt { flex: 1; min-width: 0; }
+  .sess .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 450; }
+  .sess.active .t { font-weight: 550; }
+  .sess .p { display: block; font-size: var(--fs-stamp); color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .sess .acts { display: none; gap: 1px; flex: none; padding-top: 1px; }
+  .sess:hover .acts, .sess.active .acts, .sess:focus-within .acts { display: flex; }
+  .sess .acts button { padding: 2px 5px; min-height: 0; font-size: var(--fs-stamp); background: none; border: 0; color: var(--color-text-tertiary); border-radius: var(--radius-sm); }
+  .sess .acts button:hover { color: var(--color-text-primary); background: var(--color-surface-hover); }
+  .sess .pin { flex: none; color: var(--color-brand); font-size: 10px; padding-top: 4px; }
+  /* 正在生成:断线保活之后"另一个标签页里那条还在跑"是常态,列表是唯一能发现它的地方 */
+  .sess .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--color-brand); margin: 7px 0 0; animation: pulse 1.4s var(--motion-easing) infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .sess-empty { padding: var(--s4) var(--s3); font-size: var(--fs-note); color: var(--color-text-tertiary); }
+
   aside .foot {
-    padding: var(--s3); border-top: 1px solid oklch(1 0 0 / .1);
-    font-size: var(--fs-xs); color: oklch(1 0 0 / .55);
+    padding: var(--s3) var(--s4) var(--s4); border-top: 1px solid var(--color-border);
     display: flex; flex-direction: column; gap: var(--s2); min-width: 0;
+    font-size: var(--fs-note); color: var(--color-text-tertiary);
   }
   aside .foot .me { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-  aside .foot .me b { color: oklch(1 0 0 / .82); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  aside .foot .me span { flex: none; }
-  /* 只有快撞会话上限时才变色 —— 平时这里就是个中性的条数。
-     不能用 var(--warn):那是给亮底调的深琥珀,放到左栏这块【固定深色】上只有
-     3.46:1(11px 小字要 4.5:1)。左栏一律走"深底上的亮色",和旁边的
-     oklch(1 0 0 / .55) 同一套。 */
-  aside .foot .me span.near-cap { color: oklch(.85 .15 80); }
+  aside .foot .me b { color: var(--color-text-primary); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  aside .foot .me span { flex: none; font-size: var(--fs-stamp); }
+  aside .foot .me span.near-cap { color: var(--color-warning); }
   aside .foot .acts { display: flex; gap: var(--s2); align-items: center; }
   aside .foot .acts a, aside .foot .acts button {
-    flex: 1; justify-content: center; text-align: center;
-    font-size: var(--fs-xs); padding: 4px var(--s2); min-height: 26px;
-    border-radius: var(--r-sm); text-decoration: none;
-    background: oklch(1 0 0 / .08); border: 1px solid oklch(1 0 0 / .12); color: oklch(1 0 0 / .78);
+    flex: 1; justify-content: center; text-align: center; text-decoration: none;
+    font-size: var(--fs-stamp); padding: 5px var(--s2); min-height: 30px;
+    border-radius: var(--radius-md); border: 1px solid var(--color-border);
+    background: var(--color-surface); color: var(--color-text-secondary);
     display: inline-flex; align-items: center;
   }
-  aside .foot .acts a:hover, aside .foot .acts button:hover { background: oklch(1 0 0 / .18); color: var(--nav-ink); }
+  aside .foot .acts a:hover, aside .foot .acts button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+
+  /* 用量条:侧栏底部常驻一行。为什么摆在这儿而不是塞进偏好设置 ——
+     "我还能不能再发一句"是随时要看一眼的信息,不是设置项。点开看全部。 */
+  aside .foot .usage-strip {
+    display: flex; align-items: center; gap: var(--s2); width: 100%;
+    padding: 6px var(--s2); border-radius: var(--radius-md);
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-secondary); font-size: var(--fs-stamp); text-align: left;
+  }
+  aside .foot .usage-strip:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  aside .foot .usage-strip .ut { flex: none; }
+  aside .foot .usage-strip .track { flex: 1; height: 4px; border-radius: 999px; background: var(--color-border); overflow: hidden; min-width: 24px; }
+  aside .foot .usage-strip .track i { display: block; height: 100%; background: var(--color-brand); border-radius: 999px; transition: width var(--motion-fast) var(--motion-easing); }
+  aside .foot .usage-strip .track i.warn { background: var(--color-warning); }
+  aside .foot .usage-strip .track i.err { background: var(--color-danger); }
+  aside .foot .usage-strip .up { flex: none; font-variant-numeric: tabular-nums; }
+  aside .foot .usage-strip .up.warn { color: var(--color-warning); }
+  aside .foot .usage-strip .up.err { color: var(--color-danger); }
+
+  /* 用量弹窗里的条目 */
+  .ubar { margin-bottom: var(--s3); }
+  .ubar .r1 { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); font-size: var(--fs-note); margin-bottom: 4px; }
+  .ubar .r1 b { font-weight: 550; color: var(--color-text-primary); }
+  .ubar .r1 .p { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
+  .ubar .r1 .p.warn { color: var(--color-warning); }
+  .ubar .r1 .p.err { color: var(--color-danger); }
+  .ubar .tr { height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
+  .ubar .tr i { display: block; height: 100%; background: var(--color-brand); border-radius: 999px; }
+  .ubar .tr i.warn { background: var(--color-warning); }
+  .ubar .tr i.err { background: var(--color-danger); }
+  .ubar .sub { font-size: var(--fs-stamp); color: var(--color-text-tertiary); margin-top: 3px; }
+  .u-head { font-size: var(--fs-note); font-weight: 550; color: var(--color-text-primary); margin: var(--s4) 0 var(--s2); }
+  .u-head:first-child { margin-top: 0; }
+  .u-nums { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-note); color: var(--color-text-secondary); margin-bottom: var(--s2); }
+  .u-nums b { color: var(--color-text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
+  .u-alert {
+    border: 1px solid var(--color-danger); border-radius: var(--radius-md);
+    padding: var(--s3); margin-bottom: var(--s3); font-size: var(--fs-note);
+  }
+  .u-alert b { color: var(--color-danger); }
 
   /* ── 中栏 ── */
-  main { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
-  .bar {
-    display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4);
-    border-bottom: 1px solid var(--line); background: var(--card); flex-wrap: wrap; min-height: 48px;
+  main { display: flex; flex-direction: column; min-width: 0; background: var(--color-background); position: relative; }
+
+  /* 会话抬头:衬线大标题 + 一行元信息(条数 · 最后更新 · 模型)。
+     这是 cc-haha 每个会话最上面那块。原来那版顶栏塞满了选择器 ——
+     那些控件在这套设计里属于输入框,不属于抬头。 */
+  .chat-head {
+    padding: var(--s5) var(--s7) var(--s4);
+    border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: flex-start; gap: var(--s3);
+    background: var(--color-background);
   }
-  .bar .grow { flex: 1; min-width: 0; }
-  .bar label { font-size: var(--fs-sm); color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
-  .lock-note { font-size: var(--fs-xs); color: var(--warn); }
+  .chat-head .htxt { flex: 1; min-width: 0; }
+  .chat-title {
+    margin: 0; font-family: var(--font-headline); font-size: var(--fs-title);
+    font-weight: 600; line-height: 1.3; letter-spacing: -.01em;
+    color: var(--color-text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chat-meta {
+    margin-top: 3px; font-size: var(--fs-note); color: var(--color-text-tertiary);
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  }
+  .chat-meta .sep { opacity: .5; }
+  .chat-meta .liveflag { color: var(--color-success); display: inline-flex; align-items: center; gap: 5px; }
+  .chat-meta .liveflag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s var(--motion-easing) infinite; }
+  .chat-head .hacts { display: flex; gap: var(--s1); flex: none; }
+  .chat-head .hacts button { border-color: transparent; background: none; color: var(--color-text-tertiary); }
+  .chat-head .hacts button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
 
-  .stream { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; scroll-behavior: smooth; }
-  .stream-inner { max-width: 780px; margin: 0 auto; padding: var(--s6) var(--s4) var(--s4); }
+  /* 公告条 */
+  .notice {
+    display: flex; gap: var(--s3); align-items: flex-start;
+    padding: var(--s3) var(--s7); font-size: var(--fs-note);
+    background: var(--color-info-container); color: var(--color-on-info-container);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .notice.warn { background: var(--color-warning-container); color: var(--color-on-warning-container); }
+  .notice.err { background: var(--color-error-container); color: var(--color-on-error-container); }
+  .notice .nt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .notice button { background: none; border: 0; color: inherit; opacity: .65; min-height: 22px; padding: 0 4px; }
+  .notice button:hover { opacity: 1; background: none; }
 
+  .resumed {
+    padding: var(--s3) var(--s7); font-size: var(--fs-note);
+    color: var(--color-on-success-container); background: var(--color-success-container);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .stream-wrap { flex: 1; min-height: 0; position: relative; display: flex; }
+  .stream { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; }
+  /* 正文栏宽度。cc-haha 的对话列比 cc-trans 原来那版宽、留白也更大 */
+  .stream-inner { max-width: 800px; margin: 0 auto; padding: var(--s7) var(--s7) var(--s6); }
+
+  /* ── 回合导航(左侧细条)── */
+  .nav-lane {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 22px; z-index: var(--z-sticky);
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+    padding: var(--s4) 0; pointer-events: none;
+  }
+  .nav-lane.on { pointer-events: auto; }
+  .nav-lane button { border: 0; background: none; padding: 0 0 0 5px; min-height: 0; height: 10px; display: flex; align-items: center; cursor: pointer; flex: none; }
+  /* 宽度【不】做过渡:它是每次 pointermove 直接算出来的,加了过渡反而追不上指针 */
+  .nav-lane button i { display: block; height: 2px; border-radius: 2px; background: var(--color-outline); transition: background 150ms var(--motion-easing); }
+  .nav-lane button:hover i, .nav-lane button:focus-visible i, .nav-lane button.on i { background: var(--color-brand); }
+  .nav-tip {
+    position: fixed; z-index: var(--z-toast); max-width: 320px;
+    background: var(--color-surface); color: var(--color-text-primary);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-overlay); padding: var(--s2) var(--s3);
+    font-size: var(--fs-note); line-height: 1.5; pointer-events: none;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  .to-latest {
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: var(--s4); z-index: var(--z-sticky);
+    background: var(--color-surface); border: 1px solid var(--color-border); box-shadow: var(--shadow-card);
+    border-radius: var(--radius-full); font-size: var(--fs-note); padding: 6px var(--s4); color: var(--color-text-secondary);
+  }
+
+  /* ── 消息 ──
+     用户消息:整块浅底卡(--color-surface-user-msg),radius-lg,18/13 内边距。
+     不是右侧的小气泡 —— cc-haha 里它占满正文栏。 */
   .msg { margin-bottom: var(--s6); }
   .msg.user { display: flex; justify-content: flex-end; }
+  /* 宽度上限逐条对齐 cc-haha 的 max-w-[82%] / sm:78% / lg:640px:
+     用户消息是右对齐、随内容收缩的卡,不是撑满整列 */
+  .msg.user .col { max-width: 82%; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2); }
+  @media (min-width: 640px)  { .msg.user .col { max-width: 78%; } }
+  @media (min-width: 1024px) { .msg.user .col { max-width: 640px; } }
   .msg.user .bubble {
-    background: var(--accent-soft); border: 1px solid color-mix(in oklch, var(--accent) 24%, transparent);
-    border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
-    padding: var(--s3) var(--s4); max-width: min(86%, 620px); overflow-wrap: anywhere;
+    background: var(--color-surface-user-msg); border-radius: var(--radius-lg);
+    padding: 13px 18px; font-size: var(--fs-body); line-height: var(--lh-relaxed);
+    color: var(--color-text-primary); overflow-wrap: anywhere; white-space: pre-wrap;
   }
-  .msg.assistant .who { font-size: var(--fs-xs); color: var(--muted); margin-bottom: 6px; display: flex; align-items: center; gap: var(--s2); }
-  .msg.assistant .body { overflow-wrap: anywhere; }
+  .msg.assistant .who { font-size: var(--fs-stamp); color: var(--color-text-tertiary); margin-bottom: var(--s2); display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .msg.assistant .body { overflow-wrap: anywhere; font-size: var(--fs-body); line-height: var(--lh-relaxed); }
   .msg .imgs { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
-  .msg .imgs img { max-height: 160px; border-radius: var(--r-sm); border: 1px solid var(--line); }
-  .msg .meta { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--s2); display: flex; gap: var(--s3); flex-wrap: wrap; align-items: center; }
-  .msg .err { color: var(--err); font-size: var(--fs-md); background: var(--err-soft); border: 1px solid color-mix(in oklch, var(--err) 30%, transparent); border-radius: var(--r-sm); padding: var(--s2) var(--s3); margin-top: var(--s2); }
+  .msg .imgs img { max-height: 160px; border-radius: var(--radius-md); border: 1px solid var(--color-border); cursor: zoom-in; }
+  .msg .err {
+    color: var(--color-on-error-container); font-size: var(--fs-note);
+    background: var(--color-error-container); border: 1px solid color-mix(in srgb, var(--color-error) 28%, transparent);
+    border-radius: var(--radius-md); padding: var(--s2) var(--s3); margin-top: var(--s3);
+  }
 
-  /* 思考过程:默认折叠,像 claude.ai 那样可展开看 */
-  .think { border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); margin-bottom: var(--s3); }
-  .think > summary { cursor: pointer; padding: 6px var(--s3); font-size: var(--fs-sm); color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+  /* 消息操作条:悬停才出现,占位固定 —— 出现时不推动版面 */
+  .acts-row { height: 26px; display: flex; align-items: center; gap: 1px; margin-top: var(--s2); opacity: 0; transition: opacity 150ms var(--motion-easing); }
+  .msg.user .acts-row { justify-content: flex-end; }
+  .msg:hover .acts-row, .msg:focus-within .acts-row { opacity: 1; }
+  .acts-row button {
+    min-height: 24px; padding: 2px 8px; font-size: var(--fs-stamp); border: 0; background: none;
+    color: var(--color-text-tertiary); border-radius: var(--radius-full);
+  }
+  .acts-row button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .acts-row .stamp { font-size: var(--fs-stamp); color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; padding: 0 var(--s2); white-space: nowrap; }
+  .msg.last .acts-row { opacity: 1; }
+
+  /* 思考过程:一行折叠 + 尾巴预览 */
+  .think { margin-bottom: var(--s3); }
+  .think > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: baseline; gap: var(--s2);
+    font-size: var(--fs-note); color: var(--color-text-tertiary); padding: 4px var(--s2); margin: 0 calc(var(--s2) * -1);
+    border-radius: var(--radius-md);
+  }
+  .think > summary:hover { background: var(--color-surface-hover); }
   .think > summary::-webkit-details-marker { display: none; }
-  .think > summary::before { content: "✦"; color: var(--accent); }
-  .think .tbody { padding: 0 var(--s3) var(--s3); font-size: var(--fs-md); color: var(--muted); white-space: pre-wrap; max-height: 320px; overflow-y: auto; }
+  .think > summary .lbl { flex: none; font-style: italic; }
+  .think > summary .tail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+  .think > summary .caret { flex: none; font-size: 8px; }
+  .think[open] > summary .tail { display: none; }
+  .think .tbody {
+    margin-top: var(--s1); padding: var(--s3) var(--s4); font-size: var(--fs-code); color: var(--color-text-secondary);
+    white-space: pre-wrap; max-height: 300px; overflow-y: auto; line-height: 1.7;
+    background: var(--color-surface-container-lowest); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  }
+  .dots::after { content: ''; animation: dots 1.4s steps(1, end) infinite; }
+  @keyframes dots { 0%,20% { content: ''; } 40% { content: '.'; } 60% { content: '..'; } 80%,100% { content: '...'; } }
 
   .typing::after {
-    content: ""; display: inline-block; width: 7px; height: 15px; margin-left: 3px;
-    background: var(--accent); vertical-align: text-bottom; animation: caret 1s steps(2) infinite;
+    content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 2px;
+    background: var(--color-text-tertiary); vertical-align: middle; animation: caret 1s steps(2) infinite;
   }
   @keyframes caret { 50% { opacity: 0; } }
 
-  /* ── Markdown 排版 ── */
-  .body h1, .body h2, .body h3, .body h4 { margin: var(--s5) 0 var(--s2); line-height: 1.3; }
-  .body h1 { font-size: 1.4em; } .body h2 { font-size: 1.25em; } .body h3 { font-size: 1.1em; } .body h4 { font-size: 1em; }
-  .body p { margin: 0 0 var(--s3); }
-  .body ul, .body ol { margin: 0 0 var(--s3); padding-left: 1.5em; }
-  .body li { margin: 3px 0; }
-  .body li > ul, .body li > ol { margin: 3px 0; }
-  .body blockquote { margin: 0 0 var(--s3); padding: 2px var(--s4); border-left: 2px solid var(--line-strong); color: var(--muted); }
-  .body code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
-  .body hr { border: 0; border-top: 1px solid var(--line); margin: var(--s5) 0; }
-  .body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-  .body .md-table-wrap { overflow-x: auto; margin: 0 0 var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); }
-  .body .md-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
-  .body .md-table th, .body .md-table td { border-bottom: 1px solid var(--line); padding: 6px var(--s3); }
-  .body .md-table th { background: var(--surface-2); color: var(--muted); font-weight: 600; white-space: nowrap; }
-  .body .md-table tr:last-child td { border-bottom: 0; }
+  /* 生成中的状态行:动词 + 已用时 + 已出 token */
+  .turn-status { display: flex; align-items: center; gap: 9px; font-size: var(--fs-status); color: var(--color-text-secondary); padding: 2px 0 var(--s5); }
+  .turn-status .spark { color: var(--color-brand); animation: pulse 1.4s var(--motion-easing) infinite; }
+  .turn-status b { color: var(--color-text-primary); font-weight: 550; }
+  .turn-status .num { font-family: var(--font-mono); font-size: var(--fs-note); font-variant-numeric: tabular-nums; }
+  .retry-bar {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s4);
+    font-size: var(--fs-note); color: var(--color-on-warning-container);
+    background: var(--color-warning-container); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+    border-radius: var(--radius-lg); padding: var(--s2) var(--s4);
+  }
+  .retry-bar .tag { font-family: var(--font-mono); font-size: var(--fs-stamp); border: 1px solid color-mix(in srgb, var(--color-warning) 34%, transparent); border-radius: 4px; padding: 1px 5px; }
+
+  /* ── Markdown ──
+     字号/间距逐条对齐 cc-haha 的 prose 设置(标题走衬线是这套的签名)。 */
+  .body h1, .body h2, .body h3, .body h4 {
+    font-family: var(--font-headline); font-weight: 600;
+    color: var(--color-text-primary); letter-spacing: -.01em; line-height: 1.35;
+  }
+  .body h1 { font-size: 22px; margin: var(--s6) 0 var(--s4); }
+  .body h2 { font-size: 19px; margin: var(--s7) 0 var(--s3); padding-bottom: var(--s2); border-bottom: 1px solid var(--color-border); }
+  .body h3 { font-size: 16px; margin: var(--s6) 0 var(--s2); }
+  .body h4 { font-size: var(--fs-body); margin: var(--s5) 0 var(--s2); }
+  .body p { margin: var(--s2) 0; line-height: var(--lh-relaxed); }
+  .body ul, .body ol { margin: var(--s2) 0; padding-left: 20px; }
+  .body li { margin: 2px 0; }
+  .body li::marker { color: var(--color-text-tertiary); }
+  .body li > ul, .body li > ol { margin: 2px 0; }
+  .body blockquote {
+    margin: var(--s4) 0; padding: var(--s2) var(--s4); font-style: italic;
+    border-left: 4px solid var(--cc-ac-border); background: var(--color-surface-container-low);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0; color: var(--color-text-secondary);
+  }
+  /* 行内码是这套设计的签名:暖底小卡片 + 发丝描边 */
+  .body code, .bubble code {
+    font-family: var(--font-mono); font-size: var(--fs-code); color: var(--color-code-fg);
+    background: var(--color-code-bg); border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm); padding: 2px 6px;
+  }
+  .body hr { border: 0; border-top: 1px solid var(--color-border); margin: var(--s6) 0; }
+  .body a { color: var(--color-text-accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  .body a:hover { text-decoration-thickness: 2px; }
+  .body .md-table-wrap {
+    overflow-x: auto; margin: var(--s5) 0; border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); background: var(--color-surface-container-lowest);
+  }
+  .body .md-table { width: 100%; border-collapse: collapse; font-size: var(--fs-code); }
+  .body .md-table th, .body .md-table td { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+  .body .md-table th { background: var(--color-surface-info); color: var(--color-text-secondary); font-weight: 600; white-space: nowrap; }
+  .body .md-table td { background: var(--color-surface); }
+  .body .md-table tr:last-child td, .body .md-table tr:last-child th { border-bottom: 0; }
   .body .md-task { display: inline-flex; align-items: center; gap: 6px; }
-  .body del { color: var(--muted); }
+  .body del { color: var(--color-text-tertiary); }
+  .body strong { color: var(--color-text-primary); font-weight: 600; }
+  .body > :first-child { margin-top: 0; }
+  .body > :last-child { margin-bottom: 0; }
 
-  .code-block { margin: 0 0 var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; background: var(--surface-2); }
-  .code-head { display: flex; align-items: center; gap: var(--s2); padding: 4px var(--s3); background: var(--card); border-bottom: 1px solid var(--line); }
-  .code-lang { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); flex: 1; }
-  .code-block pre { margin: 0; padding: var(--s3); overflow-x: auto; }
-  .code-block code { font-family: var(--mono); font-size: var(--fs-md); background: none; border: 0; padding: 0; white-space: pre; }
-  .hl-com { color: var(--muted); font-style: italic; }
-  .hl-str { color: var(--ok); }
-  .hl-num { color: var(--warn); }
-  .hl-kw  { color: var(--accent); font-weight: 550; }
-  .hl-fn  { color: var(--c6); }
-  .hl-tag { color: var(--c7); }
+  .code-block {
+    margin: var(--s4) 0; border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    overflow: hidden; background: var(--color-code-bg);
+  }
+  .code-head {
+    display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3);
+    background: var(--color-surface-container-low); border-bottom: 1px solid var(--color-border);
+  }
+  .code-lang { font-family: var(--font-mono); font-size: var(--fs-stamp); color: var(--color-text-tertiary); flex: 1; }
+  .code-head button, .code-block .code-copy {
+    font: inherit; font-size: var(--fs-stamp); cursor: pointer; min-height: 24px; padding: 2px 9px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    color: var(--color-text-secondary); border-radius: var(--radius-md);
+  }
+  .code-head button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .code-block pre { margin: 0; padding: var(--s4); overflow-x: auto; }
+  .code-block code { font-family: var(--font-mono); font-size: var(--fs-code); background: none; border: 0; padding: 0; white-space: pre; line-height: 1.65; }
+  /* 语法高亮跟着主题走 */
+  .hl-com { color: var(--color-text-tertiary); font-style: italic; }
+  .hl-str { color: var(--color-success); }
+  .hl-num { color: var(--color-warning); }
+  .hl-kw  { color: var(--color-brand); font-weight: 550; }
+  .hl-fn  { color: var(--color-teal); }
+  .hl-tag { color: var(--color-brand); }
 
-  /* ── 输入区 ── */
-  .composer { border-top: 1px solid var(--line); background: var(--card); padding: var(--s3) var(--s4) var(--s4); }
-  .composer-inner { max-width: 780px; margin: 0 auto; }
+  /* ── 输入区 ──
+     cc-haha 的输入框是一张大圆角卡:白底、发丝描边、柔和投影,
+     里面上面是文本域、下面一行控件,最右一个【圆形发送键】。 */
+  .composer { padding: 0 var(--s7) var(--s5); background: var(--color-background); }
+  .composer-inner { max-width: 800px; margin: 0 auto; }
+  .editing {
+    display: flex; align-items: center; gap: var(--s2); font-size: var(--fs-note);
+    color: var(--color-on-warning-container); background: var(--color-warning-container);
+    border-radius: var(--radius-md); padding: var(--s2) var(--s3); margin-bottom: var(--s2);
+  }
   .drop {
-    border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--card);
-    padding: var(--s2) var(--s2) var(--s2) var(--s3); transition: border-color var(--dur-1) var(--ease);
+    border: 1px solid var(--color-border); border-radius: var(--radius-2xl);
+    background: var(--color-surface); box-shadow: var(--shadow-composer);
+    padding: var(--s4) var(--s4) var(--s3);
+    transition: border-color 150ms var(--motion-easing), box-shadow 150ms var(--motion-easing);
   }
-  .drop:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent); }
-  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop:focus-within { border-color: var(--cc-ac-border); }
+  .drop.over { border-color: var(--color-brand); background: var(--color-brand-soft); }
   .drop textarea {
-    width: 100%; border: 0; background: none; resize: none; padding: var(--s2) 0;
-    min-height: 24px; max-height: 40vh; font-size: var(--fs-base); line-height: 1.55; box-shadow: none !important;
+    width: 100%; border: 0; background: none; resize: none; padding: 0;
+    min-height: 24px; max-height: 40vh; font-size: var(--fs-body); line-height: 1.6;
+    box-shadow: none !important; border-radius: 0; color: var(--color-text-primary);
   }
+  .drop textarea::placeholder { color: var(--color-text-tertiary); }
   .drop textarea:focus-visible { outline: none; }
-  .pending { display: flex; gap: var(--s2); flex-wrap: wrap; padding: var(--s2) 0 0; }
+  .pending { display: flex; gap: var(--s2); flex-wrap: wrap; padding: var(--s3) 0 0; }
   .pending .thumb { position: relative; }
-  .pending img { height: 56px; border-radius: var(--r-sm); border: 1px solid var(--line); display: block; }
+  .pending img { height: 56px; border-radius: var(--radius-md); border: 1px solid var(--color-border); display: block; }
   .pending .x {
     position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
-    background: var(--err); color: #fff; border: 0; font-size: 11px; line-height: 1;
+    background: var(--color-error); color: #fff; border: 0; font-size: 11px; line-height: 1;
     display: flex; align-items: center; justify-content: center; padding: 0; min-height: 0;
   }
-  .send-row { display: flex; align-items: center; gap: var(--s2); padding-top: var(--s2); }
-  .send-row .hint { flex: 1; font-size: var(--fs-xs); color: var(--muted); }
+  /* 控件行:+ / 模型 / 思考 / 深度 / 上下文 / 设备,最右是圆形发送键 */
+  .send-row { display: flex; align-items: center; gap: var(--s2); padding-top: var(--s3); flex-wrap: nowrap; }
+  /* 中段横向滚动:窄屏上控件多到放不下时是滑动而不是换行。
+     滚动条隐掉 —— 这一行只有几个胶囊,出一条滚动条比控件本身还显眼。 */
+  .row-scroll {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
+    overflow-x: auto; scrollbar-width: none; padding-bottom: 1px;
+  }
+  .row-scroll::-webkit-scrollbar { display: none; }
+  .row-scroll > * { flex: none; }
+  .send-row .hint { font-size: var(--fs-stamp); color: var(--color-text-tertiary); }
+  .send-row .send-btn, .send-row .plus { flex: none; }
+  /* 控件在这一行里是"胶囊",不是常规输入框 */
+  .send-row select {
+    max-width: 230px; text-overflow: ellipsis;
+    border-radius: var(--radius-full); border-color: var(--color-border);
+    background-color: var(--color-surface); font-size: var(--fs-note); min-height: 32px;
+    padding: 4px 24px 4px var(--s3); color: var(--color-text-secondary);
+  }
+  .send-row select:hover:not(:disabled) { background-color: var(--color-surface-hover); color: var(--color-text-primary); }
+  .send-row label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-stamp); color: var(--color-text-tertiary); }
+  .send-row .plus {
+    width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0; justify-content: center;
+    border-radius: var(--radius-full); border-color: transparent; background: none; color: var(--color-text-secondary);
+  }
+  .send-row .plus:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  /* 圆形发送键 —— 这套设计里最显眼的一个赤陶元素 */
+  .send-btn {
+    width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; justify-content: center;
+    border-radius: var(--radius-full); border: 0;
+    background: var(--color-brand); color: var(--color-on-primary);
+  }
+  .send-btn:hover:not(:disabled) { background: var(--color-brand-hover); }
+  .send-btn:disabled { background: var(--color-surface-container-high); color: var(--color-text-tertiary); opacity: 1; }
+  .send-btn svg { width: 17px; height: 17px; }
+  .stop-btn { background: var(--color-error); }
+  .stop-btn:hover:not(:disabled) { background: var(--color-error); filter: brightness(.92); }
+
+  /* ── 弹出菜单(+ 与 模型/深度 共用一套)──
+     照 claude.ai 的形状:一列条目、可勾选、可展子菜单。定位用 absolute + bottom,
+     因为它们都在页面【底部】的输入框里,往下弹会出屏。 */
+  /* 弹层的定位父级。这两个必须【在 .row-scroll 之外】—— absolute 定位的弹层
+     放进 overflow-x:auto 的容器里会被容器裁掉:菜单确实打开了,但一个像素都看不见
+     (踩过一次,截图才发现)。 */
+  .plus-wrap, .mdl-wrap { position: relative; flex: none; }
+  .menu {
+    position: absolute; bottom: calc(100% + 8px); left: 0; z-index: var(--z-modal);
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay);
+    padding: var(--s2); min-width: 232px; max-width: min(340px, calc(100vw - var(--s6)));
+    max-height: min(60vh, 460px); overflow-y: auto;
+  }
+  .menu.right { left: auto; right: 0; }
+  .menu-item {
+    width: 100%; justify-content: flex-start; gap: var(--s3); border: 0; background: none;
+    font-size: var(--fs-note); padding: 7px var(--s2); min-height: 34px;
+    border-radius: var(--radius-md); color: var(--color-text-secondary); text-align: left;
+  }
+  .menu-item:hover:not(:disabled) { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .menu-item.on { color: var(--color-text-primary); }
+  .menu-item .ico { flex: none; width: 16px; height: 16px; color: var(--color-text-tertiary); }
+  .menu-item.on .ico { color: var(--color-brand); }
+  .menu-item .lbl { flex: 1; min-width: 0; }
+  .menu-item .lbl b { display: block; font-weight: 550; color: var(--color-text-primary); }
+  .menu-item .lbl i { display: block; font-style: normal; font-size: var(--fs-stamp); color: var(--color-text-tertiary); margin-top: 1px; }
+  .menu-item .tick { flex: none; color: var(--color-brand); font-size: 12px; }
+  .menu-item .caret { flex: none; color: var(--color-text-tertiary); font-size: 10px; }
+  .menu-item .val { flex: none; font-size: var(--fs-stamp); color: var(--color-text-tertiary); }
+  .menu hr { border: 0; border-top: 1px solid var(--color-border); margin: var(--s1) calc(var(--s2) * -1); }
+  .menu-head { font-size: var(--fs-stamp); color: var(--color-text-tertiary); padding: var(--s2) var(--s2) var(--s1); }
+  .menu-note {
+    font-size: var(--fs-stamp); color: var(--color-text-tertiary); line-height: 1.55;
+    padding: var(--s2); border-bottom: 1px solid var(--color-border); margin-bottom: var(--s1);
+  }
+  /* 二级菜单:【浮在右侧】的独立面板,父菜单留在原处不动(对齐 claude.ai 的形状)。
+     放不下时自动翻到左侧;窄屏上退回"同一面板换页",因为 390px 根本摆不下两列。 */
+  /* 位置由 JS 相对 .plus-wrap / .mdl-wrap 算出来(见 placeSub):要量父菜单的
+     实宽和触发行的位置,纯 CSS 表达不了。 */
+  .submenu {
+    position: absolute; z-index: var(--z-modal);
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay);
+    padding: var(--s2); min-width: 216px; max-width: min(320px, calc(100vw - var(--s6)));
+    max-height: min(56vh, 420px); overflow-y: auto;
+  }
+  /* 打开了二级菜单的那一行:高亮 + 箭头转过来,让"我在这一支下面"看得出来 */
+  .menu-item.open { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .menu-item.open .caret { color: var(--color-brand); }
+  .menu-back { color: var(--color-text-tertiary); }
+  .menu-back .ico { transform: rotate(180deg); }
+  /* 窄屏:二级面板盖在父菜单【原位】上(390px 摆不下两列),父菜单顺势隐掉 */
+  @media (max-width: 640px) {
+    .menu.has-sub { visibility: hidden; }
+  }
+
+  /* 模型/深度触发器 */
+  .mdl-btn {
+    border-radius: var(--radius-full); border-color: var(--color-border);
+    background: var(--color-surface); min-height: 32px; padding: 4px var(--s3);
+    font-size: var(--fs-note); color: var(--color-text-secondary); max-width: 260px;
+  }
+  .mdl-btn:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .mdl-btn #mdlLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mdl-btn .eff { flex: none; font-size: var(--fs-stamp); color: var(--color-text-tertiary); }
+  .mdl-btn svg { width: 13px; height: 13px; flex: none; opacity: .7; }
+  /* 只作状态位、不显示的控件 */
+  .state-only { display: none !important; }
+
+  /* 模式/技能徽标:当前开着什么,摆在输入框里 */
+  .chip-row { display: inline-flex; gap: var(--s1); align-items: center; flex: none; }
+  .mode-chip {
+    display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-stamp);
+    background: var(--color-brand-soft); color: var(--color-on-brand-soft);
+    border: 1px solid var(--cc-ac-border); border-radius: var(--radius-full);
+    padding: 3px 8px; white-space: nowrap;
+  }
+  .mode-chip button { border: 0; background: none; padding: 0 0 0 2px; min-height: 0; color: inherit; opacity: .7; font-size: 11px; }
+  .mode-chip button:hover { opacity: 1; background: none; }
+
+  /* 待发送附件:图片是缩略图,PDF/文本是一张小卡 */
+  .pending .doc {
+    display: inline-flex; align-items: center; gap: var(--s2); max-width: 240px;
+    background: var(--color-surface-container-low); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); padding: var(--s2) var(--s3); font-size: var(--fs-stamp);
+    position: relative;
+  }
+  .pending .doc .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
+  .pending .doc .sz { color: var(--color-text-tertiary); flex: none; }
+  .pending .doc svg { width: 15px; height: 15px; flex: none; color: var(--color-brand); }
+
+  /* 消息里的附件卡 */
+  .msg .atts { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
+  .msg .att {
+    display: inline-flex; align-items: center; gap: var(--s2); max-width: 260px;
+    background: var(--color-surface-container-low); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); padding: var(--s2) var(--s3); font-size: var(--fs-stamp);
+    text-decoration: none; color: var(--color-text-primary);
+  }
+  .msg .att:hover { background: var(--color-surface-hover); }
+  .msg .att svg { width: 15px; height: 15px; flex: none; color: var(--color-brand); }
+  .msg .att .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── 联网检索的过程与来源 ── */
+  .research { margin-bottom: var(--s3); }
+  .research > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: var(--s2);
+    font-size: var(--fs-note); color: var(--color-text-tertiary);
+    padding: 4px var(--s2); margin: 0 calc(var(--s2) * -1); border-radius: var(--radius-md);
+  }
+  .research > summary:hover { background: var(--color-surface-hover); }
+  .research > summary::-webkit-details-marker { display: none; }
+  .research > summary .ico { width: 14px; height: 14px; flex: none; color: var(--color-brand); }
+  .research .rbody { padding: var(--s2) 0 0 var(--s5); display: flex; flex-direction: column; gap: 5px; }
+  .research .q {
+    font-size: var(--fs-stamp); color: var(--color-text-secondary);
+    display: flex; align-items: baseline; gap: var(--s2);
+  }
+  .research .q::before { content: '🔍'; font-size: 10px; flex: none; }
+  .research a { font-size: var(--fs-stamp); color: var(--color-text-accent); text-decoration: none; display: flex; align-items: baseline; gap: var(--s2); }
+  .research a:hover { text-decoration: underline; }
+  .research a .host { color: var(--color-text-tertiary); flex: none; font-size: 10px; }
+  .research a .ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 正文末尾的来源列表:编号的胶囊,点开即原文 */
+  .cites { margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--color-border); }
+  .cites .lbl { font-size: var(--fs-stamp); color: var(--color-text-tertiary); margin-bottom: var(--s2); }
+  .cites ol { margin: 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .cites li { font-size: var(--fs-stamp); display: flex; gap: var(--s2); align-items: baseline; }
+  .cites .n {
+    flex: none; min-width: 17px; height: 17px; border-radius: var(--radius-full);
+    background: var(--color-surface-container-high); color: var(--color-text-secondary);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 10px;
+  }
+  .cites a { color: var(--color-text-accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cites a:hover { text-decoration: underline; }
+
+  /* 上下文占用:小环 + 数字,胶囊形 */
+  .ctx {
+    display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-stamp);
+    color: var(--color-text-secondary); border: 1px solid var(--color-border);
+    border-radius: var(--radius-full); padding: 4px 10px 4px 5px; cursor: help;
+    background: var(--color-surface); min-height: 32px;
+  }
+  .ctx:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .ctx .ring { width: 15px; height: 15px; flex: none; }
+  .ctx .ring circle { fill: none; stroke-width: 3.4; }
+  /* 底圈用 outline:container-highest 和卡面几乎同色,画出来像只有一个孤点 */
+  .ctx .ring .bg { stroke: var(--color-outline); }
+  .ctx .ring .fg { stroke: var(--color-brand); transform: rotate(-90deg); transform-origin: center; transition: stroke-dashoffset 280ms var(--motion-easing); }
+  .ctx.warn .ring .fg { stroke: var(--color-warning); }
+  .ctx.warn { color: var(--color-on-warning-container); border-color: color-mix(in srgb, var(--color-warning) 32%, transparent); }
+  .lock-note { font-size: var(--fs-stamp); color: var(--color-on-warning-container); }
 
   /* ── 右栏:Artifacts ── */
-  .panel { background: var(--card); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-  .panel .phead { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--line); }
-  .panel .ptitle { flex: 1; font-size: var(--fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .panel .ptabs { display: flex; gap: 2px; padding: var(--s2) var(--s3) 0; flex-wrap: wrap; }
-  .panel .ptabs button { font-size: var(--fs-xs); }
-  .panel .ptabs button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .panel { background: var(--color-surface); border-left: 1px solid var(--color-border); display: flex; flex-direction: column; min-width: 0; }
+  .panel .phead { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); border-bottom: 1px solid var(--color-border); }
+  .panel .ptitle { flex: 1; font-size: var(--fs-note); font-weight: 600; font-family: var(--font-headline); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel .ptabs { display: flex; gap: var(--s1); padding: var(--s3) var(--s4) 0; flex-wrap: wrap; }
+  .panel .ptabs button { font-size: var(--fs-stamp); border-radius: var(--radius-full); padding: 3px 10px; min-height: 26px; }
+  .panel .ptabs button.on { background: var(--color-brand-soft); border-color: var(--cc-ac-border); color: var(--color-on-brand-soft); }
   /* iframe 用绝对定位填满可视区:height:100% 在 flex+overflow:auto 的父级里
      会按内容高算,导致预览内容被推到面板下方 */
   .panel .pbody { flex: 1; min-height: 0; position: relative; overflow: auto; }
   .panel iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
-  .panel .src { margin: 0; padding: var(--s3); font-family: var(--mono); font-size: var(--fs-md); white-space: pre; overflow: auto; }
-  .seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
-  .seg button { border: 0; border-radius: 0; min-height: 26px; font-size: var(--fs-sm); }
-  .seg button.on { background: var(--accent); color: var(--accent-ink); }
-
+  .panel .src { margin: 0; padding: var(--s4); font-family: var(--font-mono); font-size: var(--fs-code); white-space: pre; overflow: auto; line-height: 1.65; }
+  .seg { display: inline-flex; border: 1px solid var(--color-border); border-radius: var(--radius-full); overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; min-height: 26px; font-size: var(--fs-stamp); padding: 2px 10px; }
+  .seg button.on { background: var(--color-brand); color: var(--color-on-primary); }
   .art-open { margin-left: auto; }
 
-  .empty { padding: 18vh var(--s5) 0; text-align: center; color: var(--muted); }
-  .empty b { display: block; color: var(--ink); font-size: var(--fs-xl); margin-bottom: var(--s2); font-weight: 600; }
-  .empty .sub { font-size: var(--fs-md); max-width: 46ch; margin: 0 auto; }
-  .chips { display: flex; gap: var(--s2); justify-content: center; flex-wrap: wrap; margin-top: var(--s5); }
-  .chips button { font-size: var(--fs-md); border-radius: var(--r-full); }
+  .lightbox { position: fixed; inset: 0; z-index: var(--z-modal); background: rgba(var(--cc-scrim-rgb), .82); display: grid; place-items: center; padding: var(--s5); }
+  .lightbox img { max-width: 100%; max-height: 100%; border-radius: var(--radius-lg); }
 
-  .login { max-width: 360px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s7) var(--s6); box-shadow: var(--sh-2); }
-  .login h1 { font-size: var(--fs-xl); margin: 0 0 var(--s1); text-align: center; }
-  .login p { color: var(--muted); margin: 0 0 var(--s5); font-size: var(--fs-md); text-align: center; }
-  .login input { width: 100%; margin-bottom: var(--s3); min-height: 38px; }
-  .login button { width: 100%; justify-content: center; min-height: 38px; }
-  .err-msg { color: var(--err); font-size: var(--fs-md); min-height: 18px; margin-top: var(--s2); text-align: center; }
+  /* 空态 */
+  .empty { padding: 12vh var(--s5) 0; text-align: center; color: var(--color-text-secondary); }
+  .empty b { display: block; color: var(--color-text-primary); font-size: 26px; margin-bottom: var(--s3); font-weight: 600; font-family: var(--font-headline); letter-spacing: -.01em; }
+  .empty .sub { font-size: var(--fs-note); max-width: 46ch; margin: 0 auto; line-height: 1.7; }
+  .chips { display: flex; gap: var(--s2); justify-content: center; flex-wrap: wrap; margin-top: var(--s6); }
+  .chips button { font-size: var(--fs-note); border-radius: var(--radius-full); padding: 7px var(--s4); color: var(--color-text-secondary); }
+  .chips button:hover { color: var(--color-text-primary); border-color: var(--color-outline); }
 
-  .toasts { position: fixed; right: var(--s4); bottom: var(--s4); z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7))); }
-  .toast { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--sh-2); padding: var(--s3) var(--s4); font-size: var(--fs-md); display: flex; gap: var(--s2); animation: tin var(--dur-2) var(--ease); }
-  .toast.err { border-color: color-mix(in oklch, var(--err) 40%, var(--line)); }
+  /* 主题选择弹层:六套色板 + 跟随系统 */
+  .theme-pop {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-modal);
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay);
+    padding: var(--s2); min-width: 172px;
+  }
+  .theme-pop button {
+    width: 100%; justify-content: flex-start; gap: var(--s3); border: 0; background: none;
+    font-size: var(--fs-note); padding: 7px var(--s2); min-height: 34px; border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+  }
+  .theme-pop button:hover { background: var(--color-surface-hover); color: var(--color-text-primary); }
+  .theme-pop button.on { color: var(--color-text-primary); font-weight: 550; }
+  .theme-pop button.on::after { content: '✓'; margin-left: auto; color: var(--color-brand); }
+  .theme-pop .sw { width: 16px; height: 16px; border-radius: 5px; border: 1px solid var(--color-outline); flex: none; }
+  .theme-pop hr { border: 0; border-top: 1px solid var(--color-border); margin: var(--s1) 0; }
+
+  .login {
+    max-width: 380px; margin: 12vh auto; background: var(--color-surface);
+    border: 1px solid var(--color-border); border-radius: var(--radius-3xl);
+    padding: var(--s7) var(--s6); box-shadow: var(--shadow-card);
+  }
+  .login h1 { font-size: 22px; margin: 0 0 var(--s1); text-align: center; font-family: var(--font-headline); font-weight: 600; }
+  .login p { color: var(--color-text-secondary); margin: 0 0 var(--s5); font-size: var(--fs-note); text-align: center; }
+  .login input { width: 100%; margin-bottom: var(--s3); min-height: 40px; font-size: var(--fs-body); border-radius: var(--radius-lg); }
+  .login button { width: 100%; justify-content: center; min-height: 40px; border-radius: var(--radius-lg); }
+  .login .alt { margin: var(--s4) 0 0; font-size: var(--fs-note); text-align: center; }
+  .login .alt a { color: var(--color-text-accent); }
+  .err-msg { color: var(--color-error); font-size: var(--fs-note); min-height: 18px; margin-top: var(--s2); text-align: center; }
+
+  .toasts { position: fixed; right: var(--s5); bottom: var(--s5); z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7))); }
+  .toast {
+    background: var(--color-surface); color: var(--color-text-primary);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-overlay); padding: var(--s3) var(--s4); font-size: var(--fs-note);
+    display: flex; gap: var(--s2); animation: tin 280ms var(--motion-easing);
+  }
+  .toast.err { border-color: color-mix(in srgb, var(--color-error) 38%, var(--color-border)); }
   @keyframes tin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
   /* 遮罩:桌面上永不出现(侧栏是常驻列),手机上是唯一保证"能关回去"的东西 */
   .scrim { display: none; }
   .only-sm { display: none; }
-  /* 覆盖层打开时锁住背景滚动 —— 否则手指在遮罩上滑会滚后面的对话流 */
   body.no-scroll { overflow: hidden; touch-action: none; }
 
   @media (max-width: 900px) {
     .app, .app.with-panel { grid-template-columns: 1fr; }
     aside {
       position: fixed; inset: 0 auto 0 0; width: min(84vw, 300px); z-index: var(--z-modal);
-      transform: translateX(-100%); transition: transform var(--dur-2) var(--ease);
-      /* 刘海屏:左侧安全区 + 底部 home 指示条 */
+      transform: translateX(-100%); transition: transform var(--motion-duration) var(--motion-easing);
+      box-shadow: none;
       padding-left: env(safe-area-inset-left);
       padding-bottom: env(safe-area-inset-bottom);
     }
-    aside.open { transform: none; box-shadow: var(--sh-2); }
-    .scrim { display: block; position: fixed; inset: 0; z-index: var(--z-backdrop); background: oklch(0 0 0 / .5); }
+    aside.open { transform: none; box-shadow: var(--shadow-overlay); }
+    .scrim { display: block; position: fixed; inset: 0; z-index: var(--z-backdrop); background: rgba(var(--cc-scrim-rgb), .45); }
     .only-sm { display: inline-flex; }
     .app.with-panel .panel { position: fixed; inset: 0; z-index: var(--z-modal); }
-    .stream-inner { padding: var(--s4) var(--s3); }
-    .composer { padding: var(--s2) var(--s3) max(var(--s3), env(safe-area-inset-bottom)); }
+    .chat-head { padding: var(--s4) var(--s4) var(--s3); }
+    .notice, .resumed { padding-left: var(--s4); padding-right: var(--s4); }
+    .stream-inner { padding: var(--s5) var(--s4) var(--s4); }
+    .composer { padding: 0 var(--s4) max(var(--s4), env(safe-area-inset-bottom)); }
     .hide-sm { display: none !important; }
-    /* 顶栏在手机上会挤:允许换行,别把模型选择器压成一条缝 */
-    .bar { flex-wrap: wrap; row-gap: var(--s2); }
-    .bar select { max-width: 42vw; }
-    /* 底栏那行带的是账号名,是身份信息不是装饰,12px 在手机上太小 */
-    aside .foot { font-size: var(--fs-sm); }
-    /* Artifacts 面板头有 5 个控件,390px 下必须让它折行,否则关闭按钮被挤出去 */
-    .phead { flex-wrap: wrap; row-gap: var(--s2); }
-    .phead .ptitle { flex-basis: 100%; }
+    .chat-title { font-size: 17px; }
+    /* 元信息在 390px 下会折成三行;模型名在输入框里已经有一份,这里省掉 */
+    .chat-meta .mdl { display: none; }
+    /* 触屏没有悬停,操作条一律常驻 —— 否则手机上根本点不到复制/重新生成 */
+    .acts-row { opacity: 1; }
+    /* 回合导航条在手机上太窄按不准,直接不出 */
+    .nav-lane { display: none; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
-    .stream { scroll-behavior: auto; }
   }
 </style>
 <script>
+  // 首帧就把主题定下来,避免"先白一下再变暗"。用独立的键 cc-chat-theme:
+  // /admin 与 /u 仍是原来那套亮/暗二值,共用一个键会把它们弄糊涂。
   try {
-    const t = localStorage.getItem('cc-trans-theme');
-    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    var t = localStorage.getItem('cc-chat-theme');
+    var ok = ['white', 'paper', 'warm-classic', 'celadon', 'dark', 'ink-blue'];
+    if (t && ok.indexOf(t) >= 0) document.documentElement.dataset.theme = t;
+    else if (!t || t === 'auto') {
+      document.documentElement.dataset.theme =
+        window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white';
+    }
   } catch {}
 </script>
 </head>
@@ -293,6 +799,7 @@
   <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
   <button class="primary" onclick="doLogin()">登录</button>
   <div id="loginErr" class="err-msg"></div>
+  <p class="alt"><a href="/">回到统一登录入口</a></p>
 </div>
 
 <div class="app" id="app" hidden>
@@ -300,20 +807,42 @@
        没有遮罩就等于打开后关不掉(用户实测踩到)。 -->
   <div id="sideScrim" class="scrim" onclick="toggleSide(false)" hidden></div>
   <aside id="side">
-    <div class="top">
-      <span class="brand">cc-trans</span>
-      <button class="icon" onclick="toggleTheme()" title="切换主题" aria-label="切换主题">
-        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+    <div class="top" style="position:relative">
+      <!-- 字标走衬线、后半截赤陶 —— cc-haha 的 "cc-haha" 就是这么排的 -->
+      <span class="brand">cc-<em>trans</em></span>
+      <button class="icon" onclick="toggleThemePop()" title="外观" aria-label="外观" aria-haspopup="true">
+        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"></svg>
+      </button>
+      <!-- 推子而不是齿轮:紧挨着的外观按钮在亮色下是个太阳(放射状线条),
+           齿轮画成小图标后轮廓几乎一样 —— 两个相邻按钮长得一样等于都认不出。 -->
+      <button class="icon" onclick="prefsDlg.showModal()" title="偏好设置" aria-label="偏好设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/>
+        </svg>
       </button>
       <!-- 只在手机上出现:遮罩之外再给一个明确的关闭入口 -->
       <button class="icon only-sm" onclick="toggleSide(false)" title="收起会话列表" aria-label="收起会话列表">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
+      <div class="theme-pop" id="themePop" hidden></div>
     </div>
-    <div class="new-chat"><button class="primary" onclick="newChat()">＋ 新对话</button></div>
+    <div class="new-chat"><button onclick="newChat()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      新建会话
+    </button></div>
+    <div class="find">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="find" type="search" placeholder="搜索聊天" aria-label="搜索聊天" oninput="drawSessions()" />
+      <kbd class="hide-sm">⌘K</kbd>
+    </div>
     <div class="sessions" id="sessions"></div>
     <div class="foot">
       <div class="me"><b id="whoName"></b><span id="whoMeta"></span></div>
+      <button class="usage-strip" id="usageStrip" hidden onclick="openUsage()" title="查看用量与额度">
+        <span class="ut" id="usageStripLabel">用量</span>
+        <span class="track" id="usageStripTrack" hidden><i id="usageStripFill" style="width:0%"></i></span>
+        <span class="up" id="usageStripPct"></span>
+      </button>
       <div class="acts">
         <a href="#" id="homeLink">返回</a>
         <button onclick="logout()">退出</button>
@@ -322,56 +851,117 @@
   </aside>
 
   <main>
-    <div class="bar">
-      <button class="icon ghost" onclick="toggleSide()" title="会话列表" aria-label="会话列表">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    <!-- 会话抬头:衬线大标题 + 一行元信息。cc-haha 里每个会话最上面就是这块;
+         模型/深度那些控件在这套设计里属于输入框,不属于抬头。 -->
+    <div class="chat-head">
+      <button class="icon ghost only-sm" onclick="toggleSide()" title="会话列表" aria-label="会话列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
-      <label>模型
-        <select id="model" onchange="onModelChange()"></select>
-      </label>
-      <label id="thinkWrap">思考
-        <select id="thinking">
-          <option value="">默认</option>
-          <option value="adaptive">adaptive</option>
-          <option value="disabled">关闭</option>
-        </select>
-      </label>
-      <label id="effortWrap">深度
-        <select id="effort">
-          <option value="">默认</option>
-          <option value="low">low</option>
-          <option value="medium">medium</option>
-          <option value="high">high</option>
-          <option value="xhigh">xhigh</option>
-          <option value="max">max</option>
-        </select>
-      </label>
-      <label class="hide-sm" id="devWrap" title="这次对话的用量记到哪台设备名下(与该设备的额度共享)">记账到
-        <select id="device" onchange="onDeviceChange()"></select>
-      </label>
-      <span class="grow"></span>
-      <span class="lock-note" id="lockNote"></span>
-      <button class="ghost hide-sm" id="panelBtn" onclick="togglePanel()" hidden>Artifacts</button>
+      <div class="htxt">
+        <h1 class="chat-title" id="chatTitle">新的会话</h1>
+        <div class="chat-meta" id="chatMeta"></div>
+      </div>
+      <div class="hacts">
+        <button class="icon hide-sm" onclick="toggleSide()" title="收起/展开会话列表" aria-label="收起或展开会话列表">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+        <button class="icon" id="panelBtn" onclick="togglePanel()" hidden title="Artifacts" aria-label="Artifacts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 5h16v14H4z"/><path d="M14 5v14"/></svg>
+        </button>
+      </div>
     </div>
 
-    <div class="stream" id="stream">
-      <div class="stream-inner" id="msgs"></div>
+    <div class="notice" id="notice" hidden>
+      <span aria-hidden="true">📣</span>
+      <span class="nt" id="noticeText"></span>
+      <button onclick="dismissNotice()" title="不再显示这条" aria-label="关闭公告">✕</button>
+    </div>
+    <div class="resumed" id="resumed" hidden></div>
+
+    <div class="stream-wrap">
+      <div class="nav-lane" id="navLane" aria-label="回合导航"></div>
+      <div class="stream" id="stream">
+        <div class="stream-inner" id="msgs"></div>
+      </div>
+      <button class="to-latest" id="toLatest" hidden onclick="scrollDown(true)">↓ 跳到最新</button>
     </div>
 
     <div class="composer">
       <div class="composer-inner">
+        <div class="editing" id="editingBar" hidden>
+          <span>正在改写第 <b id="editIdx"></b> 条提问 —— 发送后它之后的内容会被替换</span>
+          <button class="sm ghost" onclick="cancelEdit()">取消</button>
+        </div>
         <div class="drop" id="drop">
-          <textarea id="input" rows="1" placeholder="给 Claude 发消息…(Enter 发送,Shift+Enter 换行,可直接粘贴或拖入图片)"></textarea>
+          <textarea id="input" rows="1"></textarea>
           <div class="pending" id="pending"></div>
+          <!-- 控件行在输入框【内部】:cc-haha 把模型、深度、上下文占用、发送键
+               都收在这一行里,顶栏只留标题。 -->
           <div class="send-row">
-            <button class="icon ghost" onclick="pickFile()" title="添加图片" aria-label="添加图片">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <div class="plus-wrap">
+              <button class="plus" id="plusBtn" onclick="togglePlus()" title="添加内容" aria-label="添加内容" aria-haspopup="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+              <div class="menu" id="plusMenu" hidden><div class="menu-body" id="plusBody"></div></div>
+              <!-- 二级面板是 .plus-wrap 的【兄弟】而不是 .menu 的孩子:.menu 是
+                   overflow-y:auto 的滚动容器,按规范它的 overflow-x 也会变成 auto,
+                   放在里面会被横向裁掉(上一版就是这么挂的,命中测试才发现)。 -->
+              <div class="submenu" id="plusSub" hidden></div>
+            </div>
+            <!-- 一个选择器收所有类型:图片走 image block、PDF 走 document block、
+                 文本/代码内联进正文(见 chat_store.js kindOf) -->
+            <input type="file" id="file" multiple hidden onchange="onFiles(this.files)"
+              accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/*,.md,.json,.csv,.yaml,.yml,.toml,.js,.mjs,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.kt,.swift,.c,.h,.cpp,.hpp,.cs,.php,.sh,.sql,.html,.css,.xml,.vue,.svelte,.log,.diff,.patch" />
+            <!-- 当前生效的模式/技能,在输入框里显式摆出来 —— 不然"我是不是开着联网"
+                 只能靠记 -->
+            <span class="chip-row" id="modeChips"></span>
+            <!-- 控件放进可横向滚动的容器:窄屏上这一行要是换行,发送键会被挤到
+                 下一行最左边 —— 又占地方又找不到。cc-haha 的 H5 同样是不换行的一行。 -->
+            <div class="mdl-wrap">
+              <button class="mdl-btn" id="mdlBtn" onclick="toggleModelMenu()" aria-haspopup="true">
+                <span id="mdlLabel">模型</span>
+                <span class="eff" id="mdlEffort"></span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <div class="menu" id="modelMenu" hidden><div class="menu-body" id="modelBody"></div></div>
+              <div class="submenu" id="modelSub" hidden></div>
+            </div>
+            <div class="row-scroll">
+            <!-- 这三个 select 保留为【状态位】(所有既有逻辑都读 el('model').value),
+                 但视觉上隐藏,由下面的嵌套菜单驱动 —— 一个触发器 → 模型列表 → 深度子菜单。 -->
+            <select id="model" onchange="onModelChange()" aria-label="模型" class="state-only"></select>
+            <select id="thinking" onchange="rememberSel()" aria-label="思考模式" class="state-only">
+              <option value="">默认</option>
+              <option value="adaptive">adaptive</option>
+              <option value="disabled">关闭</option>
+            </select>
+            <select id="effort" onchange="rememberSel()" aria-label="深度" class="state-only">
+              <option value="">默认</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="xhigh">xhigh</option>
+              <option value="max">max</option>
+            </select>
+            <select id="device" onchange="onDeviceChange()" class="hide-sm" aria-label="记账到哪台设备" title="这次对话的用量记到哪台设备名下(与该设备的额度共享)"></select>
+            <button class="ctx" id="ctxChip" hidden onclick="explainCtx()">
+              <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+                <circle class="bg" cx="10" cy="10" r="7.5"/>
+                <circle class="fg" id="ctxArc" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="47.1"/>
+              </svg>
+              <span id="ctxPct">0%</span>
             </button>
-            <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden onchange="onFiles(this.files)" />
             <span class="hint" id="hint"></span>
-            <button id="stopBtn" onclick="stopGen()" hidden>■ 停止</button>
-            <button id="regenBtn" class="ghost" onclick="regen()" hidden>↻ 重新生成</button>
-            <button class="primary" id="sendBtn" onclick="send()">发送</button>
+            <span class="lock-note" id="lockNote"></span>
+            </div>
+            <!-- 一个键两种状态:空闲发送(赤陶↑),生成中停止(红■)。
+                 cc-haha 也是同一个圆键在两态之间换。 -->
+            <button class="send-btn" id="sendBtn" onclick="send()" title="发送" aria-label="发送">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+            <button class="send-btn stop-btn" id="stopBtn" onclick="stopGen()" hidden title="停止" aria-label="停止">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+            </button>
           </div>
         </div>
       </div>
@@ -394,7 +984,74 @@
   </div>
 </div>
 
+<div class="nav-tip" id="navTip" hidden></div>
+<!-- 放大的图在打开时才建 <img>:预留一个空 src 的占位标签,在某些浏览器里
+     会当成"加载失败的图"去请求当前页面 URL。 -->
+<div class="lightbox" id="lightbox" hidden onclick="closeLightbox()"></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
+
+<dialog id="renameDlg">
+  <h3>重命名对话</h3>
+  <input id="renameInput" type="text" maxlength="80" aria-label="对话标题" />
+  <div class="dlg-acts">
+    <button onclick="renameDlg.close()">取消</button>
+    <button class="primary" onclick="renameCommit()">保存</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDlg">
+  <h3 id="confirmTitle">确认</h3>
+  <p id="confirmBody"></p>
+  <div class="dlg-acts">
+    <button onclick="confirmDone(false)">取消</button>
+    <button class="primary danger" id="confirmOk" onclick="confirmDone(true)">确定</button>
+  </div>
+</dialog>
+
+<dialog id="skillDlg">
+  <h3 id="skillDlgTitle">新建技能</h3>
+  <p>技能就是一段<b>预设提示词</b>。选中它之后,这段话会拼进那一轮的 system。只有你自己看得到、用得到。</p>
+  <label style="display:block;font-size:var(--fs-note);color:var(--color-text-secondary);margin-bottom:var(--s1)">名称</label>
+  <input id="skName" type="text" maxlength="60" placeholder="如:代码审阅" />
+  <label style="display:block;font-size:var(--fs-note);color:var(--color-text-secondary);margin:var(--s3) 0 var(--s1)">一句话说明(可留空)</label>
+  <input id="skDesc" type="text" maxlength="200" placeholder="出现在选择器里的副标题" />
+  <label style="display:block;font-size:var(--fs-note);color:var(--color-text-secondary);margin:var(--s3) 0 var(--s1)">提示词</label>
+  <textarea id="skPrompt" rows="7" placeholder="你是一个严格的代码审阅者。先指出真正会出问题的地方,再谈风格。" style="width:100%;font-family:var(--font-mono);font-size:var(--fs-code);border-radius:var(--radius-md);padding:var(--s3)"></textarea>
+  <div id="skErr" class="err-msg" style="text-align:left"></div>
+  <div class="dlg-acts">
+    <button class="danger" id="skDel" hidden onclick="delFromDlg()">删除</button>
+    <span style="flex:1"></span>
+    <button onclick="skillDlg.close()">取消</button>
+    <button class="primary" onclick="saveOwnSkill()">保存</button>
+  </div>
+</dialog>
+
+<dialog id="usageDlg">
+  <h3>用量</h3>
+  <div id="usageBody"><p class="muted">读取中…</p></div>
+  <p id="usageNote" class="muted" style="font-size:var(--fs-stamp);margin:var(--s3) 0 0"></p>
+  <div class="dlg-acts">
+    <button onclick="loadUsage(true)" id="usageRefresh">刷新</button>
+    <span style="flex:1"></span>
+    <button class="primary" onclick="usageDlg.close()">关闭</button>
+  </div>
+</dialog>
+
+<dialog id="prefsDlg">
+  <h3>偏好设置</h3>
+  <p>只影响这台浏览器,不改服务端配置。</p>
+  <label style="display:block;margin-bottom:var(--s3)">发送快捷键
+    <select id="sendMode" style="display:block;margin-top:4px;width:100%">
+      <option value="enter">Enter 发送 · Shift+Enter 换行</option>
+      <option value="mod">⌘/Ctrl+Enter 发送 · Enter 换行</option>
+    </select>
+  </label>
+  <label class="chk" style="display:flex;gap:8px;align-items:center;margin-bottom:var(--s3)">
+    <input type="checkbox" id="prefThink" /> 默认展开思考过程
+  </label>
+  <p id="graceNote" style="margin:0"></p>
+  <div class="dlg-acts"><button class="primary" onclick="savePrefs()">完成</button></div>
+</dialog>
 
 <script>
 /*__MD__*/
@@ -407,39 +1064,136 @@ const IS_ADMIN = location.pathname.startsWith('/admin');
 const API = IS_ADMIN ? '/admin/api' : '/u/api';
 const SESS_KEY = IS_ADMIN ? 'cc-trans-admin' : 'cc-trans-user';
 const HOME = IS_ADMIN ? '/admin/overview' : '/u/devices';
+const CHAT_PATH = IS_ADMIN ? '/admin/chat' : '/u/chat';
 let SESSION = sessionStorage.getItem(SESS_KEY) || '';
 let ME = null, META = null;
 let curId = null;          // 当前会话 id
 let messages = [];         // 当前会话消息
+let sessionRows = [];      // 会话列表(服务端返回的索引)
+let liveIds = new Set();   // 正在生成中的会话 id
 let pendingImgs = [];      // 待发送图片 [{id, mime, url}]
-let abortCtl = null;       // 进行中的生成
+let pendingFiles = [];     // 待发送的 PDF / 文本附件 [{id, kind, name, bytes}]
+let editIndex = null;      // 正在改写第几条用户消息
 let artifacts = [], artIndex = 0, panelMode = 'preview';
+// 当前这条流:reader 用来主动收尾,seq 是收到的最后一个事件序号(重连续传用)
+let cur = null;
 
 const el = (id) => document.getElementById(id);
 const show = (id, on) => { el(id).hidden = !on; };
+const esc = (s) => escapeHtml(String(s == null ? '' : s));
+
+// ── 本地偏好 ──
+const PREF = {
+  sendMode: 'enter',
+  openThink: false,
+};
+try {
+  const raw = localStorage.getItem('cc-chat-prefs');
+  if (raw) Object.assign(PREF, JSON.parse(raw));
+} catch {}
+function savePrefsQuiet() { try { localStorage.setItem('cc-chat-prefs', JSON.stringify(PREF)); } catch {} }
+function savePrefs() {
+  PREF.sendMode = el('sendMode').value === 'mod' ? 'mod' : 'enter';
+  PREF.openThink = el('prefThink').checked;
+  savePrefsQuiet();
+  applyPlaceholder();
+  prefsDlg.close();
+}
+function applyPlaceholder() {
+  // 窄屏只留主干:整句在 390px 下会折成两行,而输入框初始只有一行高 ——
+  // 第二行被裁掉一半,看着像坏了。手机上本来也没有 Shift+Enter 这个动作。
+  if (window.innerWidth <= 640) {
+    el('input').placeholder = '给 Claude 发消息…';
+    return;
+  }
+  const key = PREF.sendMode === 'mod' ? '⌘/Ctrl+Enter 发送' : 'Enter 发送,Shift+Enter 换行';
+  el('input').placeholder = `给 Claude 发消息…(${key},可粘贴或拖入图片)`;
+}
 
 function toast(msg, kind = 'ok') {
   const t = document.createElement('div');
   t.className = 'toast ' + kind;
   t.textContent = msg;
   el('toasts').appendChild(t);
-  setTimeout(() => t.remove(), 4000);
+  setTimeout(() => t.remove(), 4200);
 }
 
-// ── 主题(与其它页共享 localStorage 键)──
-const ICONS = {
-  auto: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
-  light: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
-  dark: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
-};
-function curTheme() { return document.documentElement.dataset.theme || 'auto'; }
-function applyTheme(t) {
-  if (t === 'auto') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = t;
-  try { t === 'auto' ? localStorage.removeItem('cc-trans-theme') : localStorage.setItem('cc-trans-theme', t); } catch {}
-  el('themeIcon').innerHTML = ICONS[t];
+// 原生 confirm 在手机上样式失控、也没法说清后果。自己出一个。
+let confirmResolve = null;
+function askConfirm(title, body, okLabel = '确定') {
+  el('confirmTitle').textContent = title;
+  el('confirmBody').textContent = body;
+  el('confirmOk').textContent = okLabel;
+  confirmDlg.showModal();
+  return new Promise((r) => { confirmResolve = r; });
 }
-function toggleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[curTheme()]); }
+function confirmDone(v) {
+  confirmDlg.close();
+  if (confirmResolve) confirmResolve(v);
+  confirmResolve = null;
+}
+
+// ── 外观:cc-haha 的六套色板 + 跟随系统 ──
+// 用独立的 localStorage 键 cc-chat-theme:/admin 与 /u 仍是原来那套亮/暗二值,
+// 共用一个键会让它们读到 "celadon" 这种它们不认识的值。
+const THEMES = [
+  { id: 'white', name: '纯白', sw: '#FFFFFF' },
+  { id: 'paper', name: '纸墨', sw: '#FBF9F4' },
+  { id: 'warm-classic', name: '暖旧', sw: '#F6F0E1' },
+  { id: 'celadon', name: '青瓷', sw: '#F5F8F5' },
+  { id: 'dark', name: '暗色', sw: '#201D17' },
+  { id: 'ink-blue', name: '靛墨', sw: '#1A1D24' },
+];
+const DARK_THEMES = new Set(['dark', 'ink-blue']);
+const ICON_SUN = '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>';
+const ICON_MOON = '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>';
+
+function savedTheme() {
+  try { return localStorage.getItem('cc-chat-theme') || 'auto'; } catch { return 'auto'; }
+}
+function systemTheme() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white';
+}
+function applyTheme(t) {
+  const eff = t === 'auto' ? systemTheme() : t;
+  document.documentElement.dataset.theme = eff;
+  try { t === 'auto' ? localStorage.removeItem('cc-chat-theme') : localStorage.setItem('cc-chat-theme', t); } catch {}
+  el('themeIcon').innerHTML = DARK_THEMES.has(eff) ? ICON_MOON : ICON_SUN;
+  drawThemePop();
+}
+function drawThemePop() {
+  const cur = savedTheme();
+  el('themePop').innerHTML =
+    `<button onclick="pickTheme('auto')" class="${cur === 'auto' ? 'on' : ''}">
+       <span class="sw" style="background:linear-gradient(135deg,#FFFFFF 50%,#201D17 50%)"></span>跟随系统</button><hr />` +
+    THEMES.map((t) =>
+      `<button onclick="pickTheme('${t.id}')" class="${cur === t.id ? 'on' : ''}">
+         <span class="sw" style="background:${t.sw}"></span>${t.name}</button>`).join('');
+}
+function pickTheme(t) { applyTheme(t); el('themePop').hidden = true; }
+function toggleThemePop() {
+  const p = el('themePop');
+  p.hidden = !p.hidden;
+  if (!p.hidden) drawThemePop();
+}
+// 跟随系统时,系统换了要跟着换
+if (window.matchMedia) {
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (savedTheme() === 'auto') applyTheme('auto');
+    });
+  } catch { /* 老浏览器没有 addEventListener,跟随失效但不影响手选 */ }
+}
+// 同样走 capture:drawThemePop() 也会重画 innerHTML,冒泡阶段拿到的 target 已脱落
+document.addEventListener(
+  'click',
+  (e) => {
+    const p = el('themePop');
+    if (!p || p.hidden) return;
+    if (!e.target.closest('#themePop') && !e.target.closest('[onclick="toggleThemePop()"]')) p.hidden = true;
+  },
+  true,
+);
 
 async function api(path, opts = {}) {
   const r = await fetch(API + path, { ...opts, headers: { 'content-type': 'application/json', ...(opts.headers || {}), authorization: 'Bearer ' + SESSION } });
@@ -454,7 +1208,15 @@ async function doLogin() {
   el('loginErr').textContent = '';
   const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) { el('loginErr').textContent = d.error || '登录失败'; return; }
+  if (!r.ok) {
+    // 走错门:服务端已经验过密码,所以这句话可以说得很具体(见 admin.js / user.js)
+    if (r.status === 409 && d.redirect) {
+      el('loginErr').innerHTML = esc(d.error) + ` · <a href="${esc(d.redirect)}">去那边登录</a>`;
+      return;
+    }
+    el('loginErr').textContent = d.error || '登录失败';
+    return;
+  }
   SESSION = d.session; sessionStorage.setItem(SESS_KEY, SESSION);
   el('pw').value = ''; boot();
 }
@@ -467,7 +1229,6 @@ el('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); 
 // ── 布局开关 ──
 // 手机上侧栏是覆盖层:开关按钮在主区左上角、会被侧栏盖住,所以【打开的同时必须
 // 备好三条退路】—— 点遮罩、点侧栏里的 ✕、按 Esc。少任何一条都可能关不掉。
-// 同时锁住背景滚动,否则手指在遮罩上滑会滚动后面的对话流。
 function toggleSide(force) {
   const s = el('side');
   if (window.innerWidth <= 900) {
@@ -479,19 +1240,32 @@ function toggleSide(force) {
     el('app').classList.toggle('rail', force === undefined ? !el('app').classList.contains('rail') : !force);
   }
 }
-// Esc 关掉当前打开的覆盖层。先关 Artifacts 面板(它在更上层),再关侧栏。
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape') return;
-  if (window.innerWidth <= 900 && el('panel') && !el('panel').hidden) { togglePanel(false); return; }
-  if (el('side').classList.contains('open')) toggleSide(false);
+  if (e.key === 'Escape') {
+    if (!el('lightbox').hidden) { closeLightbox(); return; }
+    if (window.innerWidth <= 900 && el('panel') && !el('panel').hidden) { togglePanel(false); return; }
+    if (el('side').classList.contains('open')) { toggleSide(false); return; }
+    if (editIndex !== null) { cancelEdit(); return; }
+  }
+  // ⌘K / Ctrl+K:直接跳到搜索框。会话一多,这是最常用的动作
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    if (window.innerWidth <= 900) toggleSide(true);
+    else el('app').classList.remove('rail');
+    el('find').focus(); el('find').select();
+  }
+  // ⌘⇧O:新对话(与常见约定一致)
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'o') {
+    e.preventDefault(); newChat();
+  }
 });
-// 转到桌面宽度时,手机态的覆盖层要收干净 —— 否则侧栏会以 fixed 姿态卡在页面上
 addEventListener('resize', () => {
   if (window.innerWidth > 900 && el('side').classList.contains('open')) {
     el('side').classList.remove('open');
     el('sideScrim').hidden = true;
     document.body.classList.remove('no-scroll');
   }
+  applyPlaceholder(); // 提示语按宽度分档,转屏后要跟上
 });
 function togglePanel(force) {
   const on = force === undefined ? !el('app').classList.contains('with-panel') : force;
@@ -499,107 +1273,666 @@ function togglePanel(force) {
   show('panel', on);
 }
 
-// ── 会话 ──
+// ── 公告 ──
+function drawNotice(a) {
+  if (!a || !a.text) { show('notice', false); return; }
+  let dismissed = '';
+  try { dismissed = localStorage.getItem('cc-chat-notice') || ''; } catch {}
+  const fp = String(a.updatedAt || 0) + ':' + a.text.length;
+  if (dismissed === fp) { show('notice', false); return; }
+  el('notice').className = 'notice ' + (a.level === 'warn' || a.level === 'err' ? a.level : '');
+  el('noticeText').textContent = a.text;
+  el('notice').dataset.fp = fp;
+  show('notice', true);
+}
+function dismissNotice() {
+  try { localStorage.setItem('cc-chat-notice', el('notice').dataset.fp || ''); } catch {}
+  show('notice', false);
+}
+
+// ── 会话列表 ──
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return '刚刚';
+  if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
+  if (s < 86400) return Math.floor(s / 3600) + ' 小时前';
+  if (s < 86400 * 7) return Math.floor(s / 86400) + ' 天前';
+  return new Date(ts).toLocaleDateString('zh-CN');
+}
+function dayGroup(ts) {
+  const d = new Date(ts), n = new Date();
+  const midnight = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  if (ts >= midnight) return '今天';
+  if (ts >= midnight - 86400000) return '昨天';
+  if (ts >= midnight - 86400000 * 6) return '本周';
+  if (d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth()) return '本月';
+  return '更早';
+}
+
+// ── 用量 ────────────────────────────────────────────────────────────────
+// 两层口径,给哪一层是【服务端】决定的(见 user.js /api/quota):管理员给你设了
+// 配额就看自己的额度,没设就看账户整体的订阅额度 —— 后者才是没有个人限额时
+// 真正会撞上的那道墙。前端只画,不猜:有配额时响应里根本没有 account 字段。
+let USAGE = null;
+
+function usdText(v) { return '$' + (v >= 100 ? v.toFixed(0) : v >= 1 ? v.toFixed(2) : v.toFixed(4)); }
+function sevCls(sev, pct) {
+  const s = sev || (pct >= 95 ? 'critical' : pct >= 80 ? 'warn' : 'normal');
+  return s === 'critical' ? 'err' : s === 'warn' ? 'warn' : '';
+}
+function resetText(ts) {
+  if (!ts) return '';
+  const d = ts - Date.now();
+  if (d <= 0) return '已重置';
+  const h = Math.floor(d / 3600000), m = Math.round((d % 3600000) / 60000);
+  return h >= 24 ? `${Math.round(h / 24)} 天后重置` : h ? `${h} 小时${m ? m + ' 分' : ''}后重置` : `${Math.max(1, m)} 分钟后重置`;
+}
+function ubar(b) {
+  const pct = Math.max(0, Math.min(100, Math.round(b.percent || 0)));
+  const cls = sevCls(b.severity, pct);
+  const bits = [];
+  // used/limit 可能是 null —— 管理员关掉了「查看成本金额」权限。这时只给百分比:
+  // 比例不泄露金额,而"我还剩多少"必须仍然答得出来。
+  if (b.used != null && b.limit != null) {
+    bits.push(b.kind === 'cost' ? `${usdText(b.used)} / ${usdText(b.limit)}` : `${fmtNum(b.used)} / ${fmtNum(b.limit)}`);
+  }
+  if (b.resetsAt) bits.push(resetText(b.resetsAt));
+  if (b.isActive) bits.push('当前生效');
+  if (b.status && String(b.status).toLowerCase() !== 'allowed') bits.push(esc(String(b.status)));
+  return `<div class="ubar">
+    <div class="r1"><b>${esc(b.label || '')}</b><span class="p ${cls}">${pct}%</span></div>
+    <div class="tr"><i class="${cls}" style="width:${pct}%"></i></div>
+    ${bits.length ? `<div class="sub">${bits.join(' · ')}</div>` : ''}
+  </div>`;
+}
+
+async function loadUsage(fromDialog = false) {
+  const btn = el('usageRefresh');
+  if (fromDialog && btn) { btn.disabled = true; btn.textContent = '刷新中…'; }
+  try {
+    USAGE = await (await api('/quota')).json();
+  } catch {
+    USAGE = null;
+  } finally {
+    if (fromDialog && btn) { btn.disabled = false; btn.textContent = '刷新'; }
+  }
+  drawUsageStrip();
+  if (usageDlg.open || fromDialog) drawUsage();
+}
+
+// 侧栏那一行:只画【最紧的那一个数】。两层口径下"最紧"的含义不同,所以标签也不同。
+function drawUsageStrip() {
+  const strip = el('usageStrip');
+  if (!USAGE) { strip.hidden = true; return; }
+  let label = '用量', pct = null;
+  if (USAGE.scope === 'user' && (USAGE.mine.bars || []).length) {
+    const top = USAGE.mine.bars.reduce((a, b) => (b.percent > a.percent ? b : a));
+    label = top.label; pct = top.percent;
+  } else if (USAGE.scope === 'account' && USAGE.account && USAGE.account.available && (USAGE.account.bars || []).length) {
+    const top = USAGE.account.bars.reduce((a, b) => (b.percent > a.percent ? b : a));
+    label = top.label; pct = top.percent;
+  } else if (USAGE.mine && !USAGE.mine.admin) {
+    // 既没有个人额度、也拿不到账户额度:那就报自己这段时间用了多少 —— 总比什么都不说好
+    label = `${USAGE.mine.windowLabel || ''}已用 ${fmtNum(USAGE.mine.usedTokens || 0)}`;
+  }
+  const cls = pct == null ? '' : sevCls(null, pct);
+  el('usageStripLabel').textContent = label;
+  el('usageStripTrack').hidden = pct == null;
+  el('usageStripFill').style.width = (pct == null ? 0 : pct) + '%';
+  el('usageStripFill').className = cls;
+  el('usageStripPct').textContent = pct == null ? '' : pct + '%';
+  el('usageStripPct').className = 'up ' + cls;
+  strip.hidden = false;
+}
+
+function drawUsage() {
+  const box = el('usageBody'), note = el('usageNote');
+  if (!USAGE) { box.innerHTML = '<p class="muted">读不到用量(网络或会话问题)。</p>'; note.textContent = ''; return; }
+  const m = USAGE.mine || {};
+  const html = [];
+  // 1) 我用了多少(这一层永远看得到 —— 它是自己的数据)
+  if (!m.admin) {
+    const nums = [`<span>${esc(m.windowLabel || '')}已用 <b>${fmtNum(m.usedTokens || 0)}</b> token</span>`,
+                  `<span>请求 <b>${fmtNum(m.requests || 0)}</b> 次</span>`];
+    if (m.usedCost != null) nums.push(`<span>估算 <b>${usdText(m.usedCost)}</b></span>`);
+    html.push('<div class="u-head">我的用量</div>');
+    html.push(`<div class="u-nums">${nums.join('')}</div>`);
+    html.push(`<p class="muted" style="font-size:var(--fs-stamp);margin:0">口径 = 输入+输出 token,不含缓存读;${m.deviceCount ? `与你名下 ${m.deviceCount} 台设备共享` : '你名下还没有设备'}。金额按模型定价估算,非账单。</p>`);
+  }
+  // 2) 额度:有个人配额就看个人的,否则看账户整体的
+  if (USAGE.scope === 'user') {
+    html.push('<div class="u-head">我的额度</div>');
+    html.push((m.bars || []).map(ubar).join('') || '<p class="muted">管理员没给你设上限。</p>');
+    html.push('<p class="muted" style="font-size:var(--fs-stamp);margin:0">这是管理员给你单独设的额度,用尽后请求会被拒(429),到下一个窗口自动恢复。</p>');
+  } else {
+    const a = USAGE.account || {};
+    html.push('<div class="u-head">账户整体额度</div>');
+    if (m.admin) html.push('<p class="muted" style="font-size:var(--fs-stamp);margin:0 0 var(--s2)">管理员不受用户级配额限制,这里是整个订阅账户的额度。</p>');
+    if (a.available) {
+      if (a.alert && a.alert.exhausted) {
+        html.push(`<div class="u-alert"><b>⚠️ 额外用量额度已用尽</b>${a.alert.reason ? ' · ' + esc(a.alert.reason) : ''}
+          <div style="margin-top:4px;color:var(--color-text-secondary)">上面那几个窗口还有余量时,请求也可能被上游拒成 <code>529 Overloaded</code> —— 官方那句报错只说 "Overloaded",看不出是账户的消费上限满了。要解决得由订阅的管理员去提高上限或等额度周期重置。</div></div>`);
+      } else if (a.alert && a.alert.percent > 0) {
+        html.push(ubar({ label: '额外用量额度', percent: a.alert.percent, severity: a.alert.severity,
+          used: a.spend ? a.spend.used && a.spend.used.amount : null, limit: a.spend ? a.spend.limit && a.spend.limit.amount : null, kind: 'cost' }));
+      } else if (a.alert && !a.alert.enabled) {
+        // 实测真实账号会回 percent=0 + disabled_reason=out_of_credits。画一根 0% 的条
+        // 会被读成"还有余量",而事实是压根没有这份兜底 —— 两种状态必须分得开。
+        html.push(`<p class="muted" style="font-size:var(--fs-stamp);margin:0 0 var(--s2)">额外用量额度:<b>不可用</b>${a.alert.reason ? '(' + esc(a.alert.reason) + ')' : ''} —— 上面的窗口用尽后没有兜底额度,只能等窗口重置。</p>`);
+      }
+      html.push((a.bars || []).map(ubar).join(''));
+    } else {
+      html.push(`<p class="muted">${esc(a.reason || '暂无数据')}</p>`);
+    }
+  }
+  box.innerHTML = html.join('');
+  const a = USAGE.account;
+  note.innerHTML = USAGE.scope === 'user'
+    ? '额度与你名下所有设备共享,不是每台设备各一份。'
+    : a && a.available
+      ? (a.source === 'oauth'
+          ? `数据来自订阅用量接口(与 Claude Code 的 <code>/usage</code> 同源),服务端缓存 ${Math.round((a.ttlMs || 0) / 60000)} 分钟以免把上游问出 429${a.fetchedAt ? ' · 更新于 ' + esc(ago(a.fetchedAt)) : ''}`
+          : `数据来自最近一次转发响应里的上游限额头${a.fetchedAt ? '(' + esc(ago(a.fetchedAt)) + ')' : ''}${a.upstreamStatus ? ' · 上游状态 ' + esc(a.upstreamStatus) : ''}`)
+      : '';
+}
+
+function openUsage() {
+  drawUsage();
+  usageDlg.showModal();
+  loadUsage(true); // 打开时顺手刷一次,拿到的可能比侧栏那份新
+}
+
 async function loadSessions() {
   const d = await (await api('/chat/sessions')).json();
-  const rows = d.sessions || [];
-  el('sessions').innerHTML = rows.length
-    ? rows.map((s) => `<div class="sess ${s.id === curId ? 'active' : ''}" onclick="openChat('${s.id}')" title="${escapeHtml(s.title || '新对话')}">
-        <span class="t">${escapeHtml(s.title || '新对话')}</span>
-        <span class="acts">
-          <button onclick="event.stopPropagation();renameChat('${s.id}')" title="重命名">✎</button>
-          <button onclick="event.stopPropagation();delChat('${s.id}')" title="删除">🗑</button>
-        </span></div>`).join('')
-    : '<div style="padding:var(--s3);font-size:var(--fs-sm);color:oklch(1 0 0 / .5)">还没有对话</div>';
-  // 会话条数。上限是【磁盘保护】不是额度(超了删最旧的,不拒请求,管理员一样受约束),
-  // 所以平时只报条数 —— 写成 "0/200" 摆在"(管理员)"旁边,长得就像个额度徽标,会让人
-  // 以为不限额的账号还被限了。只在快撞上限(≥80%)时才把上限亮出来,那时它才真的影响你。
+  sessionRows = d.sessions || [];
+  liveIds = new Set((d.live || []).map((l) => l.sessionId));
+  drawSessions();
   if (d.stats) {
     const n = d.stats.sessions, cap = d.stats.maxSessions;
     const near = cap > 0 && n >= cap * 0.8;
     const meta = el('whoMeta');
     meta.textContent = near ? `· ${n}/${cap} 对话` : `· ${n} 个对话`;
     meta.classList.toggle('near-cap', near);
+    // 上限是【磁盘保护】不是额度(超了删最旧的,不拒请求,管理员一样受约束),
+    // 所以平时只报条数 —— 写成 "0/200" 摆在名字旁边,长得就像个额度徽标。
     meta.title = cap > 0
       ? `已保存 ${n} 个对话。超过 ${cap} 个时自动删掉最旧的 —— 这是磁盘保护,不是额度限制。上限可在 config.json 的 chatMaxSessions 里调,0 = 不限。`
       : `已保存 ${n} 个对话(未设上限)。`;
   }
 }
+
+function drawSessions() {
+  const q = el('find').value.trim().toLowerCase();
+  const rows = q
+    ? sessionRows.filter((s) => (s.title || '').toLowerCase().includes(q) || (s.preview || '').toLowerCase().includes(q))
+    : sessionRows;
+  if (!rows.length) {
+    el('sessions').innerHTML = `<div class="sess-empty">${q ? '没有匹配的对话' : '还没有对话'}</div>`;
+    return;
+  }
+  let html = '';
+  let lastGrp = '';
+  for (const s of rows) {
+    // 置顶单独一组:它们不该按时间散落在各组里
+    const grp = s.pinned ? '置顶' : dayGroup(s.updatedAt || s.createdAt || 0);
+    if (grp !== lastGrp) { html += `<div class="grp">${esc(grp)}</div>`; lastGrp = grp; }
+    const live = liveIds.has(s.id);
+    html += `<div class="sess ${s.id === curId ? 'active' : ''}" data-id="${esc(s.id)}" title="${esc(s.title || '新对话')}${s.preview ? '\n' + esc(s.preview) : ''}">
+      ${s.pinned ? '<span class="pin" aria-label="已置顶">★</span>' : ''}
+      ${live ? '<span class="dot" title="正在生成中"></span>' : ''}
+      <span class="txt">
+        <span class="t">${esc(s.title || '新对话')}</span>
+        ${s.preview ? `<span class="p">${esc(s.preview)}</span>` : ''}
+      </span>
+      <span class="acts">
+        <button data-act="pin" title="${s.pinned ? '取消置顶' : '置顶'}">${s.pinned ? '☆' : '★'}</button>
+        <button data-act="rename" title="重命名">✎</button>
+        <button data-act="del" title="删除">🗑</button>
+      </span></div>`;
+  }
+  el('sessions').innerHTML = html;
+}
+
+// 列表用事件委托:innerHTML 里塞 onclick 又要转义又容易注入,委托一次就够
+el('sessions').addEventListener('click', (e) => {
+  const row = e.target.closest('.sess');
+  if (!row) return;
+  const id = row.dataset.id;
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) { openChat(id); return; }
+  e.stopPropagation();
+  const act = btn.dataset.act;
+  if (act === 'rename') askRename(id);
+  else if (act === 'del') delChat(id);
+  else if (act === 'pin') togglePin(id);
+});
+
+let renameId = null;
+function askRename(id) {
+  const row = sessionRows.find((s) => s.id === id);
+  renameId = id;
+  el('renameInput').value = (row && row.title) || '';
+  renameDlg.showModal();
+  el('renameInput').select();
+}
+async function renameCommit() {
+  const title = el('renameInput').value.trim();
+  renameDlg.close();
+  if (!renameId) return;
+  await api('/chat/session/rename', { method: 'POST', body: JSON.stringify({ id: renameId, title }) });
+  renameId = null;
+  loadSessions();
+}
+el('renameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); renameCommit(); } });
+
+async function togglePin(id) {
+  const row = sessionRows.find((s) => s.id === id);
+  await api('/chat/session/pin', { method: 'POST', body: JSON.stringify({ id, pinned: !(row && row.pinned) }) });
+  loadSessions();
+}
+async function delChat(id) {
+  const row = sessionRows.find((s) => s.id === id);
+  if (!await askConfirm('删除对话', `删除「${(row && row.title) || '新对话'}」?不可恢复。`, '删除')) return;
+  await api('/chat/session/remove', { method: 'POST', body: JSON.stringify({ id }) });
+  if (id === curId) newChat(); else loadSessions();
+}
+
 function newChat() {
-  curId = null; messages = []; artifacts = []; togglePanel(false);
+  endStream();
+  curId = null; messages = []; artifacts = []; editIndex = null;
+  togglePanel(false); show('resumed', false); show('editingBar', false);
+  restoreDraft();
   render(); loadSessions();
   el('input').focus();
-  history.replaceState({}, '', (IS_ADMIN ? '/admin/chat' : '/u/chat'));
+  history.replaceState({}, '', CHAT_PATH);
   if (window.innerWidth <= 900) toggleSide(false);
 }
+
 async function openChat(id) {
+  if (id === curId && !cur) return;
+  saveDraft();
+  endStream();
   const r = await api('/chat/session?id=' + encodeURIComponent(id));
   if (!r.ok) { toast('会话打开失败', 'err'); return; }
   const d = await r.json();
   curId = d.session.id;
   messages = d.session.messages || [];
-  if (d.session.model) el('model').value = d.session.model;
-  render(); loadSessions(); refreshArtifacts();
+  editIndex = null; show('editingBar', false);
+  if (d.session.model) setModel(d.session.model);
+  history.replaceState({}, '', CHAT_PATH + '?c=' + encodeURIComponent(curId));
+  restoreDraft();
+  render(); drawContext(d.context); loadSessions(); refreshArtifacts();
   if (window.innerWidth <= 900) toggleSide(false);
+  // 服务端还在生成这条 —— 接回去。这是断线保活的收口:刷新页面、换台设备,
+  // 甚至锁屏十分钟回来,那条回答还在往下写。
+  if (d.live) attach(d.live.seq, true);
+  else show('resumed', false);
 }
-async function renameChat(id) {
-  const cur = (messages && curId === id && messages.length) ? '' : '';
-  const title = prompt('新的对话标题:', cur);
-  if (title == null) return;
-  await api('/chat/session/rename', { method: 'POST', body: JSON.stringify({ id, title }) });
-  loadSessions();
+
+// ── 草稿:每个会话一份,切走再切回来还在 ──
+const draftKey = () => 'cc-chat-draft:' + (curId || '_new');
+function saveDraft() {
+  try {
+    const v = el('input').value;
+    if (v.trim()) localStorage.setItem(draftKey(), v);
+    else localStorage.removeItem(draftKey());
+  } catch {}
 }
-async function delChat(id) {
-  if (!confirm('删除这个对话?不可恢复。')) return;
-  await api('/chat/session/remove', { method: 'POST', body: JSON.stringify({ id }) });
-  if (id === curId) newChat(); else loadSessions();
+function restoreDraft() {
+  let v = '';
+  try { v = localStorage.getItem(draftKey()) || ''; } catch {}
+  el('input').value = v;
+  autoGrow();
+}
+addEventListener('beforeunload', saveDraft);
+
+// ── 上下文占用 ──
+let lastCtx = null;
+function drawContext(ctx) {
+  lastCtx = ctx || null;
+  if (!ctx || !ctx.window || !ctx.used) { show('ctxChip', false); return; }
+  const pct = Math.max(0, Math.min(100, ctx.percent || 0));
+  const C = 2 * Math.PI * 7.5;
+  el('ctxArc').setAttribute('stroke-dasharray', C.toFixed(1));
+  el('ctxArc').setAttribute('stroke-dashoffset', (C * (1 - pct / 100)).toFixed(1));
+  // 不到 1% 时报 token 数而不是「0.0%」:后者既没信息量,又像是坏了。
+  // 到了有意义的量级再切成百分比 —— 那时人关心的才是"离满还有多远"。
+  el('ctxPct').textContent = pct >= 1 ? Math.round(pct) + '%' : fmtNum(ctx.used) + ' tok';
+  el('ctxChip').classList.toggle('warn', pct >= 70);
+  el('ctxChip').title = `上下文已用 ${fmtNum(ctx.used)} / ${fmtNum(ctx.window)} token（${ctx.source === 'measured' ? '来自上游实际用量' : '按字数估算'}）`;
+  show('ctxChip', true);
+}
+function explainCtx() {
+  if (!lastCtx) return;
+  const pct = Math.round(lastCtx.percent || 0);
+  toast(
+    `这段对话已占用上下文 ${fmtNum(lastCtx.used)} / ${fmtNum(lastCtx.window)} token(${pct}%)。` +
+      (pct >= 70 ? ' 越长越慢越贵 —— 换个话题时开新对话更划算。' : ' 数字来自' + (lastCtx.source === 'measured' ? '上游实际用量。' : '字数估算。')),
+  );
 }
 
 // ── 渲染 ──
 function fmtNum(n) { n = n || 0; return n < 1000 ? String(n) : n < 1e6 ? (n / 1e3).toFixed(1) + 'k' : (n / 1e6).toFixed(1) + 'M'; }
+function fmtMs(ms) {
+  if (!ms || ms < 0) return '';
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  const m = Math.floor(ms / 60000);
+  return `${m}分${Math.round((ms % 60000) / 1000)}秒`;
+}
 
-function renderMsg(m, i) {
-  if (m.role === 'user') {
-    const imgs = (m.images || []).map((im) => `<img src="${API}/chat/image?id=${encodeURIComponent(im.id)}&s=${encodeURIComponent(SESSION)}" alt="附图" />`).join('');
-    return `<div class="msg user"><div class="bubble">${imgs ? `<div class="imgs">${imgs}</div>` : ''}${escapeHtml(m.content).replace(/\n/g, '<br />')}</div></div>`;
+// 思考过程折叠行里的那句尾巴。流式时跟最后一行(此刻在想什么),
+// 定稿后取第一行(它是这段推理的概括);第一行只是个冒号标题时取下一行。
+function thinkTail(text, streaming) {
+  const lines = String(text || '')
+    .split('\n')
+    .map((l) => l.trim().replace(/^#{1,6}\s+/, '').replace(/^[-*+]\s+/, '').replace(/^>\s*/, '').replace(/^\d+\.\s+/, '').trim())
+    .filter((l) => l && l !== '---');
+  if (!lines.length) return '';
+  let picked;
+  if (streaming) picked = lines[lines.length - 1];
+  else {
+    const first = lines[0];
+    picked = first.length <= 24 && /[:：]$/.test(first) ? (lines[1] || first) : first;
   }
+  return picked.length > 160 ? picked.slice(0, 160) + '…' : picked;
+}
+
+function renderMsg(m, i, isLast) {
+  const acts = [];
+  if (m.content) acts.push(`<button data-act="copy" data-i="${i}" title="复制这条">复制</button>`);
+  if (m.role === 'user') {
+    acts.push(`<button data-act="edit" data-i="${i}" title="改写这条提问并重新发送">改写</button>`);
+  } else {
+    acts.push(`<button data-act="fork" data-i="${i}" title="从这里分出一个新对话,原对话保留">分叉</button>`);
+    if (isLast) acts.push(`<button data-act="regen" title="重新生成">重新生成</button>`);
+  }
+  const stampBits = [];
+  if (m.ts) stampBits.push(new Date(m.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+  if (m.role === 'assistant' && m.ms) stampBits.push('用时 ' + fmtMs(m.ms));
+  const stamp = stampBits.length
+    ? `<span class="stamp" title="${m.ts ? esc(new Date(m.ts).toLocaleString('zh-CN')) : ''}">${esc(stampBits.join(' · '))}</span>`
+    : '';
+  const actsRow = `<div class="acts-row">${acts.join('')}${stamp}</div>`;
+
+  if (m.role === 'user') {
+    const imgs = (m.images || [])
+      .map((im) => `<img src="${API}/chat/image?id=${encodeURIComponent(im.id)}&s=${encodeURIComponent(SESSION)}" alt="附图" data-zoom="1" />`)
+      .join('');
+    const atts = (m.files || []).map((f) =>
+      `<a class="att" href="${API}/chat/file?id=${encodeURIComponent(f.id)}&name=${encodeURIComponent(f.name || '')}&s=${encodeURIComponent(SESSION)}"
+         target="_blank" rel="noopener" title="${esc(f.name || '')}">
+        ${svg(ICO.file, '')}<span class="nm">${esc(f.name || f.id)}</span></a>`).join('');
+    // 底已经是 white-space: pre-wrap,换行不用再转成 <br>
+    return `<div class="msg user ${isLast ? 'last' : ''}" data-i="${i}"><div class="col">
+      ${imgs ? `<div class="imgs">${imgs}</div>` : ''}
+      ${atts ? `<div class="atts">${atts}</div>` : ''}
+      ${m.content ? `<div class="bubble">${esc(m.content)}</div>` : ''}
+      ${actsRow}</div></div>`;
+  }
+
   const think = m.thinking
-    ? `<details class="think"><summary>思考过程</summary><div class="tbody">${escapeHtml(m.thinking)}</div></details>`
+    ? `<details class="think"${PREF.openThink ? ' open' : ''}><summary>
+        <span class="lbl">已思考</span>
+        <span class="tail">${esc(thinkTail(m.thinking, false))}</span>
+        <span class="caret" aria-hidden="true">▸</span>
+      </summary><div class="tbody">${esc(m.thinking)}</div></details>`
     : '';
   const body = m.content ? renderMarkdown(m.content) : '';
+  const research = renderResearch(m);
+  const cites = renderCites(m);
   const u = m.usage || {};
-  const meta = [];
-  if (m.model) meta.push(escapeHtml(m.model));
-  if (u.output) meta.push(`in ${fmtNum(u.input)} / out ${fmtNum(u.output)}${u.cacheRead ? ' / 缓存 ' + fmtNum(u.cacheRead) : ''}`);
-  if (m.stopped) meta.push('已停止');
-  return `<div class="msg assistant" data-i="${i}">
-    <div class="who">Claude</div>
+  const bits = [];
+  if (m.model) bits.push(esc(m.model));
+  if (u.output) bits.push(`in ${fmtNum(u.input)} / out ${fmtNum(u.output)}${u.cacheRead ? ' / 缓存 ' + fmtNum(u.cacheRead) : ''}`);
+  if (m.stopped) bits.push('你点了停止');
+  if (m.disconnected) bits.push('断线超时,已保留生成到此处的内容');
+  return `<div class="msg assistant ${isLast ? 'last' : ''}" data-i="${i}">
+    <div class="who">Claude${bits.length ? ' · ' + bits.join(' · ') : ''}</div>
     ${think}
+    ${research}
     <div class="body">${body}</div>
-    ${m.error ? `<div class="err">${escapeHtml(m.error)}</div>` : ''}
-    ${meta.length ? `<div class="meta">${meta.map((x) => `<span>${x}</span>`).join('')}</div>` : ''}
-  </div>`;
+    ${cites}
+    ${m.error ? `<div class="err">${esc(m.error)}</div>` : ''}
+    ${actsRow}</div>`;
+}
+
+// 会话抬头。cc-haha 每个会话最上面是"衬线大标题 + 条数/最后更新/模型"这一行,
+// 它替代了原来那条塞满选择器的顶栏。
+function drawHead() {
+  const row = sessionRows.find((x) => x.id === curId);
+  const title = (row && row.title) || (curId ? '新对话' : '新的会话');
+  el('chatTitle').textContent = title;
+  el('chatTitle').title = title;
+  const bits = [];
+  if (cur) bits.push('<span class="liveflag">生成中</span>');
+  if (messages.length) bits.push(esc(messages.length + ' 条消息'));
+  if (row && row.updatedAt) bits.push('最后更新 ' + esc(ago(row.updatedAt)));
+  let html = bits.join('<span class="sep">·</span>');
+  // 模型名连同它前面那个分隔点一起包进 .mdl:窄屏只要隐掉这个 span,
+  // 就不会留下一个孤零零的「·」(CSS 选不到"前一个兄弟")
+  const mdl = el('model').value;
+  if (mdl) html += `<span class="mdl">${bits.length ? '<span class="sep">·</span>' : ''}${esc(mdl)}</span>`;
+  el('chatMeta').innerHTML = html;
+}
+
+// 联网这一轮查了什么。折叠一行,点开看查询词与命中的页面 ——
+// "它到底搜了没有、搜的是什么"是联网回答里最该能核对的一件事。
+function renderResearch(m) {
+  const qs = m.queries || [];
+  const src = m.sources || [];
+  if (!qs.length && !src.length) return '';
+  const label = m.mode === 'research' ? '深度研究' : '联网检索';
+  const rows =
+    qs.map((q) => `<div class="q">${esc(q)}</div>`).join('') +
+    src.map((x) => {
+      let host = '';
+      try { host = new URL(x.url).host.replace(/^www\./, ''); } catch {}
+      return `<a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">
+        <span class="host">${esc(host)}</span><span class="ttl">${esc(x.title || x.url)}</span></a>`;
+    }).join('');
+  return `<details class="research"><summary>
+      ${svg(ICO.globe)}${esc(label)} · 检索 ${qs.length} 次,命中 ${src.length} 个来源
+      <span class="caret" aria-hidden="true">▸</span>
+    </summary><div class="rbody">${rows}</div></details>`;
+}
+
+// 正文末尾的来源清单。优先用模型自己给的 citations(它明确引了谁),
+// 没有引用就退回这一轮搜到的全部来源。
+function renderCites(m) {
+  const list = (m.citations && m.citations.length ? m.citations : m.sources) || [];
+  if (!list.length) return '';
+  return `<div class="cites"><div class="lbl">${m.citations && m.citations.length ? '引用来源' : '检索到的来源'}</div><ol>` +
+    list.map((x, i) => {
+      let host = '';
+      try { host = new URL(x.url).host.replace(/^www\./, ''); } catch {}
+      return `<li><span class="n">${i + 1}</span><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" title="${esc(x.title || x.url)}">${esc(x.title || host || x.url)}</a></li>`;
+    }).join('') + '</ol></div>';
 }
 
 function render() {
+  drawHead();
   if (!messages.length) {
     el('msgs').innerHTML = `<div class="empty"><b>开始一段对话</b>
       <div class="sub">这里的请求会通过本机的 Claude 订阅转发,用量记在你选的那台设备名下(可在「我的设备」查看)。</div>
       <div class="chips">
-        <button onclick="quick('用一句话解释 CAP 定理')">解释一个概念</button>
-        <button onclick="quick('帮我写一个 Node 的 LRU 缓存,带测试')">写代码</button>
-        <button onclick="quick('做一个可交互的 HTML 柱状图 demo')">做个可预览的页面</button>
+        <button data-fill="用一句话解释 CAP 定理">解释一个概念</button>
+        <button data-fill="帮我写一个 Node 的 LRU 缓存,带测试">写代码</button>
+        <button data-fill="做一个可交互的 HTML 柱状图 demo">做个可预览的页面</button>
       </div></div>`;
-    show('regenBtn', false);
+      drawNav();
     return;
   }
-  el('msgs').innerHTML = messages.map(renderMsg).join('');
+  const lastAssistant = messages.reduce((acc, m, i) => (m.role === 'assistant' ? i : acc), -1);
+  el('msgs').innerHTML = messages.map((m, i) => renderMsg(m, i, i === lastAssistant || i === messages.length - 1)).join('') + statusHtml();
   bindCodeButtons();
-  show('regenBtn', !abortCtl && messages.some((m) => m.role === 'assistant'));
+  drawNav();
   scrollDown();
 }
-function quick(t) { el('input').value = t; autoGrow(); send(); }
-function scrollDown() { const s = el('stream'); s.scrollTop = s.scrollHeight; }
+
+// 生成中的状态行:动词 + 已用时 + 已出 token
+function statusHtml() {
+  if (!cur) return '';
+  if (cur.retry) {
+    return `<div class="retry-bar" role="status">
+      <span aria-hidden="true">↻</span>
+      <b>上游繁忙,正在重试</b>
+      <span class="tag">第 ${cur.retry.attempt}/${cur.retry.max} 次</span>
+      ${cur.retry.status ? `<span class="tag">HTTP ${cur.retry.status}</span>` : ''}
+      <span>${esc(cur.retry.message || '').slice(0, 120)}</span>
+    </div>`;
+  }
+  const secs = Math.floor((Date.now() - cur.startedAt) / 1000);
+  const tok = Math.round((cur.chars || 0) / 4);
+  const verb = cur.searching || (cur.thinkingNow ? '思考中' : '生成中');
+  return `<div class="turn-status" id="turnStatus" role="status" aria-live="polite">
+    <span class="spark" aria-hidden="true">✦</span>
+    <b>${esc(verb)}<span class="dots"></span></b>
+    <span class="num">${secs}s</span>
+    ${tok > 0 ? `<span aria-hidden="true">·</span><span class="num">↓ ${fmtNum(tok)} tok</span>` : ''}
+  </div>`;
+}
+let statusTimer = null;
+function tickStatus() {
+  const node = el('turnStatus');
+  if (!cur || !node) return;
+  const secs = Math.floor((Date.now() - cur.startedAt) / 1000);
+  const tok = Math.round((cur.chars || 0) / 4);
+  const nums = node.querySelectorAll('.num');
+  if (nums[0]) nums[0].textContent = secs + 's';
+  if (nums[1]) nums[1].textContent = '↓ ' + fmtNum(tok) + ' tok';
+  else if (tok > 0) { const s = document.createElement('span'); s.className = 'num'; s.textContent = '↓ ' + fmtNum(tok) + ' tok'; node.appendChild(s); }
+  const b = node.querySelector('b');
+  if (b) b.firstChild.textContent = cur.searching || (cur.thinkingNow ? '思考中' : '生成中');
+}
+
+// 空态那三个建议按钮 + 图片放大,都走委托
+el('msgs').addEventListener('click', (e) => {
+  const fill = e.target.closest('[data-fill]');
+  if (fill) { el('input').value = fill.dataset.fill; autoGrow(); send(); return; }
+  const zoom = e.target.closest('img[data-zoom]');
+  if (zoom) { openLightbox(zoom.src); return; }
+  const btn = e.target.closest('button[data-act]');
+  if (!btn) return;
+  const i = Number(btn.dataset.i);
+  const act = btn.dataset.act;
+  if (act === 'copy') copyMsg(i);
+  else if (act === 'edit') startEdit(i);
+  else if (act === 'fork') forkAt(i);
+  else if (act === 'regen') regen();
+});
+
+function copyMsg(i) {
+  const m = messages[i];
+  if (!m) return;
+  navigator.clipboard.writeText(m.content || '').then(() => toast('已复制这条')).catch(() => toast('复制失败', 'err'));
+}
+
+function openLightbox(src) {
+  const box = el('lightbox');
+  const img = document.createElement('img');
+  img.alt = '放大的附图';
+  img.src = src;
+  box.replaceChildren(img);
+  show('lightbox', true);
+}
+function closeLightbox() { show('lightbox', false); el('lightbox').replaceChildren(); }
+
+// ── 改写提问 ──
+// cc-haha 里这叫"编辑并重发"。它替代的动作是:手动复制上一条、新开一段、
+// 再把跑偏的回答删掉 —— 三步变一步,而且原对话可以用分叉留住。
+function startEdit(i) {
+  const m = messages[i];
+  if (!m || m.role !== 'user') return;
+  editIndex = i;
+  el('input').value = m.content || '';
+  el('editIdx').textContent = String(messages.slice(0, i + 1).filter((x) => x.role === 'user').length);
+  show('editingBar', true);
+  autoGrow();
+  el('input').focus();
+}
+function cancelEdit() {
+  editIndex = null;
+  show('editingBar', false);
+  el('input').value = '';
+  autoGrow();
+}
+
+async function forkAt(i) {
+  if (!curId) return;
+  const r = await api('/chat/session/fork', { method: 'POST', body: JSON.stringify({ id: curId, upto: i }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '分叉失败', 'err'); return; }
+  toast('已分叉出新对话,原对话保留');
+  await loadSessions();
+  openChat(d.session.id);
+}
+
+// ── 回合导航(左侧细条)──
+let navItems = [];
+function drawNav() {
+  navItems = [];
+  messages.forEach((m, i) => {
+    if (m.role !== 'user') return;
+    const t = String(m.content || '').replace(/\s+/g, ' ').trim();
+    navItems.push({ i, text: t || '(仅图片)' });
+  });
+  const lane = el('navLane');
+  if (navItems.length < 3) { lane.innerHTML = ''; lane.classList.remove('on'); return; }
+  lane.classList.add('on');
+  lane.innerHTML = navItems
+    .map((it, k) => `<button data-k="${k}" aria-label="跳到第 ${k + 1} 个提问"><i style="width:7px"></i></button>`)
+    .join('');
+}
+// 指针附近的标记加宽(cc-haha 的"波纹"):细条本身只有 2px 高,
+// 没有这个反馈根本不知道自己指到了哪一条
+el('navLane').addEventListener('pointermove', (e) => {
+  const btns = [...el('navLane').querySelectorAll('button')];
+  const hit = e.target.closest('button');
+  const at = hit ? Number(hit.dataset.k) : null;
+  btns.forEach((b, k) => {
+    const d = at === null ? 99 : Math.abs(k - at);
+    const w = d >= 2 ? 7 : 7 + (22 - 7) * Math.sin((1 - d / 2) * Math.PI / 2) ** 2;
+    b.firstElementChild.style.width = w.toFixed(1) + 'px';
+  });
+  if (hit) {
+    const it = navItems[Number(hit.dataset.k)];
+    const r = hit.getBoundingClientRect();
+    const tip = el('navTip');
+    tip.textContent = it.text;
+    tip.hidden = false;
+    tip.style.left = r.right + 8 + 'px';
+    tip.style.top = Math.min(window.innerHeight - 110, Math.max(12, r.top - 20)) + 'px';
+  } else el('navTip').hidden = true;
+});
+el('navLane').addEventListener('pointerleave', () => {
+  el('navTip').hidden = true;
+  el('navLane').querySelectorAll('button i').forEach((i) => (i.style.width = '7px'));
+});
+el('navLane').addEventListener('click', (e) => {
+  const hit = e.target.closest('button');
+  if (!hit) return;
+  const it = navItems[Number(hit.dataset.k)];
+  const node = el('msgs').querySelector(`.msg[data-i="${it.i}"]`);
+  if (node) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el('navLane').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === hit));
+});
+
+// ── 滚动 ──
+// 只有"本来就贴着底"才跟着滚。此前每来一个 delta 都强制到底,
+// 想往上翻看前文的人被一直拽回来。
+let stick = true;
+el('stream').addEventListener('scroll', () => {
+  const s = el('stream');
+  stick = s.scrollHeight - s.scrollTop - s.clientHeight < 80;
+  show('toLatest', !stick && messages.length > 0);
+});
+function scrollDown(force) {
+  const s = el('stream');
+  if (force) { stick = true; show('toLatest', false); }
+  if (!stick) return;
+  s.scrollTop = s.scrollHeight;
+}
 
 // 代码块的「复制」与「在侧栏打开」——事件委托后绑定,避免 innerHTML 里塞 onclick
 function bindCodeButtons() {
@@ -612,7 +1945,6 @@ function bindCodeButtons() {
           .then(() => toast('已复制代码')).catch(() => toast('复制失败', 'err'));
       };
     }
-    // 属于 artifact 的代码块加一个「在侧栏打开」
     const idx = Number(blk.dataset.codeIndex);
     const art = artifacts.find((a) => a.index === idx);
     if (art && !blk.querySelector('.art-open')) {
@@ -636,8 +1968,10 @@ function refreshArtifacts() {
   artifacts = all;
   show('panelBtn', artifacts.length > 0);
   if (!artifacts.length) togglePanel(false);
+  // 标签前加序号:同一段对话里反复给同一份代码时,标题会一模一样
+  // (「js · 20 行」两个并排),没有序号就分不出点的是哪一个
   el('pTabs').innerHTML = artifacts.map((a, i) =>
-    `<button class="${i === artIndex ? 'on' : ''}" onclick="openArtifact(${i})">${escapeHtml(a.title)}</button>`).join('');
+    `<button class="${i === artIndex ? 'on' : ''}" onclick="openArtifact(${i})">${artifacts.length > 1 ? i + 1 + '. ' : ''}${esc(a.title)}</button>`).join('');
   bindCodeButtons();
 }
 function openArtifact(i) {
@@ -687,11 +2021,406 @@ function downloadArtifact() {
   URL.revokeObjectURL(url);
 }
 
-// ── 图片 ──
+// ── 模式:联网 / 深度研究 ──
+// 服务端工具跑在 Anthropic 那边,所以这个转发代理里不需要任何本地 agent 循环。
+let MODE = ''; // '' | 'search' | 'research'
+let PICKED_SKILLS = [];
+try {
+  MODE = localStorage.getItem('cc-chat-mode') || '';
+  PICKED_SKILLS = JSON.parse(localStorage.getItem('cc-chat-skills') || '[]');
+} catch {}
+if (!['', 'search', 'research'].includes(MODE)) MODE = '';
+
+function setMode(m) {
+  MODE = MODE === m ? '' : m; // 再点一次就关掉
+  try { localStorage.setItem('cc-chat-mode', MODE); } catch {}
+  drawModeChips();
+  closeMenus();
+}
+function toggleSkill(id) {
+  const i = PICKED_SKILLS.indexOf(id);
+  if (i >= 0) PICKED_SKILLS.splice(i, 1);
+  else PICKED_SKILLS.push(id);
+  try { localStorage.setItem('cc-chat-skills', JSON.stringify(PICKED_SKILLS)); } catch {}
+  drawModeChips();
+  drawPlusMenu('skills');
+}
+function drawModeChips() {
+  const chips = [];
+  if (MODE === 'search') chips.push(['联网搜索', "setMode('search')"]);
+  if (MODE === 'research') chips.push(['深度研究', "setMode('research')"]);
+  const known = (META && META.skills) || [];
+  for (const id of PICKED_SKILLS) {
+    const k = known.find((x) => x.id === id);
+    if (k) chips.push([k.name, `toggleSkill('${esc(id)}')`]);
+  }
+  el('modeChips').innerHTML = chips
+    .map(([label, fn]) => `<span class="mode-chip">${esc(label)}<button onclick="${fn}" title="关掉" aria-label="关掉 ${esc(label)}">✕</button></span>`)
+    .join('');
+}
+
+// ── 弹出菜单 ──
+function closeMenus() {
+  el('plusMenu').hidden = true;
+  el('modelMenu').hidden = true;
+  closeSub();
+}
+const ICO = {
+  file: '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/>',
+  flask: '<path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3"/>',
+  skill: '<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2.5"/>',
+  check: '<path d="m5 13 4 4L19 7"/>',
+};
+const svg = (d, cls = 'ico') =>
+  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+
+// 窄屏放不下两列,退回"同一面板换页"
+const narrowMenus = () => window.innerWidth <= 640;
+
+function closeSub() {
+  for (const id of ['plusSub', 'modelSub']) el(id).hidden = true;
+  for (const id of ['plusMenu', 'modelMenu']) el(id).classList.remove('has-sub');
+  document.querySelectorAll('.menu-item.open').forEach((x) => x.classList.remove('open'));
+}
+
+// 把二级面板浮到触发行的右边。位置相对 .plus-wrap / .mdl-wrap 算(它们是
+// position:relative 且不滚动的那一层),所以不会被父菜单的 overflow 裁掉。
+// 放不下就翻到左边;竖直方向夹回视口内;窄屏直接盖在父菜单原位上。
+function placeSub(menuId, subId, rowEl) {
+  const menu = el(menuId);
+  const sub = el(subId);
+  const wrap = menu.parentElement;
+  const wr = wrap.getBoundingClientRect();
+  const mr = menu.getBoundingClientRect();
+  const rr = rowEl.getBoundingClientRect();
+
+  sub.classList.remove('flip');
+  // 先落一个位置,才能量到真实宽高(display:none 的元素量不出来)
+  sub.style.left = Math.round(mr.right - wr.left + 6) + 'px';
+  sub.style.top = Math.round(rr.top - wr.top) + 'px';
+  const sr0 = sub.getBoundingClientRect();
+
+  if (narrowMenus()) {
+    // 盖在父菜单原位上:同一个左上角,同一个宽度
+    sub.style.left = Math.round(mr.left - wr.left) + 'px';
+    sub.style.top = Math.round(mr.top - wr.top) + 'px';
+    sub.style.width = Math.round(mr.width) + 'px';
+    return;
+  }
+  sub.style.width = '';
+
+  // 右边放不下就翻到左边
+  if (mr.right + 6 + sr0.width > window.innerWidth - 8) {
+    sub.classList.add('flip');
+    sub.style.left = Math.round(mr.left - wr.left - sr0.width - 6) + 'px';
+  }
+  // 竖直方向夹回视口
+  const sr = sub.getBoundingClientRect();
+  if (sr.bottom > window.innerHeight - 8) {
+    sub.style.top = Math.round(rr.top - wr.top - (sr.bottom - (window.innerHeight - 8))) + 'px';
+  } else if (sr.top < 8) {
+    sub.style.top = Math.round(rr.top - wr.top + (8 - sr.top)) + 'px';
+  }
+}
+
+function openSub(menuId, subId, rowEl, html) {
+  closeSub();
+  el(subId).innerHTML = html;
+  el(subId).hidden = false;
+  el(menuId).classList.add('has-sub');
+  rowEl.classList.add('open');
+  placeSub(menuId, subId, rowEl);
+}
+
+function togglePlus() {
+  const open = el('plusMenu').hidden;
+  closeMenus();
+  if (open) { drawPlusMenu(); el('plusMenu').hidden = false; }
+}
+
+function drawPlusMenu() {
+  const maxPdf = META && META.maxPdfBytes ? Math.round(META.maxPdfBytes / 1048576) : 20;
+  el('plusBody').innerHTML = `
+    <button class="menu-item" onclick="closeMenus();pickFile()">
+      ${svg(ICO.file)}<span class="lbl"><b>添加文件或图片</b><i>图片、PDF(≤${maxPdf}MB)、文本与代码</i></span></button>
+    <hr />
+    <button class="menu-item ${MODE === 'search' ? 'on' : ''}" onclick="setMode('search')">
+      ${svg(ICO.globe)}<span class="lbl"><b>联网搜索</b><i>需要时自己去搜,回答带来源</i></span>
+      ${MODE === 'search' ? '<span class="tick">✓</span>' : ''}</button>
+    <button class="menu-item ${MODE === 'research' ? 'on' : ''}" onclick="setMode('research')">
+      ${svg(ICO.flask)}<span class="lbl"><b>深度研究</b><i>多轮检索 + 抓原文 + 交叉核对,慢但扎实</i></span>
+      ${MODE === 'research' ? '<span class="tick">✓</span>' : ''}</button>
+    <hr />
+    <button class="menu-item" data-sub="skills" onclick="openSkillSub(this)">
+      ${svg(ICO.skill)}<span class="lbl"><b>技能</b><i>预设提示词${PICKED_SKILLS.length ? ` · 已选 ${PICKED_SKILLS.length} 个` : ''}</i></span>
+      <span class="caret">▸</span></button>`;
+  closeSub();
+}
+
+// 技能二级菜单:我的(可增删)+ 团队(管理员配的,只读)
+function skillSubHtml() {
+  const all = (META && META.skills) || [];
+  const mine = all.filter((k) => k.scope !== 'team');
+  const team = all.filter((k) => k.scope === 'team');
+  const row = (k) => {
+    const on = PICKED_SKILLS.includes(k.id);
+    const own = k.scope !== 'team';
+    return `<button class="menu-item ${on ? 'on' : ''}" onclick="toggleSkill('${esc(k.id)}')">
+      ${svg(ICO.skill)}<span class="lbl"><b>${esc(k.name)}</b>${k.desc ? `<i>${esc(k.desc)}</i>` : ''}</span>
+      ${own ? `<span class="val" onclick="event.stopPropagation();editOwnSkill('${esc(k.id)}')" title="编辑" role="button">改</span>` : ''}
+      ${on ? '<span class="tick">✓</span>' : ''}</button>`;
+  };
+  return (
+    (narrowMenus() ? `<button class="menu-item menu-back" onclick="closeSub()">${svg('<path d="m9 18 6-6-6-6"/>')}<span class="lbl">返回</span></button>` : '') +
+    `<div class="menu-note">「技能」是<b>预设提示词</b>:选中的会拼进本轮的 system。它不会读你的文件、也不会跑脚本 —— 那需要 Anthropic 的 Agent Skills,而这条订阅通路没有相应权限。</div>` +
+    `<button class="menu-item" onclick="newOwnSkill()">${svg('<path d="M12 5v14M5 12h14"/>')}<span class="lbl"><b>新建技能</b><i>只有你自己能看到和使用</i></span></button>` +
+    (mine.length ? `<div class="menu-head">我的技能</div>` + mine.map(row).join('') : '') +
+    (team.length ? `<div class="menu-head">团队技能(管理员维护)</div>` + team.map(row).join('') : '') +
+    (!mine.length && !team.length ? '<div class="menu-head">还没有技能 —— 点上面「新建技能」加一个</div>' : '')
+  );
+}
+function openSkillSub(rowEl) { openSub('plusMenu', 'plusSub', rowEl, skillSubHtml()); }
+function refreshSkillSub() {
+  if (el('plusSub').hidden) return;
+  el('plusSub').innerHTML = skillSubHtml();
+}
+
+// ── 模型 + 深度 ──
+// 三个 select 仍是唯一的状态位,这里只是驱动它们。
+const EFFORTS = [
+  { v: 'low', name: '低' },
+  { v: 'medium', name: '中' },
+  { v: 'high', name: '高', dflt: true },
+  { v: 'xhigh', name: '很高' },
+  { v: 'max', name: '最大' },
+];
+function toggleModelMenu() {
+  const open = el('modelMenu').hidden;
+  closeMenus();
+  if (open) { drawModelMenu(); el('modelMenu').hidden = false; }
+}
+function drawModelMenu() {
+  const models = (META && META.models) || [];
+  const cur = el('model').value;
+  const latest = models.filter((x) => x.latest);
+  const shown = latest.length ? latest : models.slice(0, 5);
+  const eff = EFFORTS.find((x) => x.v === el('effort').value);
+  el('modelBody').innerHTML =
+    shown.map((x) => {
+      const on = x.id === cur;
+      return `<button class="menu-item ${on ? 'on' : ''}" onclick="pickModel('${esc(x.id)}')">
+        <span class="lbl"><b>${esc(x.id)}</b><i>${esc(x.tier || '')}${x.latest ? ' · 最新' : ''}</i></span>
+        ${on ? '<span class="tick">✓</span>' : ''}</button>`;
+    }).join('') +
+    `<hr />
+     <button class="menu-item" data-sub="effort" onclick="openEffortSub(this)">
+       <span class="lbl"><b>深度</b></span><span class="val">${eff ? eff.name : '高'}</span><span class="caret">▸</span></button>` +
+    (models.length > shown.length
+      ? `<button class="menu-item" data-sub="all" onclick="openAllModelsSub(this)">
+           <span class="lbl"><b>更多模型</b></span><span class="caret">▸</span></button>`
+      : '');
+  closeSub();
+}
+function effortSubHtml() {
+  const cur = el('model').value;
+  const m = ((META && META.models) || []).find((x) => x.id === cur);
+  const back = narrowMenus() ? `<button class="menu-item menu-back" onclick="closeSub()">${svg('<path d="m9 18 6-6-6-6"/>')}<span class="lbl">返回</span></button>` : '';
+  if (!m || !m.supportsEffort) return back + `<div class="menu-head">${esc(cur || '这个模型')} 不支持深度调节</div>`;
+  return (
+    back +
+    `<div class="menu-note">深度越高,回答越彻底,但更慢、也更耗额度。</div>` +
+    EFFORTS.map((e) => {
+      const on = el('effort').value === e.v || (!el('effort').value && e.dflt);
+      return `<button class="menu-item ${on ? 'on' : ''}" onclick="pickEffort('${e.v}')">
+        <span class="lbl"><b>${e.name}</b></span>${e.dflt ? '<span class="val">默认</span>' : ''}
+        ${on ? '<span class="tick">✓</span>' : ''}</button>`;
+    }).join('')
+  );
+}
+function allModelsSubHtml() {
+  const models = (META && META.models) || [];
+  const cur = el('model').value;
+  const back = narrowMenus() ? `<button class="menu-item menu-back" onclick="closeSub()">${svg('<path d="m9 18 6-6-6-6"/>')}<span class="lbl">返回</span></button>` : '';
+  return back + models.map((x) => {
+    const on = x.id === cur;
+    return `<button class="menu-item ${on ? 'on' : ''}" onclick="pickModel('${esc(x.id)}')">
+      <span class="lbl"><b>${esc(x.id)}</b><i>${esc(x.tier || '')}${x.latest ? ' · 最新' : ''}</i></span>
+      ${on ? '<span class="tick">✓</span>' : ''}</button>`;
+  }).join('');
+}
+function openEffortSub(rowEl) { openSub('modelMenu', 'modelSub', rowEl, effortSubHtml()); }
+function openAllModelsSub(rowEl) { openSub('modelMenu', 'modelSub', rowEl, allModelsSubHtml()); }
+
+function pickModel(id) {
+  setModel(id);
+  try { localStorage.setItem('cc-chat-model', id); } catch {}
+  drawModelBtn();
+  closeMenus();
+}
+function pickEffort(v) {
+  el('effort').value = v;
+  rememberSel();
+  drawModelBtn();
+  closeMenus();
+}
+function drawModelBtn() {
+  el('mdlLabel').textContent = el('model').value || '选择模型';
+  const v = el('effort').value;
+  const e = EFFORTS.find((x) => x.v === v);
+  const m = ((META && META.models) || []).find((x) => x.id === el('model').value);
+  el('mdlEffort').textContent = m && m.supportsEffort ? '· ' + (e ? e.name : '高') : '';
+}
+
+// 桌面上鼠标扫过带 ▸ 的行就展开(claude.ai 的手感);触屏只认点击
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType === 'touch' || narrowMenus()) return;
+  const row = e.target.closest('.menu-item[data-sub]');
+  if (row) {
+    const kind = row.dataset.sub;
+    if (kind === 'skills') openSkillSub(row);
+    else if (kind === 'effort') openEffortSub(row);
+    else if (kind === 'all') openAllModelsSub(row);
+    return;
+  }
+  // 扫到同一菜单里别的行:收起二级(否则它会一直挂着)
+  const other = e.target.closest('.menu-body > .menu-item');
+  if (other) closeSub();
+});
+
+// 点外面关掉。
+//
+// 【capture 阶段】不是随便选的:菜单项的 onclick 会用 innerHTML 重画菜单,
+// 被点的那个按钮因此【从 DOM 上脱落】。如果这个监听跑在冒泡阶段,它拿到的
+// e.target 已经是个游离节点,closest('.menu') 返回 null —— 于是它认为"你点在了
+// 菜单外面",把刚打开的二级菜单立刻关掉。capture 在内联 onclick 之前跑,
+// 那时 DOM 还是完整的。
+document.addEventListener(
+  'click',
+  (e) => {
+    if (e.target.closest('.menu') || e.target.closest('#plusBtn') || e.target.closest('#mdlBtn')) return;
+    closeMenus();
+  },
+  true,
+);
+
+// ── 我的技能:自建 ──
+let EDIT_SKILL = null;
+function newOwnSkill() {
+  EDIT_SKILL = null;
+  el('skillDlgTitle').textContent = '新建技能';
+  el('skName').value = '';
+  el('skDesc').value = '';
+  el('skPrompt').value = '';
+  el('skErr').textContent = '';
+  show('skDel', false);
+  skillDlg.showModal();
+  el('skName').focus();
+}
+async function editOwnSkill(id) {
+  const r = await api('/chat/skills');
+  const d = await r.json();
+  const k = (d.mine || []).find((x) => x.id === id);
+  if (!k) { toast('这个技能不在你的技能库里', 'err'); return; }
+  EDIT_SKILL = id;
+  el('skillDlgTitle').textContent = '编辑技能';
+  el('skName').value = k.name;
+  el('skDesc').value = k.desc || '';
+  el('skPrompt').value = k.prompt;
+  el('skErr').textContent = '';
+  show('skDel', true);
+  skillDlg.showModal();
+}
+// 由名称生成一个稳定的 id。中文名生成不出可读 id,就退回时间戳 —— id 只是主键,
+// 界面上从不显示它。
+function slugify(name) {
+  const s = String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24);
+  return s || 'skill-' + Date.now().toString(36);
+}
+async function saveOwnSkill() {
+  const name = el('skName').value.trim();
+  const prompt = el('skPrompt').value.trim();
+  const err = el('skErr');
+  err.textContent = '';
+  if (!name) { err.textContent = '给它起个名字'; return; }
+  if (!prompt) { err.textContent = '提示词不能为空 —— 技能就是这段话'; return; }
+  const r0 = await api('/chat/skills');
+  const d0 = await r0.json();
+  const mine = d0.mine || [];
+  if (!EDIT_SKILL && mine.length >= (d0.max || 20)) { err.textContent = `自己的技能最多 ${d0.max} 个`; return; }
+  let id = EDIT_SKILL;
+  if (!id) {
+    id = slugify(name);
+    let n = 2;
+    while (mine.some((k) => k.id === id)) id = slugify(name) + '-' + n++;
+  }
+  const next = EDIT_SKILL
+    ? mine.map((k) => (k.id === EDIT_SKILL ? { ...k, name, desc: el('skDesc').value.trim(), prompt } : k))
+    : [...mine, { id, name, desc: el('skDesc').value.trim(), prompt }];
+  const r = await api('/chat/skills', { method: 'POST', body: JSON.stringify({ skills: next }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { err.textContent = d.error || '保存失败'; return; }
+  skillDlg.close();
+  await reloadSkills();
+  toast(EDIT_SKILL ? '技能已更新' : '技能已创建');
+  EDIT_SKILL = null;
+}
+async function delFromDlg() {
+  const id = EDIT_SKILL;
+  if (!id) return;
+  skillDlg.close();
+  await deleteOwnSkill(id);
+}
+async function deleteOwnSkill(id) {
+  if (!await askConfirm('删除技能', '删掉这个技能?只影响你自己。', '删除')) return;
+  const d0 = await (await api('/chat/skills')).json();
+  const next = (d0.mine || []).filter((k) => k.id !== id);
+  const r = await api('/chat/skills', { method: 'POST', body: JSON.stringify({ skills: next }) });
+  if (!r.ok) { toast('删除失败', 'err'); return; }
+  PICKED_SKILLS = PICKED_SKILLS.filter((x) => x !== id);
+  try { localStorage.setItem('cc-chat-skills', JSON.stringify(PICKED_SKILLS)); } catch {}
+  await reloadSkills();
+  toast('已删除');
+}
+// 改完技能要把 META 里那份清单刷新,选择器和徽标才跟得上
+async function reloadSkills() {
+  try {
+    const m = await (await api('/chat/meta')).json();
+    META.skills = m.skills || [];
+  } catch {}
+  drawModeChips();
+  refreshSkillSub();
+}
+
+// ── 附件(图片 / PDF / 文本)──
 function pickFile() { el('file').click(); }
 async function onFiles(files) {
-  for (const f of files) await addImage(f);
+  for (const f of files) await addFile(f);
   el('file').value = '';
+}
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+async function addFile(file) {
+  // 图片仍走原来那条路(image block + 缩略图预览)
+  if (file.type.startsWith('image/')) return addImage(file);
+  const cap = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)
+    ? (META && META.maxPdfBytes) || 20971520
+    : (META && META.maxTextBytes) || 1048576;
+  if (file.size > cap) { toast(`「${file.name}」超过 ${fmtBytes(cap)} 上限`, 'err'); return; }
+  const data = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1] || '');
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+  const r = await api('/chat/file', { method: 'POST', body: JSON.stringify({ data, mime: file.type, name: file.name }) });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '上传失败', 'err'); return; }
+  pendingFiles.push({ id: d.id, kind: d.kind, name: d.name, mime: d.mime, bytes: d.bytes });
+  drawPending();
 }
 async function addImage(file) {
   if (!file.type.startsWith('image/')) { toast('只支持图片', 'err'); return; }
@@ -709,17 +2438,24 @@ async function addImage(file) {
   drawPending();
 }
 function drawPending() {
-  el('pending').innerHTML = pendingImgs.map((p, i) =>
+  const imgs = pendingImgs.map((p, i) =>
     `<div class="thumb"><img src="${p.url}" alt="待发送图片" /><button class="x" onclick="rmImage(${i})" aria-label="移除">✕</button></div>`).join('');
+  const docs = pendingFiles.map((f, i) =>
+    `<div class="doc">${svg(f.kind === 'pdf' ? ICO.file : ICO.file, '')}
+      <span class="nm" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="sz">${fmtBytes(f.bytes || 0)}</span>
+      <button class="x" onclick="rmFile(${i})" aria-label="移除">✕</button></div>`).join('');
+  el('pending').innerHTML = imgs + docs;
 }
 function rmImage(i) { pendingImgs.splice(i, 1); drawPending(); }
+function rmFile(i) { pendingFiles.splice(i, 1); drawPending(); }
 
 const drop = el('drop');
 drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', async (e) => {
   e.preventDefault(); drop.classList.remove('over');
-  for (const f of e.dataTransfer.files) await addImage(f);
+  for (const f of e.dataTransfer.files) await addFile(f);
 });
 el('input').addEventListener('paste', async (e) => {
   const items = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/'));
@@ -735,21 +2471,48 @@ function autoGrow() {
   t.style.height = 'auto';
   t.style.height = Math.min(t.scrollHeight, window.innerHeight * 0.4) + 'px';
 }
-el('input').addEventListener('input', autoGrow);
+el('input').addEventListener('input', () => { autoGrow(); saveDraft(); });
 el('input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  if (e.key !== 'Enter' || e.isComposing || e.shiftKey) {
+    // 空输入框按 ↑ = 改写上一条提问(命令行里的习惯,这里同样成立)
+    if (e.key === 'ArrowUp' && !el('input').value && editIndex === null) {
+      const last = messages.reduce((acc, m, i) => (m.role === 'user' ? i : acc), -1);
+      if (last >= 0) { e.preventDefault(); startEdit(last); }
+    }
+    return;
+  }
+  const mod = e.ctrlKey || e.metaKey;
+  const shouldSend = PREF.sendMode === 'mod' ? mod : !mod;
+  if (shouldSend) { e.preventDefault(); send(); }
 });
 
 // ── 模型 / 设备 ──
-function onModelChange() {
+function setModel(id) {
+  if (!id) return;
+  if (![...el('model').options].some((o) => o.value === id)) {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = id + '(已不在可用列表)';
+    el('model').appendChild(o);
+  }
+  el('model').value = id;
+  onModelChange(true);
+}
+function onModelChange(quiet) {
   const m = (META.models || []).find((x) => x.id === el('model').value);
   if (!m) return;
-  show('effortWrap', !!m.supportsEffort);
+  show('effort', !!m.supportsEffort); // 控件已不再被 <label> 包着,直接控 select
   // Fable 5 这类不接受 thinking:disabled 的,把"关闭"选项摘掉而不是让它 400
   const dis = el('thinking').querySelector('option[value=disabled]');
   if (dis) dis.hidden = !m.thinkingDisabledOk;
   if (!m.thinkingDisabledOk && el('thinking').value === 'disabled') el('thinking').value = '';
-  try { localStorage.setItem('cc-chat-model', el('model').value); } catch {}
+  if (!quiet) { try { localStorage.setItem('cc-chat-model', el('model').value); } catch {} }
+  if (typeof drawModelBtn === 'function') drawModelBtn();
+}
+function rememberSel() {
+  try {
+    localStorage.setItem('cc-chat-thinking', el('thinking').value);
+    localStorage.setItem('cc-chat-effort', el('effort').value);
+  } catch {}
 }
 function onDeviceChange() {
   const d = (META.devices || []).find((x) => x.id === el('device').value);
@@ -784,39 +2547,103 @@ function applyForced(d) {
 
 // ── 发送 / 流式接收 ──
 function setBusy(b) {
+  // 一个圆键两种状态:空闲发送,生成中停止(cc-haha 也是这么换的)
   show('stopBtn', b);
+  show('sendBtn', !b);
   el('sendBtn').disabled = b;
-  el('input').disabled = b;
-  show('regenBtn', !b && messages.some((m) => m.role === 'assistant'));
+  if (b) { if (!statusTimer) statusTimer = setInterval(tickStatus, 1000); }
+  else { clearInterval(statusTimer); statusTimer = null; }
 }
-function stopGen() { if (abortCtl) abortCtl.abort(); }
+
+// 「停止」是发给服务端的一条明确指令,不是把连接一关了事。
+// 断开只代表"没人在看",服务端会在宽限期里继续把这一轮跑完(见 chat_runs.js)。
+async function stopGen() {
+  if (!curId) return;
+  el('stopBtn').disabled = true;
+  try { await api('/chat/stop', { method: 'POST', body: JSON.stringify({ sessionId: curId }) }); }
+  catch {}
+  el('stopBtn').disabled = false;
+}
 function regen() { send({ regenerate: true }); }
+
+// 主动收掉当前这条流(切会话/新对话时用)。注意:它只断开订阅,
+// 服务端那一轮照旧在跑 —— 回来还能接上。
+function endStream() {
+  if (cur && cur.ctl) { try { cur.ctl.abort(); } catch {} }
+  cur = null;
+  setBusy(false);
+}
+
+// 接回一个还在跑的回合
+async function attach(fromSeq, announce) {
+  if (!curId) return;
+  const holder = messages[messages.length - 1];
+  // 服务端还没落盘,本地也就没有占位 —— 补一条,内容由 snapshot 填
+  if (!holder || holder.role !== 'assistant' || holder.done) {
+    messages.push({ role: 'assistant', content: '', thinking: '', model: el('model').value, usage: {} });
+  }
+  if (announce) {
+    el('resumed').textContent = '这条对话在服务端还在生成 —— 已经接回来了。关掉页面也不影响它跑完。';
+    show('resumed', true);
+    setTimeout(() => show('resumed', false), 8000);
+  }
+  const url = `${API}/chat/attach?sessionId=${encodeURIComponent(curId)}&from=${fromSeq || 0}&s=${encodeURIComponent(SESSION)}`;
+  const ctl = new AbortController();
+  cur = { ctl, startedAt: Date.now(), chars: 0, thinkingNow: false, retry: null, seq: fromSeq || 0 };
+  setBusy(true);
+  render();
+  try {
+    const r = await fetch(url, { signal: ctl.signal, headers: { authorization: 'Bearer ' + SESSION } });
+    if (!r.ok) { endStream(); return; }
+    await consume(r.body, messages[messages.length - 1]);
+  } catch (err) {
+    if (err.name !== 'AbortError') toast('续传中断: ' + err.message, 'err');
+  } finally {
+    // setBusy 无条件调用:它还负责关掉那个每秒刷新计时的 interval,
+    // 放在 if (cur) 里的话,cur 已经被别处清空时定时器就留下来了
+    cur = null;
+    setBusy(false);
+    render(); refreshArtifacts(); loadSessions();
+  }
+}
 
 async function send(opts = {}) {
   const text = el('input').value.trim();
-  if (!opts.regenerate && !text && !pendingImgs.length) return;
-  if (abortCtl) return;
+  if (!opts.regenerate && !text && !pendingImgs.length && !pendingFiles.length) return;
+  if (cur) return;
+
+  // 改写:先把这条及之后的都砍掉(服务端也砍),再当成一条新消息发出去
+  const editing = editIndex;
+  if (editing !== null && !opts.regenerate) {
+    if (curId) {
+      const r = await api('/chat/session/truncate', { method: 'POST', body: JSON.stringify({ id: curId, index: editing }) });
+      if (!r.ok) { toast('改写失败:无法截断原对话', 'err'); return; }
+    }
+    messages = messages.slice(0, editing);
+    editIndex = null;
+    show('editingBar', false);
+  }
 
   const imgs = pendingImgs.map((p) => ({ id: p.id, mime: p.mime }));
+  const atts = pendingFiles.map((f) => ({ id: f.id, kind: f.kind, name: f.name }));
   if (!opts.regenerate) {
-    messages.push({ role: 'user', content: text, images: imgs, ts: Date.now() });
+    messages.push({ role: 'user', content: text, images: imgs, files: atts, ts: Date.now() });
     el('input').value = ''; autoGrow();
-    pendingImgs = []; drawPending();
+    try { localStorage.removeItem(draftKey()); } catch {}
+    pendingImgs = []; pendingFiles = []; drawPending();
   } else {
     while (messages.length && messages[messages.length - 1].role === 'assistant') messages.pop();
   }
 
   // 占位的 assistant 消息:边收边填
-  const holder = { role: 'assistant', content: '', thinking: '', model: el('model').value, usage: {} };
+  const holder = { role: 'assistant', content: '', thinking: '', model: el('model').value, usage: {},
+    mode: MODE || undefined, queries: [], sources: [], citations: [] };
   messages.push(holder);
-  render();
-  const bodyEl = () => el('msgs').querySelector('.msg.assistant:last-child .body');
-  const thinkEl = () => el('msgs').querySelector('.msg.assistant:last-child .think .tbody');
-  bodyEl()?.classList.add('typing');
-
-  abortCtl = new AbortController();
+  const ctl = new AbortController();
+  cur = { ctl, startedAt: Date.now(), chars: 0, thinkingNow: false, retry: null, seq: 0 };
   setBusy(true);
-  let sawDelta = false;
+  scrollDown(true);
+  render();
 
   try {
     const r = await fetch(API + '/chat/stream', {
@@ -826,93 +2653,220 @@ async function send(opts = {}) {
         sessionId: curId,
         text: opts.regenerate ? '' : text,
         images: opts.regenerate ? [] : imgs,
+        files: opts.regenerate ? [] : atts,
+        mode: MODE,
+        skills: PICKED_SKILLS,
         model: el('model').value,
         thinking: el('thinking').value,
         effort: el('effort').value,
         deviceId: el('device').value,
         regenerate: !!opts.regenerate,
       }),
-      signal: abortCtl.signal,
+      signal: ctl.signal,
     });
     if (r.status === 401) { toLogin(); return; }
-    if (!r.ok) {
+    // 这个会话已经在生成了(另一个标签页 / 上次没关的连接):接回去,别开第二条
+    if (r.status === 409) {
       const d = await r.json().catch(() => ({}));
-      holder.error = d.error || `HTTP ${r.status}`;
+      messages.pop();
+      cur = null; setBusy(false);
+      if (d.live) { curId = d.sessionId || curId; return attach(d.live.seq, true); }
+      toast(d.error || '这个对话正在生成中', 'err');
       render();
       return;
     }
-
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n\n')) >= 0) {
-        const chunk = buf.slice(0, nl);
-        buf = buf.slice(nl + 2);
-        const line = chunk.split('\n').find((l) => l.startsWith('data:'));
-        if (!line) continue;
-        let ev;
-        try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-
-        if (ev.t === 'start') {
-          curId = ev.sessionId;
-          history.replaceState({}, '', (IS_ADMIN ? '/admin/chat' : '/u/chat') + '?c=' + encodeURIComponent(curId));
-        } else if (ev.t === 'delta') {
-          holder.content += ev.v;
-          sawDelta = true;
-          // 流式期间只更新这一条的正文,不整页重渲染(否则会闪且丢滚动位置)
-          const b = bodyEl();
-          if (b) { b.innerHTML = renderMarkdown(holder.content); b.classList.add('typing'); }
-          scrollDown();
-        } else if (ev.t === 'thinking') {
-          holder.thinking += ev.v;
-          let te = thinkEl();
-          if (!te) { render(); te = thinkEl(); }
-          if (te) te.textContent = holder.thinking;
-          scrollDown();
-        } else if (ev.t === 'usage') {
-          holder.usage = { input: ev.input, output: ev.output, cacheRead: ev.cacheRead, cacheWrite: ev.cacheWrite };
-        } else if (ev.t === 'error') {
-          holder.error = ev.message;
-        } else if (ev.t === 'done') {
-          holder.stopped = ev.stopped;
-        }
-      }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      holder.error = d.error || `HTTP ${r.status}`;
+      cur = null; setBusy(false);
+      render();
+      return;
     }
+    await consume(r.body, holder);
   } catch (err) {
-    if (err.name === 'AbortError') holder.stopped = true;
-    else holder.error = '网络中断: ' + err.message;
+    if (err.name === 'AbortError') {
+      // 我们主动断开的(切会话):服务端那轮还在跑,不要在消息上写"已停止"
+      return;
+    }
+    holder.error = '网络中断: ' + err.message;
   } finally {
-    abortCtl = null;
+    cur = null;
     setBusy(false);
-    if (!sawDelta && !holder.error && !holder.thinking) holder.error = holder.error || '没有收到内容';
     render();
     refreshArtifacts();
     loadSessions();
+    loadUsage(); // 刚烧掉的额度立刻反映到侧栏那条(账户口径吃服务端缓存,不会打上游)
   }
+}
+
+// 消费一条 SSE:事件很少但每种都有意义,集中在这里翻译成界面动作
+async function consume(body, holder) {
+  // 取最后一条 assistant 消息的节点。
+  // 【不能】用 `.msg.assistant:last-of-type`:CSS 的 :last-of-type 看的是"同类元素
+  // (div)里的最后一个",与 class 无关。生成中状态行也是一个 div 且排在消息后面,
+  // 于是没有任何 .msg.assistant 满足 :last-of-type —— 两个选择器全返回 null,
+  // 增量渲染静默失效,正文要等流结束后整页重渲染才出现(等于没有流式效果)。
+  const lastAssistant = () => {
+    const all = el('msgs').querySelectorAll('.msg.assistant');
+    return all.length ? all[all.length - 1] : null;
+  };
+  const bodyEl = () => {
+    const m = lastAssistant();
+    return m ? m.querySelector('.body') : null;
+  };
+  const thinkNode = () => {
+    const m = lastAssistant();
+    return m ? m.querySelector('.think') : null;
+  };
+  const reader = body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let sawAnything = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n\n')) >= 0) {
+      const chunk = buf.slice(0, nl);
+      buf = buf.slice(nl + 2);
+      const line = chunk.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+      let ev;
+      try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+      if (cur && typeof ev.n === 'number') cur.seq = ev.n;
+
+      if (ev.t === 'start') {
+        curId = ev.sessionId;
+        history.replaceState({}, '', CHAT_PATH + '?c=' + encodeURIComponent(curId));
+      } else if (ev.t === 'snapshot') {
+        // 续传:一次性把已经生成的部分补齐(那一段没有逐字动画,内容不缺)
+        holder.content = ev.text || '';
+        holder.thinking = ev.thinking || '';
+        holder.usage = ev.usage || {};
+        holder.model = ev.model || holder.model;
+        if (ev.queries) holder.queries = ev.queries;
+        if (ev.sources) holder.sources = ev.sources;
+        if (cur) { cur.chars = holder.content.length; cur.startedAt = ev.startedAt || cur.startedAt; }
+        sawAnything = !!(holder.content || holder.thinking);
+        render();
+      } else if (ev.t === 'delta') {
+        holder.content += ev.v;
+        sawAnything = true;
+        if (cur) { cur.chars = holder.content.length; cur.thinkingNow = false; }
+        // 流式期间只更新这一条的正文,不整页重渲染(否则会闪且丢滚动位置)
+        const b = bodyEl();
+        if (b) { b.innerHTML = renderMarkdown(holder.content); b.classList.add('typing'); }
+        scrollDown();
+      } else if (ev.t === 'thinking') {
+        holder.thinking += ev.v;
+        sawAnything = true;
+        if (cur) cur.thinkingNow = true;
+        let node = thinkNode();
+        if (!node) { render(); node = thinkNode(); }
+        if (node) {
+          node.querySelector('.tbody').textContent = holder.thinking;
+          const tail = node.querySelector('.tail');
+          if (tail) tail.textContent = thinkTail(holder.thinking, true);
+          const lbl = node.querySelector('.lbl');
+          if (lbl && !lbl.dataset.live) { lbl.dataset.live = '1'; lbl.innerHTML = '思考中<span class="dots"></span>'; }
+          if (node.open) node.querySelector('.tbody').scrollTop = node.querySelector('.tbody').scrollHeight;
+        }
+        scrollDown();
+      } else if (ev.t === 'tool_start') {
+        // 模型开始用服务端工具了。查询词随后由 tool_query 补上
+        if (cur) cur.searching = ev.name === 'web_fetch' ? '抓取网页' : '联网检索';
+        render();
+      } else if (ev.t === 'tool_query') {
+        holder.queries = holder.queries || [];
+        holder.queries.push(ev.query);
+        render();
+      } else if (ev.t === 'tool_result') {
+        if (ev.kind === 'error') {
+          toast('联网检索失败: ' + ev.error, 'err');
+        } else {
+          holder.sources = (holder.sources || []).concat(ev.results || []);
+        }
+        if (cur) cur.searching = '';
+        render();
+      } else if (ev.t === 'citation') {
+        holder.citations = holder.citations || [];
+        if (!holder.citations.some((c) => c.url === ev.url)) holder.citations.push({ title: ev.title, url: ev.url });
+      } else if (ev.t === 'continuing') {
+        // pause_turn 续轮:说一声,否则界面上看着像卡住了
+        if (cur) cur.searching = `继续第 ${ev.round} 轮`;
+        render();
+      } else if (ev.t === 'retry') {
+        if (cur) cur.retry = { attempt: ev.attempt, max: ev.max, status: ev.status, message: ev.message };
+        render();
+        // 退避结束后状态行自己会换回来(下一个事件触发 render)
+        setTimeout(() => { if (cur && cur.retry) { cur.retry = null; render(); } }, (ev.delayMs || 800) + 200);
+      } else if (ev.t === 'usage') {
+        holder.usage = { input: ev.input, output: ev.output, cacheRead: ev.cacheRead, cacheWrite: ev.cacheWrite };
+      } else if (ev.t === 'error') {
+        holder.error = ev.message;
+      } else if (ev.t === 'title') {
+        // 标题是 AI 生成的,晚一两秒到 —— 到了就刷一下列表
+        loadSessions();
+      } else if (ev.t === 'gone') {
+        // 回合已经结束并落盘了:重新读一次会话最省事,也最不会错
+        if (curId) reloadCurrent();
+        return;
+      } else if (ev.t === 'done') {
+        holder.done = true;
+        holder.stopped = ev.stopped;
+        holder.disconnected = ev.disconnected;
+        holder.ms = ev.ms;
+        if (ev.context) drawContext(ev.context);
+      }
+    }
+  }
+  if (!sawAnything && !holder.error) holder.error = '没有收到内容';
+}
+
+async function reloadCurrent() {
+  const r = await api('/chat/session?id=' + encodeURIComponent(curId));
+  if (!r.ok) return;
+  const d = await r.json();
+  messages = d.session.messages || [];
+  drawContext(d.context);
+  render(); refreshArtifacts();
 }
 
 // ── 启动 ──
 async function boot() {
-  applyTheme(curTheme());
+  applyTheme(savedTheme());
+  applyPlaceholder();
+  el('sendMode').value = PREF.sendMode;
+  el('prefThink').checked = !!PREF.openThink;
   if (IS_ADMIN) el('loginHint').textContent = '用管理员账号登录';
   if (!SESSION) { toLogin(); return; }
   try {
-    // 管理员侧没有 /me(那是用户端的),用 /meta 的 user 字段
+    // 管理员侧没有 /me(那是用户端的),用固定身份
     ME = IS_ADMIN ? { user: { name: 'admin' } } : await (await api('/me')).json();
   } catch { return; }
   show('loginView', false); show('app', true);
   el('whoName').textContent = ME.user.name + (IS_ADMIN ? '(管理员)' : '');
   el('homeLink').href = HOME;
   el('homeLink').textContent = IS_ADMIN ? '返回管理台' : '我的设备';
+  if (ME.announcement) drawNotice(ME.announcement);
+  else {
+    try { drawNotice((await (await api('/announcement')).json()).announcement); } catch {}
+  }
 
   META = await (await api('/chat/meta')).json();
   const models = META.models || [];
-  el('model').innerHTML = models.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.id)}${m.latest ? ' ·最新' : ''}</option>`).join('');
+  // 按档位分组:一长串扁平的 id 里挑模型,得先在心里给它们分类
+  const tiers = [...new Set(models.map((m) => m.tier || '其它'))];
+  el('model').innerHTML = tiers
+    .map((t) => {
+      const opts = models
+        .filter((m) => (m.tier || '其它') === t)
+        .map((m) => `<option value="${esc(m.id)}">${esc(m.id)}${m.latest ? ' ·最新' : ''}</option>`)
+        .join('');
+      return `<optgroup label="${esc(t)}">${opts}</optgroup>`;
+    })
+    .join('');
   let want = null;
   try { want = localStorage.getItem('cc-chat-model'); } catch {}
   if (want && models.some((m) => m.id === want)) el('model').value = want;
@@ -921,11 +2875,32 @@ async function boot() {
     const pref = models.find((m) => m.latest && /opus|sonnet/i.test(m.id)) || models.find((m) => m.latest) || models[0];
     if (pref) el('model').value = pref.id;
   }
-  onModelChange();
+  try {
+    const th = localStorage.getItem('cc-chat-thinking');
+    const ef = localStorage.getItem('cc-chat-effort');
+    if (th) el('thinking').value = th;
+    if (ef) el('effort').value = ef;
+  } catch {}
+  onModelChange(true);
+
+  drawModelBtn();
+  drawModeChips();
+  // 服务端没配技能时,已选的技能 id 要清掉,否则徽标会指向不存在的东西
+  const known = new Set((META.skills || []).map((k) => k.id));
+  if (PICKED_SKILLS.some((id) => !known.has(id))) {
+    PICKED_SKILLS = PICKED_SKILLS.filter((id) => known.has(id));
+    try { localStorage.setItem('cc-chat-skills', JSON.stringify(PICKED_SKILLS)); } catch {}
+    drawModeChips();
+  }
+
+  const graceMin = Math.round((META.disconnectGraceMs || 0) / 60000);
+  el('graceNote').textContent = META.disconnectGraceMs
+    ? `断线保活:关掉页面或断网后,服务端会把这一轮继续跑完,${graceMin >= 1 ? graceMin + ' 分钟' : Math.round(META.disconnectGraceMs / 1000) + ' 秒'}内回来还能接上。点「停止」才是真的取消。`
+    : '断线保活未开启:连接一断就取消生成(config.json 里 chatDisconnectGraceMs 可开)。';
 
   const devs = META.devices || [];
-  el('device').innerHTML = devs.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join('');
-  show('devWrap', devs.length > 1);
+  el('device').innerHTML = devs.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
+  show('device', devs.length > 1); // 只有一台设备时没什么可选的,不占位置
   if (!devs.length) {
     el('hint').textContent = '还没有分配设备 —— 请让管理员在管理台「用户」页给你分配一个客户端令牌';
     el('sendBtn').disabled = true;
@@ -938,8 +2913,10 @@ async function boot() {
   }
 
   await loadSessions();
+  loadUsage(); // 不 await:拿不到用量不该挡住聊天页可用
   const c = new URL(location.href).searchParams.get('c');
-  if (c) await openChat(c); else render();
+  if (c) await openChat(c);
+  else { restoreDraft(); render(); }
   el('input').focus();
 }
 boot();
