@@ -96,6 +96,28 @@ function normalizePerms(input) {
   return Object.keys(out).length ? out : undefined;
 }
 
+// 老配置里没有 passVersion(这个字段是后加的)。缺失一律视作 0,
+// 于是"老会话 + 老用户"仍然对得上,而任何一次改密都会把它推到 1 以上。
+export function passVersionOf(u) {
+  const n = Number(u && u.passVersion);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+// 密码强度下限。服务端是唯一权威(前端那份只是提前告知),两处都用这个常量。
+export const MIN_PASSWORD_LEN = 8;
+
+// 给前端/管理台复用的强度评估。刻意不做"必须含大写+数字+符号"那套 ——
+// 那只会把人赶向 Password1! 这类可预测的写法。长度是唯一真正线性提升难度的维度,
+// 其余只做提示。
+export function passwordIssues(pw) {
+  const s = String(pw || '');
+  const out = [];
+  if (s.length < MIN_PASSWORD_LEN) out.push(`至少 ${MIN_PASSWORD_LEN} 位`);
+  if (/^\d+$/.test(s)) out.push('不要只用数字');
+  if (/^(.)\1*$/.test(s) && s.length) out.push('不要用重复的单个字符');
+  return out;
+}
+
 export function createUserStore({ config, persist, reservedName = null, log = () => {} } = {}) {
   // config.users 是权威数据;这里保持同一个数组引用,persist 负责写回 config.json
   if (!Array.isArray(config.users)) config.users = [];
@@ -116,6 +138,11 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
       disabled: !!u.disabled,
       createdAt: u.createdAt || 0,
       lastLoginAt: u.lastLoginAt || 0,
+      passChangedAt: u.passChangedAt || 0,
+      // 凭证版本:登录会话记住签发时的值,改密码就 +1,旧会话下一个请求即失效。
+      // 借鉴 sub2api 的 TokenVersion —— 那是"改了密码,别处还登着"这个老问题
+      // 唯一靠得住的解法(挨个去翻 session Map 迟早漏掉一处)。
+      passVersion: passVersionOf(u),
       note: u.note || '',
       perms: effectivePerms(u),
       quota: effectiveQuota(u),
@@ -138,7 +165,8 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     }
     if (find(n)) return { ok: false, error: '用户名已存在' };
     const pw = String(password || '');
-    if (pw.length < 8) return { ok: false, error: '密码至少 8 位' };
+    const bad = passwordIssues(pw);
+    if (bad.length) return { ok: false, error: '密码' + bad.join('、') };
     const u = {
       name: n,
       pass: hashPassword(pw),
@@ -146,6 +174,8 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
       disabled: false,
       createdAt: Date.now(),
       lastLoginAt: 0,
+      passVersion: 1,
+      passChangedAt: Date.now(),
       note: String(note || '').slice(0, 200),
     };
     const np = normalizePerms(perms);
@@ -167,27 +197,48 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     return { ok: true };
   }
 
-  function setPassword(name, password) {
+  // 管理员设置某个用户的密码。keepSessions 只给"我知道自己在干什么"的场合留口子,
+  // 默认是踢掉该用户所有在线会话 —— 管理员改别人密码的动机通常就是"这个号可能
+  // 被别人拿到了",这时候把旧会话留着等于什么都没做。
+  function setPassword(name, password, { keepSessions = false } = {}) {
     const u = find(name);
     if (!u) return { ok: false, error: '用户不存在' };
     const pw = String(password || '');
-    if (pw.length < 8) return { ok: false, error: '密码至少 8 位' };
+    const bad = passwordIssues(pw);
+    if (bad.length) return { ok: false, error: '密码' + bad.join('、') };
     u.pass = hashPassword(pw);
+    u.passChangedAt = Date.now();
+    if (!keepSessions) u.passVersion = passVersionOf(u) + 1;
     save();
-    log(`已重置用户 ${name} 的密码`);
-    return { ok: true };
+    log(`[audit] 管理员重置了用户 ${name} 的密码${keepSessions ? '(保留在线会话)' : '(其在线会话已全部失效)'}`);
+    return { ok: true, user: publicOf(u) };
   }
 
-  // 用户自助改密:必须验旧密码
+  // 用户自助改密:必须验旧密码。改完 passVersion +1 —— 别处登着的同一个账号
+  // 会当场掉线,这正是"我怀疑密码泄露了所以来改密码"想要的结果。
   function changePassword(name, oldPw, newPw) {
     const u = find(name);
     if (!u) return { ok: false, error: '用户不存在' };
     if (!verifyPassword(oldPw, u.pass)) return { ok: false, error: '当前密码不正确' };
-    if (String(newPw || '').length < 8) return { ok: false, error: '新密码至少 8 位' };
+    const bad = passwordIssues(newPw);
+    if (bad.length) return { ok: false, error: '新密码' + bad.join('、') };
+    if (verifyPassword(newPw, u.pass)) return { ok: false, error: '新密码与当前密码相同' };
     u.pass = hashPassword(newPw);
+    u.passChangedAt = Date.now();
+    u.passVersion = passVersionOf(u) + 1;
     save();
-    log(`用户 ${name} 修改了自己的密码`);
-    return { ok: true };
+    log(`[audit] 用户 ${name} 修改了自己的密码(其它在线会话已失效)`);
+    return { ok: true, user: publicOf(u) };
+  }
+
+  // 不改密码,只把该用户所有在线会话作废(「退出所有设备」)
+  function revokeSessions(name) {
+    const u = find(name);
+    if (!u) return { ok: false, error: '用户不存在' };
+    u.passVersion = passVersionOf(u) + 1;
+    save();
+    log(`[audit] 用户 ${name} 的所有登录会话已作废`);
+    return { ok: true, user: publicOf(u) };
   }
 
   function setTokens(name, tokenIds) {
@@ -257,6 +308,16 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     return touched;
   }
 
+  // 只验凭证,不产生任何副作用(不动 lastLoginAt、不落盘)。
+  // 用途:管理台登录失败时判断"这其实是个普通用户账号吗" —— 只有对方确实
+  // 报出了这个账号的正确密码,才把"你该去用户端登录"这句话说出口。
+  // 密码没对上就一律回落到通用错误,免得变成账号存在性探测器。
+  function verifyCredentials(name, password) {
+    const u = find(name);
+    if (!u) return false;
+    return verifyPassword(password, u.pass);
+  }
+
   // 登录:返回 publicOf 或明确的失败原因。禁用用户不给过。
   function authenticate(name, password) {
     const u = find(name);
@@ -285,6 +346,7 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     remove,
     setPassword,
     changePassword,
+    revokeSessions,
     setTokens,
     setPerms,
     setQuota,
@@ -292,6 +354,7 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     setDisabled,
     forgetToken,
     authenticate,
+    verifyCredentials,
     activeUser,
     canManage,
     count: () => users.length,

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cc-trans · 登录</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%234f46e5'/%3E%3Ctext x='8' y='12' font-size='10' fill='white' text-anchor='middle' font-family='monospace'%3Ec%3C/text%3E%3C/svg%3E" />
+<style>
+  /*__TOKENS__*/
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; font: var(--fs-base)/1.55 var(--sans);
+    background: var(--bg); color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    display: grid; place-items: center; padding: var(--s5);
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+  :focus:not(:focus-visible) { outline: none; }
+
+  /* 一张卡居中。登录页只有一件事要做,所以除了这件事什么都别放。 */
+  .card {
+    width: 100%; max-width: 380px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--r-lg); box-shadow: var(--sh-2);
+    padding: var(--s7) var(--s6) var(--s6);
+  }
+  .mark {
+    width: 38px; height: 38px; border-radius: var(--r); background: var(--accent);
+    color: var(--accent-ink); display: grid; place-items: center;
+    font: 600 18px/1 var(--mono); margin: 0 auto var(--s4);
+  }
+  h1 { font-size: var(--fs-xl); margin: 0 0 var(--s1); text-align: center; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: var(--fs-md); text-align: center; margin: 0 0 var(--s6); }
+
+  label { display: block; font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--s1); }
+  .field { margin-bottom: var(--s4); }
+  input {
+    font: inherit; font-size: var(--fs-base); color: var(--ink); width: 100%;
+    background: var(--card); border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm); padding: 9px var(--s3); min-height: 40px;
+  }
+  input:focus-visible {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+  }
+  /* 密码框右侧的显示切换。放在框内而不是旁边:旁边会把输入框挤窄,
+     而"看一眼我打对了吗"是登录失败最常见的原因。 */
+  .pw-wrap { position: relative; }
+  .pw-wrap input { padding-right: 46px; }
+  .pw-eye {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    border: 0; background: none; color: var(--muted); cursor: pointer;
+    padding: var(--s2); border-radius: var(--r-sm); line-height: 0;
+  }
+  .pw-eye:hover { color: var(--ink); background: var(--surface-2); }
+  .pw-eye svg { width: 17px; height: 17px; }
+
+  button.primary {
+    font: inherit; font-weight: 550; width: 100%; min-height: 42px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent);
+    border-radius: var(--r-sm); display: inline-flex; align-items: center; justify-content: center; gap: var(--s2);
+    transition: background var(--dur-1) var(--ease);
+  }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.primary:disabled { opacity: .6; cursor: progress; }
+
+  /* 结果条。三种语气分开:错(红)、走错门(琥珀,可点)、成功(绿) */
+  .msg {
+    margin-top: var(--s4); font-size: var(--fs-md); border-radius: var(--r-sm);
+    padding: var(--s2) var(--s3); border: 1px solid transparent; display: none;
+  }
+  .msg.on { display: block; }
+  .msg.err { color: var(--err); background: var(--err-soft); border-color: color-mix(in oklch, var(--err) 30%, transparent); }
+  .msg.warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in oklch, var(--warn) 34%, transparent); }
+  .msg.ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in oklch, var(--ok) 30%, transparent); }
+  .msg a { color: inherit; font-weight: 600; }
+
+  .foot {
+    margin-top: var(--s6); padding-top: var(--s4); border-top: 1px solid var(--line);
+    display: flex; gap: var(--s3); justify-content: center; flex-wrap: wrap;
+    font-size: var(--fs-sm);
+  }
+  .foot a { color: var(--muted); text-decoration: none; }
+  .foot a:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .theme {
+    position: fixed; top: var(--s4); right: var(--s4);
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+    border-radius: var(--r-sm); padding: var(--s2); cursor: pointer; line-height: 0;
+  }
+  .theme:hover { color: var(--ink); }
+  .theme svg { width: 16px; height: 16px; }
+  .spin { width: 15px; height: 15px; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+</style>
+<script>
+  try {
+    const t = localStorage.getItem('cc-trans-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch { /* 隐私模式下 localStorage 不可用,跟随系统即可 */ }
+</script>
+</head>
+<body>
+
+<button class="theme" onclick="cycleTheme()" title="切换主题" aria-label="切换主题">
+  <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
+</button>
+
+<main class="card">
+  <div class="mark" aria-hidden="true">c</div>
+  <h1>cc-trans</h1>
+  <p class="sub" id="sub">用你的账号登录</p>
+
+  <form id="form" autocomplete="on">
+    <div class="field">
+      <label for="user">账号</label>
+      <input id="user" name="username" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required />
+    </div>
+    <div class="field">
+      <label for="pw">密码</label>
+      <div class="pw-wrap">
+        <input id="pw" name="password" type="password" autocomplete="current-password" required />
+        <button class="pw-eye" type="button" id="eye" onclick="togglePw()" aria-label="显示密码" title="显示密码">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <button class="primary" type="submit" id="go">登录</button>
+  </form>
+
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
+
+  <div class="foot">
+    <a href="/admin">管理台</a>
+    <a href="/u">用户端</a>
+    <a href="/health">服务状态</a>
+  </div>
+</main>
+
+<script>
+const el = (id) => document.getElementById(id);
+
+// ── 主题(与管理台/用户端共享同一个 localStorage 键)──
+const ICONS = {
+  auto: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  light: '<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+  dark: '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>',
+};
+function curTheme() { return document.documentElement.dataset.theme || 'auto'; }
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { t === 'auto' ? localStorage.removeItem('cc-trans-theme') : localStorage.setItem('cc-trans-theme', t); } catch {}
+  el('themeIcon').innerHTML = ICONS[t];
+}
+function cycleTheme() { applyTheme({ auto: 'light', light: 'dark', dark: 'auto' }[curTheme()]); }
+applyTheme(curTheme());
+
+function togglePw() {
+  const i = el('pw');
+  const on = i.type === 'password';
+  i.type = on ? 'text' : 'password';
+  el('eye').setAttribute('aria-label', on ? '隐藏密码' : '显示密码');
+  el('eye').title = on ? '隐藏密码' : '显示密码';
+  i.focus();
+}
+
+function say(html, kind) {
+  const m = el('msg');
+  m.className = 'msg on ' + kind;
+  m.innerHTML = html;
+}
+function clearSay() { el('msg').className = 'msg'; el('msg').innerHTML = ''; }
+
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// 登录成功后把 session 放进【对应门】的 sessionStorage 键,再跳过去。
+// 键名由服务端给(storeKey),两边只在一处约定,改一处就都跟上。
+function enter(d) {
+  try { sessionStorage.setItem(d.storeKey, d.session); } catch {}
+  say(`登录成功,正在进入${d.role === 'admin' ? '管理台' : '用户端'}…`, 'ok');
+  location.href = d.home;
+}
+
+let busy = false;
+el('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (busy) return;
+  const username = el('user').value.trim();
+  const password = el('pw').value;
+  if (!username || !password) return;
+  busy = true;
+  clearSay();
+  el('go').disabled = true;
+  el('go').innerHTML = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"/></svg> 登录中…';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.session) return enter(d);
+    if (r.status === 429) say(esc(d.error || '尝试过于频繁,请稍后再试'), 'warn');
+    else if (r.status === 403) say(esc(d.error || '该账号不可登录'), 'err');
+    else say(esc(d.error || `登录失败(HTTP ${r.status})`), 'err');
+    el('pw').select();
+  } catch (err) {
+    say('连不上服务:' + esc(err.message), 'err');
+  } finally {
+    busy = false;
+    el('go').disabled = false;
+    el('go').textContent = '登录';
+  }
+});
+
+// 启动时问一下服务端:管理台叫什么、有没有普通用户账号。
+// 这一句是给"第一次部署完不知道拿什么登"的人看的 —— 那是最容易卡住的一刻。
+(async () => {
+  try {
+    const d = await (await fetch('/api/login')).json();
+    if (d.hasUsers) el('sub').textContent = '管理员与普通用户用同一个入口登录';
+    else el('sub').innerHTML = `用管理台账号 <b>${esc(d.adminUser)}</b> 登录`;
+    if (!el('user').value) el('user').value = d.hasUsers ? '' : d.adminUser || '';
+  } catch { /* 拿不到就用默认文案,不影响登录 */ }
+  (el('user').value ? el('pw') : el('user')).focus();
+})();
+</script>
+</body>
+</html>

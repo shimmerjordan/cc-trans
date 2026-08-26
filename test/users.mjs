@@ -214,15 +214,34 @@ try {
   }
 
   // ── 自助改密 ──
+  // 重点是"改完密码,别处那台还登着吗" —— 答案必须是不。改密码的动机通常就是
+  // 怀疑凭证泄露了,旧会话留着等于什么都没做(见 users.js passVersion)。
   {
     const wrong = await post('/u/api/password', { oldPassword: 'nope', newPassword: 'new-pw-123456' }, bearer(aliceSession));
     ok('改密要验旧密码', wrong.status === 400);
+    // 另一台设备上的同一个账号
+    const other = await (await post('/u/api/login', { username: 'alice', password: 'alice-pw-12345' })).json().then((d) => d.session);
+    ok('改密前另一台设备可访问', (await get('/u/api/me', bearer(other))).ok);
+
     const r = await post('/u/api/password', { oldPassword: 'alice-pw-12345', newPassword: 'new-pw-123456' }, bearer(aliceSession));
     ok('改密成功', r.ok);
+    const rd = await r.json();
+    ok('改密同时踢掉了其它会话', rd.dropped >= 1, `dropped=${rd.dropped}`);
+    ok('另一台设备的会话立即失效', (await get('/u/api/me', bearer(other))).status === 401);
+    // 发起改密的这条要留着 —— 否则用户改完密码被自己弹回登录页,那不是安全是 bug
+    ok('发起改密的会话仍然有效', (await get('/u/api/me', bearer(aliceSession))).ok);
+
     const relogin = await post('/u/api/login', { username: 'alice', password: 'new-pw-123456' });
     ok('新密码可登录', relogin.ok);
     const oldPw = await post('/u/api/login', { username: 'alice', password: 'alice-pw-12345' });
     ok('旧密码失效', oldPw.status === 401);
+
+    // 新旧密码相同要挡掉:"改了密码"这件事必须真的改了点什么
+    const same = await post('/u/api/password', { oldPassword: 'new-pw-123456', newPassword: 'new-pw-123456' }, bearer(aliceSession));
+    ok('新旧密码相同被拒', same.status === 400);
+    // 只用数字的弱密码也挡
+    const weak = await post('/u/api/password', { oldPassword: 'new-pw-123456', newPassword: '1234567890' }, bearer(aliceSession));
+    ok('纯数字新密码被拒', weak.status === 400);
   }
 
   // ── 禁用:既有 session 立即失效(不是等下次登录) ──
@@ -238,11 +257,34 @@ try {
     ok('启用后可再次登录', (await post('/u/api/login', { username: 'bob', password: 'bob-pw-123456' })).ok);
   }
 
-  // ── 管理员重置密码 / 改绑 / 删除 ──
+  // ── 管理员设置密码 / 改绑 / 删除 ──
   {
+    // 管理员给的密码是他自己定的(界面上既能手输也能一键随机,走同一个接口)
+    const live = await (await post('/u/api/login', { username: 'alice', password: 'new-pw-123456' })).json().then((d) => d.session);
+    ok('重置前该用户有在线会话', (await get('/u/api/me', bearer(live))).ok);
     const r = await post('/admin/api/users/password', { name: 'alice', password: 'reset-pw-1234' }, bearer(adminSession));
-    ok('管理员重置密码', r.ok);
+    ok('管理员设置指定密码', r.ok);
+    ok('重置后该用户在线会话被踢下线', (await get('/u/api/me', bearer(live))).status === 401);
     ok('重置后新密码可登录', (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).ok);
+
+    // 弱密码在管理员这条路上也要挡 —— 两条路同一个下限,否则等于没有下限
+    const weak = await post('/admin/api/users/password', { name: 'alice', password: 'short' }, bearer(adminSession));
+    ok('管理员设置弱密码被拒', weak.status === 400);
+    ok('被拒后原密码仍可用', (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).ok);
+
+    // keepSessions:明确要求保留在线会话时才保留
+    const keep = await (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).json().then((d) => d.session);
+    const r2 = await post('/admin/api/users/password', { name: 'alice', password: 'reset-pw-1234b', keepSessions: true }, bearer(adminSession));
+    ok('keepSessions 设置成功', r2.ok);
+    ok('keepSessions=true 时在线会话保留', (await get('/u/api/me', bearer(keep))).ok);
+    await post('/admin/api/users/password', { name: 'alice', password: 'reset-pw-1234' }, bearer(adminSession));
+
+    // 「退出所有设备」:不改密码,只作废会话
+    const s3 = await (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).json().then((d) => d.session);
+    ok('revoke 前会话有效', (await get('/u/api/me', bearer(s3))).ok);
+    ok('管理员可作废该用户全部会话', (await post('/admin/api/users/revoke', { name: 'alice' }, bearer(adminSession))).ok);
+    ok('revoke 后会话失效', (await get('/u/api/me', bearer(s3))).status === 401);
+    ok('revoke 不影响密码', (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).ok);
 
     await post('/admin/api/users/tokens', { name: 'alice', tokenIds: [ID_A, ID_B] }, bearer(adminSession));
     const s = await (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).json().then((d) => d.session);
@@ -280,7 +322,9 @@ try {
       const r = await get(p);
       ok(`页面 ${p} 返回单页`, r.status === 200 && (await r.text()).includes('cc-trans'));
     }
-    const notFound = await get('/u/api/nope', bearer(aliceSession));
+    // 会话要现取:上面几节改过好几轮密码,老 session 已经按设计作废了
+    const fresh = await (await post('/u/api/login', { username: 'alice', password: 'reset-pw-1234' })).json().then((d) => d.session);
+    const notFound = await get('/u/api/nope', bearer(fresh));
     ok('未知用户端 API 404', notFound.status === 404);
   }
 
