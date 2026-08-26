@@ -245,5 +245,11 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
     save();
   }
 
-  return { record, setRateLimit, subscribe, snapshot, recentLogs, usageFor, forget, flush };
+  // 只取限额头快照。snapshot() 会把 62 天的每日聚合和所有客户端都拼一遍,
+  // 而"账户还剩多少额度"这个问题只需要这一个字段 —— 用户端每次打开用量都调它。
+  function rateLimitInfo() {
+    return rateLimit;
+  }
+
+  return { record, setRateLimit, rateLimit: rateLimitInfo, subscribe, snapshot, recentLogs, usageFor, forget, flush };
 }

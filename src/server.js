@@ -26,10 +26,13 @@ import { createFileLogger, dirSize } from './logger.js';
 import { createModelStore } from './model_store.js';
 import { createLogStore } from './logstore.js';
 import { createStorage } from './storage.js';
-import { createUserStore, tokenIdOf, effectiveQuota } from './users.js';
+import { createUserStore, tokenIdOf, effectiveQuota, passwordIssues } from './users.js';
+import { createLoginGuard, loginKeys } from './login_guard.js';
+import { createRunRegistry } from './chat_runs.js';
 import { createChatStore } from './chat_store.js';
 import { createChat } from './chat.js';
 import { createUserPortal } from './user.js';
+import { createSubscriptionUsage } from './subscription_usage.js';
 
 function generateClientToken() {
   return 'cct-' + crypto.randomBytes(24).toString('base64url');
@@ -394,6 +397,9 @@ const tokenAdmin = {
 
 // 管理台:adminEnabled 或设了 adminPassword 即启用;账号密码登录
 const ADMIN_PREFIX = '/admin';
+// 用户端前缀。声明在这里而不是用到的地方:createAdmin 要拿它做"你走错门了,
+// 普通用户请去 /u"的提示,而 const 有 TDZ —— 放在后面会在启动时直接崩。
+const USER_PREFIX = '/u';
 const adminOn = config.adminEnabled || !!config.adminPassword;
 // 登录名和密码都可以在线改,所以两个都是 let;对外一律经 adminCredentials 读,
 // 别把 adminUser 的值拷进别的常量里(改名后会读到旧值)。
@@ -402,6 +408,9 @@ let adminPassword = config.adminPassword;
 let adminNote = config.adminNote || '';
 let adminCreatedAt = Number(config.adminCreatedAt) || 0;
 let adminLastLoginAt = 0; // 只记在内存:登录一次就写一次 config.json 太吵
+// 管理台凭证版本。会话记住签发时的值,改密码就 +1 —— 于是"改了密码,另一台
+// 电脑上还登着"这件事不会发生。只在内存里:进程重启本来就把会话全清了。
+let adminCredVersion = 0;
 let initialPasswordNotice = null;
 
 if (adminOn && !adminPassword) {
@@ -443,6 +452,7 @@ const adminCredentials = {
   note: () => adminNote,
   createdAt: () => adminCreatedAt,
   createdApprox: () => adminCreatedApprox,
+  version: () => adminCredVersion,
   // 环境变量配置时不能在线改 —— 改了也写不回,重启就丢
   canManage: () => !!config.__file,
   verify: (u, p) => {
@@ -450,6 +460,9 @@ const adminCredentials = {
     if (ok) adminLastLoginAt = Date.now();
     return ok;
   },
+  // 只判对不对,不记"最近登录" —— 给"你走错门了"那个提示用。
+  // 走错门不是一次登录,把它记成登录会让审计里多出一条假的成功记录。
+  verifyQuiet: (u, p) => u === adminUser && !!adminPassword && safeEqual(p, adminPassword),
   // 登录名、密码、备注都在这一个接口里改,任填其一。
   // 只有【凭证类】改动(登录名 / 密码)才验当前密码 —— 备注不是凭证,
   // 为了改一行备注去输密码只会让人烦。
@@ -479,7 +492,11 @@ const adminCredentials = {
     }
     const wantPw = String(newPassword || '');
     if (wantPw) {
-      if (wantPw.length < 6) return { ok: false, error: '新密码至少 6 位' };
+      // 与普通用户同一个下限:两套账号的密码强度要求不一样毫无道理,
+      // 而管理台恰恰是权限最大的那个账号(此前这里只要 6 位)。
+      const bad = passwordIssues(wantPw);
+      if (bad.length) return { ok: false, error: '新密码' + bad.join('、') };
+      if (safeEqual(wantPw, adminPassword)) return { ok: false, error: '新密码与当前密码相同' };
       patch.adminPassword = wantPw;
     }
     if (!Object.keys(patch).length) return { ok: false, error: '没有要修改的内容' };
@@ -496,7 +513,8 @@ const adminCredentials = {
     }
     if (patch.adminPassword) {
       adminPassword = patch.adminPassword;
-      log(`管理台密码已修改`);
+      adminCredVersion++; // 旧会话到此为止
+      log(`[audit] 管理台密码已修改(其它在线会话已失效)`);
     }
     if (patch.adminNote !== undefined) {
       adminNote = patch.adminNote;
@@ -540,16 +558,97 @@ function readChatUi() {
     const mdSrc = fs.readFileSync(path.join(dir, 'md.js'), 'utf8').replace(/^export /gm, '');
     return fs
       .readFileSync(path.join(dir, 'chat-ui.html'), 'utf8')
-      .replace('/*__TOKENS__*/', () => fs.readFileSync(path.join(dir, 'ui-tokens.css'), 'utf8'))
+      .replace('/*__TOKENS__*/', () => fs.readFileSync(path.join(dir, 'haha-tokens.css'), 'utf8'))
       .replace('/*__MD__*/', () => mdSrc);
   } catch (err) {
     log(`⚠️ 聊天页读取失败: ${err.message}`);
     return '';
   }
 }
-const chat = adminOn
-  ? createChat({ store: chatStore, modelStore, tokenAdmin, tokenIdOf, forward: chatForward, config, log })
+// 一次回合由服务端持有(见 chat_runs.js):手机锁屏、刷新页面、地铁里断一下网,
+// 生成都不会因此白烧。chatDisconnectGraceMs = 0 可退回"断开即取消"的旧语义。
+const chatRuns = adminOn
+  ? createRunRegistry({
+      graceMs: Number.isFinite(Number(config.chatDisconnectGraceMs)) ? Number(config.chatDisconnectGraceMs) : undefined,
+      maxPerPrincipal: Number(config.chatMaxConcurrentTurns) || 3,
+      log,
+    })
   : null;
+
+const chat = adminOn
+  ? createChat({ store: chatStore, modelStore, tokenAdmin, tokenIdOf, forward: chatForward, runs: chatRuns, config, skills: readSkills, log })
+  : null;
+
+// ── 公告 ────────────────────────────────────────────────────────────────
+// 管理员写一句话,用户端与聊天页顶部显示。自建服务里"今晚重启""额度调整了"
+// 这类事此前只能靠口头通知,而看板本来就是所有人都会打开的那个页面。
+function readAnnouncement() {
+  const a = config.announcement;
+  if (!a) return null;
+  const text = String((typeof a === 'string' ? a : a.text) || '').trim();
+  if (!text) return null;
+  const level = ['info', 'warn', 'err'].includes(a.level) ? a.level : 'info';
+  return { text: text.slice(0, 500), level, updatedAt: Number(a.updatedAt) || 0 };
+}
+function writeAnnouncement({ text, level }) {
+  if (!config.__file) return { ok: false, error: '当前用环境变量配置,公告无法落盘' };
+  const clean = String(text || '').trim().slice(0, 500);
+  const lv = ['info', 'warn', 'err'].includes(level) ? level : 'info';
+  const next = clean ? { text: clean, level: lv, updatedAt: Date.now() } : null;
+  try {
+    patchConfigFile({ announcement: next });
+  } catch (err) {
+    return { ok: false, error: '写回 config.json 失败: ' + err.message };
+  }
+  config.announcement = next;
+  log(clean ? `公告已更新(${lv}): ${clean.slice(0, 80)}` : '公告已清空');
+  return { ok: true, announcement: readAnnouncement() };
+}
+
+// ── 「技能」= 命名的预设提示词 ────────────────────────────────────────
+// 聊天页可多选,选中的按顺序拼进 system。刻意【不是】Anthropic 的 Agent Skills:
+// 那个要 code execution + skills scope,而订阅 OAuth token 没有这个 scope
+// (实测 GET /v1/skills 回 permission_error)。所以这里不读文件、不跑脚本,
+// 就是一段提示词 —— 界面上也这么写,别让人以为它能干更多。
+function readSkills() {
+  const list = Array.isArray(config.skills) ? config.skills : [];
+  return list
+    .map((k) => ({
+      id: String((k && k.id) || '').slice(0, 40),
+      name: String((k && k.name) || '').slice(0, 60),
+      desc: String((k && k.desc) || '').slice(0, 200),
+      prompt: String((k && k.prompt) || '').slice(0, 20000),
+    }))
+    .filter((k) => k.id && k.name && k.prompt);
+}
+function writeSkills(list) {
+  if (!config.__file) return { ok: false, error: '当前用环境变量配置,技能无法落盘' };
+  if (!Array.isArray(list)) return { ok: false, error: '格式不对' };
+  if (list.length > 40) return { ok: false, error: '技能最多 40 个' };
+  const seen = new Set();
+  const clean = [];
+  for (const k of list) {
+    const id = String((k && k.id) || '').trim().slice(0, 40);
+    const name = String((k && k.name) || '').trim().slice(0, 60);
+    const prompt = String((k && k.prompt) || '').trim().slice(0, 20000);
+    if (!id || !name || !prompt) return { ok: false, error: '每个技能都要有 id、名称和提示词' };
+    if (!/^[a-zA-Z0-9._-]{1,40}$/.test(id)) return { ok: false, error: `id "${id}" 只能用字母数字与 . _ -` };
+    if (seen.has(id)) return { ok: false, error: `id "${id}" 重复了` };
+    seen.add(id);
+    clean.push({ id, name, desc: String((k && k.desc) || '').trim().slice(0, 200), prompt });
+  }
+  try {
+    patchConfigFile({ skills: clean });
+  } catch (err) {
+    return { ok: false, error: '写回 config.json 失败: ' + err.message };
+  }
+  config.skills = clean;
+  log(`技能库已更新(${clean.length} 个)`);
+  return { ok: true, skills: readSkills() };
+}
+
+// 三个登录接口共用一个节流器(见 login_guard.js):此前它们都能被无限次高速试密码
+const loginGuard = createLoginGuard({ log });
 
 // 数据目录的占用统计与清理(概览页「存储占用」)。必须在 createAdmin 之前声明 ——
 // const 有 TDZ,放后面会在启动时直接崩(这坑踩过一次了)。
@@ -562,6 +661,15 @@ const storage = createStorage({
   log,
 });
 
+// 订阅用量(账户整体额度)。管理台和用户端【共用这一个实例】—— 它背后是一次上游
+// 网络调用,各自建一份就等于同一个 10 分钟窗口里把上游问两遍,而那个接口问得勤就 429。
+const subUsage = createSubscriptionUsage({
+  config,
+  // 取【当前】provider:管理台能热切换鉴权模式,缓存住就会拿着已经废弃的那个
+  getOauth: () => upstreamAuth.oauth,
+  log,
+});
+
 const admin = adminOn
   ? createAdmin({
       prefix: ADMIN_PREFIX,
@@ -571,6 +679,7 @@ const admin = adminOn
       // getOauth 只在订阅专属功能(订阅用量面板)里用,非 oauth 模式下为 null。
       getOauth: () => upstreamAuth.oauth,
       getUpstreamAuth: () => upstreamAuth,
+      subUsage,
       metrics,
       tokenAdmin,
       users,
@@ -581,6 +690,12 @@ const admin = adminOn
       storage,
       upstreamAdmin,
       maskToken,
+      loginGuard,
+      userPortalPrefix: USER_PREFIX,
+      announcement: readAnnouncement,
+      setAnnouncement: config.__file ? writeAnnouncement : null,
+      skills: readSkills,
+      setSkills: config.__file ? writeSkills : null,
       log,
     })
   : null;
@@ -605,6 +720,21 @@ function quotaCheck(tokenEntry) {
     return { status: 429, message: `用户 ${owner.name} ${label} 花费配额已用尽($${used.cost.toFixed(2)}/$${q.costUsd.toFixed(2)})`, retryAfterSec: 3600 };
   }
   return null;
+}
+
+// 上游响应里的 anthropic-ratelimit-* 头 —— 管理台的「订阅用量」和用户端的
+// 「账户整体额度」在拿不到订阅 usage 接口时,全靠这一份回落数据。
+//
+// 【每一条通往上游的路都要调它】。网页聊天走的是下面的 chatForward,不经过
+// handleProxy —— 漏掉那一处的症状是:只用网页聊天的用户永远看不到账户额度,
+// 而页面本身一点错都不报(浏览器测试里抓到过)。
+function captureRateLimit(headers) {
+  if (!headers || typeof headers.forEach !== 'function') return;
+  const rl = {};
+  headers.forEach((v, k) => {
+    if (String(k).toLowerCase().startsWith('anthropic-ratelimit-')) rl[String(k).toLowerCase()] = v;
+  });
+  if (Object.keys(rl).length) metrics.setRateLimit({ ts: Date.now(), headers: rl });
 }
 
 // ── 网页聊天用的内部转发 ─────────────────────────────────────────────────
@@ -678,6 +808,8 @@ async function chatForward({ tokenEntry, payload, signal, req }) {
     return { error: { status: 502, message: '连接上游失败: ' + err.message } };
   }
 
+  captureRateLimit(res.headers);
+
   return {
     res,
     release: gate.release,
@@ -692,7 +824,6 @@ async function chatForward({ tokenEntry, payload, signal, req }) {
 
 // 用户端(/u):普通用户看自己被分配的设备 + 网页聊天。独立前缀 + 独立 session,
 // 与管理台互不认证 —— 越权是这块最大的风险,物理隔离比条件判断可靠。
-const USER_PREFIX = '/u';
 const userPortal = adminOn
   ? createUserPortal({
       prefix: USER_PREFIX,
@@ -704,6 +835,13 @@ const userPortal = adminOn
       clientIp,
       chat,
       config,
+      loginGuard,
+      // 只读探针:管理员误在用户端登录时把他指去 /admin。
+      // 只暴露 verify,拿不到密码本身。
+      adminHint: { prefix: ADMIN_PREFIX, verify: (u2, p) => adminCredentials.verifyQuiet(u2, p) },
+      // 用量:用户没有自己的限额时,看到的是账户整体额度(同一份缓存,用户端不能强制刷新)
+      subUsage,
+      announcement: readAnnouncement,
       log,
     })
   : null;
@@ -944,6 +1082,104 @@ function underPrefix(url, prefix) {
   return url === prefix || url.startsWith(prefix + '/') || url.startsWith(prefix + '?');
 }
 
+// 这是个"人拿浏览器打开的"请求吗?判据是 Accept 里明确要了 HTML。
+// 探活脚本、curl、docker healthcheck 都不会这么写,所以根路径对它们仍是 JSON。
+function wantsHtml(req) {
+  const a = String(req.headers['accept'] || '');
+  return a.includes('text/html') || a.includes('application/xhtml+xml');
+}
+
+// 统一登录页(/ 与 /login)。与两个门内的登录框共存:直达 /admin 或 /u 的人
+// 照旧,不知道该去哪的人有个总入口。
+const loginPage = (() => {
+  if (!adminOn) return '';
+  try {
+    const dir = path.dirname(new URL(import.meta.url).pathname);
+    return fs
+      .readFileSync(path.join(dir, 'login-ui.html'), 'utf8')
+      .replace('/*__TOKENS__*/', () => fs.readFileSync(path.join(dir, 'ui-tokens.css'), 'utf8'));
+  } catch (err) {
+    log(`⚠️ 登录页读取失败: ${err.message}`);
+    return '';
+  }
+})();
+
+// 一个框两种账号:先按管理台验,再按普通用户验。会话仍由各自的门签发
+// (两套 session Map 互不相认 —— 越权是这块最大的风险,物理隔离比判 role 可靠)。
+async function handleUnifiedLogin(req, res) {
+  let b = {};
+  try {
+    b = await readBodyJson(req);
+  } catch {
+    return sendJson(res, 400, { error: '请求体无法解析' });
+  }
+  const ip = clientIp(req);
+  const name = String(b.username || '').slice(0, 32);
+  const password = String(b.password || '');
+  const keys = loginKeys('entry', ip, name);
+  const gate = loginGuard.check(keys);
+  if (!gate.ok) {
+    log(`[audit] 统一入口登录被节流(${name}) · ip=${ip} · 还需等待 ${gate.retryAfterSec}s`);
+    return sendJson(res, 429, { error: `尝试过于频繁,请 ${gate.retryAfterSec} 秒后再试`, retryAfterSec: gate.retryAfterSec });
+  }
+
+  if (admin && adminCredentials.verify(name, password)) {
+    loginGuard.succeed(keys);
+    log(`统一入口登录成功(管理员 ${name}) · ip=${ip}`);
+    return sendJson(res, 200, {
+      role: 'admin',
+      session: admin.mintSession(req),
+      home: ADMIN_PREFIX + '/overview',
+      storeKey: 'cc-trans-admin',
+      user: { name },
+    });
+  }
+
+  if (userPortal) {
+    const r = users.authenticate(name, password);
+    if (r.ok) {
+      loginGuard.succeed(keys);
+      log(`统一入口登录成功(用户 ${r.user.name}) · ip=${ip}`);
+      return sendJson(res, 200, {
+        role: 'user',
+        session: userPortal.mintSession(r.user.name, req),
+        // 有网页聊天权限的直接落在聊天页 —— 那是他们十次里有九次要去的地方
+        home: r.user.perms && r.user.perms.chat ? USER_PREFIX + '/chat' : USER_PREFIX + '/devices',
+        storeKey: 'cc-trans-user',
+        user: r.user,
+      });
+    }
+    // 账号存在但被禁用:这句话要照实说,否则被禁用的人会一直以为是自己打错了密码
+    if (users.verifyCredentials(name, password)) {
+      loginGuard.succeed(keys);
+      log(`统一入口登录被拒(${name} 已禁用) · ip=${ip}`);
+      return sendJson(res, 403, { error: r.error || '账号已被禁用' });
+    }
+  }
+
+  loginGuard.fail(keys, `统一入口 ${name}`);
+  log(`统一入口登录失败(${name}) · ip=${ip}`);
+  return sendJson(res, 401, { error: '账号或密码错误' });
+}
+
+function readBodyJson(req, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (c) => {
+      body += c;
+      if (body.length > limit) reject(new Error('body too large'));
+    });
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 async function handleProxy(req, res, started) {
   // 管理台:自成一套鉴权,先于代理逻辑处理
   if (admin && req.url.startsWith(ADMIN_PREFIX)) {
@@ -961,8 +1197,59 @@ async function handleProxy(req, res, started) {
     return res.end();
   }
 
-  // 健康检查 / 根路径:GET 与 HEAD 都无需鉴权(HEAD 只回头,常见于本地/浏览器探活)
   const pathOnly = req.url.split('?')[0];
+
+  // ── 自托管字体 ──────────────────────────────────────────────────────
+  // 聊天页的排版用 Inter / JetBrains Mono / Noto Serif SC(见 src/fonts/NOTICE.md)。
+  // 不走 CDN:这台服务常跑在内网/离线环境,外链字体的结果是字体不生效而不是慢一点。
+  // 文件名即内容标识(换字体就换文件名),所以可以放心给一年不可变缓存。
+  if (req.method === 'GET' && pathOnly.startsWith('/fonts/')) {
+    const name = pathOnly.slice('/fonts/'.length);
+    // 白名单式校验:只允许 <字母数字-_>.woff2,`..` 一类在这里就死掉
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}\.woff2$/i.test(name) || name.includes('..')) {
+      res.writeHead(404);
+      return res.end();
+    }
+    try {
+      const buf = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), 'fonts', name));
+      res.writeHead(200, {
+        'content-type': 'font/woff2',
+        'content-length': buf.length,
+        'cache-control': 'public, max-age=31536000, immutable',
+      });
+      return res.end(buf);
+    } catch {
+      res.writeHead(404);
+      return res.end();
+    }
+  }
+
+  // ── 统一登录入口 ────────────────────────────────────────────────────
+  // 此前根路径只回一段 JSON:管理员知道有 /admin,但没有任何地方告诉普通用户
+  // 有 /u —— 于是他们拿着自己的账号去 /admin 登,只能收到"账号或密码错误"。
+  // 现在浏览器打开首页就是登录页,一个框两种账号,验完往对应的门里送。
+  if (loginPage && req.method === 'GET' && (pathOnly === '/login' || (pathOnly === '/' && wantsHtml(req)))) {
+    const body = Buffer.from(loginPage, 'utf8');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+    return res.end(body);
+  }
+  if (adminOn && pathOnly === '/api/login' && req.method === 'POST') {
+    return handleUnifiedLogin(req, res);
+  }
+  if (adminOn && pathOnly === '/api/login' && req.method === 'GET') {
+    // 登录页启动时问一句:管理台叫什么名字、有没有普通用户账号
+    return sendJson(res, 200, {
+      service: 'cc-trans',
+      adminUser: adminCredentials.user,
+      hasUsers: users.count() > 0,
+      adminPortal: ADMIN_PREFIX,
+      userPortal: USER_PREFIX,
+    });
+  }
+
+  // 健康检查 / 根路径:GET 与 HEAD 都无需鉴权(HEAD 只回头,常见于本地/浏览器探活)。
+  // 根路径给非浏览器客户端(探活脚本、docker healthcheck、curl)仍然回 JSON ——
+  // 上面那条只在 Accept 里明确要 HTML 时才接手,已有的监控一个都不用改。
   if ((req.method === 'GET' || req.method === 'HEAD') && (pathOnly === '/' || pathOnly === '/health' || pathOnly === '/healthz')) {
     if (req.method === 'HEAD') {
       res.writeHead(200);
@@ -1184,12 +1471,7 @@ async function handleProxy(req, res, started) {
       return sendError(res, 502, 'api_error', `cc-trans 无法连接上游: ${err.message}`);
     }
 
-    // 记录上游返回的订阅限额头(供管理台「订阅用量」展示)
-    const rl = {};
-    upstreamRes.headers.forEach((v, k) => {
-      if (k.startsWith('anthropic-ratelimit-')) rl[k] = v;
-    });
-    if (Object.keys(rl).length) metrics.setRateLimit({ ts: Date.now(), headers: rl });
+    captureRateLimit(upstreamRes.headers); // 订阅限额头 → 「订阅用量 / 账户整体额度」
 
     // ── 上游过载:首字节前整体重试,客户端完全感知不到 ──
     // 529 是官方明确说"临时、应当指数退避重试"的状态码,原样透传只是把重试的活
@@ -1427,6 +1709,9 @@ function printBanner() {
   if (admin) {
     const ips = lanIps();
     const host = ips[0] || 'localhost';
+    // 登录入口摆第一行:发给同事的就是这一条 —— 管理员和普通用户都从这里进,
+    // 不必先搞清楚自己该去 /admin 还是 /u
+    log(`  登录入口:  http://${host}:${config.port}/  (管理员与普通用户同一个入口)`);
     log(`  管理台:    http://${host}:${config.port}${ADMIN_PREFIX}  (账号 ${adminUser} 登录)`);
     log(`  用户端:    http://${host}:${config.port}${USER_PREFIX}  (${users.count()} 个用户账号${users.count() ? '' : ',在管理台「用户」页创建'})`);
   } else {
@@ -1461,6 +1746,8 @@ function printBanner() {
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
     log(`收到 ${sig},关闭中…`);
+    // 还在跑的聊天回合要先掐掉:它们持有 fetch,不取消会把 server.close 吊住
+    if (chatRuns) chatRuns.shutdown();
     metrics.flush();
     logStore.flush();
     server.close(() => process.exit(0));

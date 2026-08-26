@@ -131,7 +131,43 @@
   .muted { color: var(--muted); }
   .note { color: var(--muted); font-size: var(--fs-sm); margin: var(--s3) 0 0; max-width: var(--w-read); }
   .xs { font-size: var(--fs-xs); }
+  /* 一行里并排的输入框 + 按钮(密码框旁边的「显示」) */
+  .stack { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+  .stack input { flex: 1; min-width: 0; }
   /* 配额:有限额才出现,进度条比数字更直观 */
+  /* 顶栏里的聊天入口:它是这个页面上最常被点的东西,不该藏在正文里 */
+  header .chat-link {
+    text-decoration: none; font-size: var(--fs-sm); border-radius: var(--r-sm);
+    padding: 6px var(--s3); background: oklch(1 0 0 / .1); border: 1px solid oklch(1 0 0 / .16);
+    color: var(--nav-ink); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  }
+  header .chat-link:hover { background: oklch(1 0 0 / .2); border-color: oklch(1 0 0 / .3); }
+  .alt-link { text-align: center; font-size: var(--fs-sm); margin: var(--s4) 0 0; }
+  .alt-link a { color: var(--accent); }
+
+  /* 公告条:管理员写的一句话。可关,关掉按内容指纹记在本地 */
+  .notice {
+    display: flex; gap: var(--s2); align-items: flex-start;
+    padding: var(--s2) var(--s5); font-size: var(--fs-md);
+    background: var(--accent-soft); border-bottom: 1px solid var(--line);
+  }
+  .notice.warn { background: var(--warn-soft); }
+  .notice.err { background: var(--err-soft); }
+  .notice .nt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .notice button { background: none; border: 0; color: var(--muted); min-height: 22px; padding: 0 4px; }
+  .notice button:hover { color: var(--ink); }
+
+  /* 在线会话表:「我在哪些设备上登着」此前完全看不到 */
+  .sess-list { display: flex; flex-direction: column; gap: var(--s2); max-width: 640px; }
+  .sess-item {
+    display: flex; gap: var(--s3); align-items: baseline; flex-wrap: wrap;
+    border: 1px solid var(--line); border-radius: var(--r-sm); padding: var(--s2) var(--s3);
+    font-size: var(--fs-md);
+  }
+  .sess-item.cur { border-color: var(--accent); background: var(--accent-soft); }
+  .sess-item .ua { flex: 1; min-width: 0; color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+  .sess-item .ip { font-family: var(--mono); font-size: var(--fs-sm); }
+
   .quota { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--line); max-width: 520px; }
   .qhead { font-size: var(--fs-md); font-weight: 600; margin-bottom: var(--s3); display: flex; gap: var(--s2); align-items: baseline; }
   .qline + .qline { margin-top: var(--s3); }
@@ -141,6 +177,11 @@
   .qtrack i { display: block; height: 100%; background: var(--accent); transition: width var(--dur-2) var(--ease); }
   .qtrack i.warn { background: var(--warn); }
   .qtrack i.err { background: var(--err); }
+  .qsub { font-size: var(--fs-sm); color: var(--muted); margin-top: 4px; }
+  .qtag { font-size: var(--fs-sm); color: var(--muted); }
+  /* 额外用量额度用尽:主配额还有余量时它也能让请求吃 529,得醒目 */
+  .qalert { border: 1px solid var(--err); border-radius: var(--r-sm); padding: var(--s3); margin-bottom: var(--s3); font-size: var(--fs-md); }
+  .qalert b { color: var(--err); }
 
   input, select {
     font: inherit; font-size: var(--fs-md); color: var(--ink);
@@ -211,17 +252,24 @@
   <input id="pw" type="password" placeholder="密码" autocomplete="current-password" />
   <button class="primary" onclick="doLogin()">登录</button>
   <div id="loginErr" class="err-msg"></div>
+  <p class="alt-link"><a href="/">回到统一登录入口</a></p>
 </div>
 
 <div id="appView" hidden>
   <header>
     <span class="title">cc-trans</span>
     <span class="who" id="who"></span>
+    <a class="chat-link" href="/u/chat" id="chatLink" title="网页聊天">💬 聊天</a>
     <button class="icon-btn" id="themeBtn" onclick="cycleTheme()" title="切换主题" aria-label="切换主题">
       <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"></svg>
     </button>
     <button onclick="logout()">退出</button>
   </header>
+  <div class="notice" id="notice" hidden>
+    <span aria-hidden="true">📣</span>
+    <span class="nt" id="noticeText"></span>
+    <button onclick="dismissNotice()" title="不再显示这条" aria-label="关闭公告">✕</button>
+  </div>
   <main>
     <div class="tabs">
       <button data-tab="devices" class="active" onclick="switchTab('devices')">我的设备</button>
@@ -234,6 +282,7 @@
         <h2>用量合计</h2>
         <div class="metrics" id="totalNums"><div class="skeleton sk-line" style="width:60%"></div></div>
         <div id="quotaBox"></div>
+        <div id="acctBox"></div>
         <p class="note">统计自服务累计数据,跨重启保留。成本按模型定价估算,仅供参考,非账单。</p>
       </section>
       <div class="devices" id="devices"></div>
@@ -266,9 +315,24 @@
       <section class="block">
         <h2>修改密码</h2>
         <div class="form-row"><label for="oldPw">当前密码</label><input id="oldPw" type="password" autocomplete="current-password" /></div>
-        <div class="form-row"><label for="newPw">新密码</label><input id="newPw" type="password" autocomplete="new-password" placeholder="至少 8 位" /></div>
-        <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" /></div>
+        <div class="form-row"><label for="newPw">新密码</label>
+          <div class="stack">
+            <input id="newPw" type="password" autocomplete="new-password" placeholder="至少 8 位" oninput="gradePw()" />
+            <button class="sm" onclick="peek('newPw', this)" type="button">显示</button>
+          </div>
+        </div>
+        <div class="form-row"><label for="newPw2">确认新密码</label><input id="newPw2" type="password" autocomplete="new-password" oninput="gradePw()" /></div>
+        <div class="form-row"><label></label><div class="muted" id="pwGrade" style="font-size:var(--fs-sm)"></div></div>
         <div class="form-row"><label></label><div><button class="primary" onclick="changePw()">保存</button> <span id="pwMsg" class="ok-msg"></span></div></div>
+        <p class="note">改完密码,你在<b>其它设备</b>上的登录会立即失效(当前这台不受影响)—— 如果你是因为怀疑密码泄露才来改的,这正是你要的结果。</p>
+      </section>
+      <section class="block">
+        <h2>登录设备</h2>
+        <div class="sess-list" id="sessList"></div>
+        <div class="form-row" style="margin-top:var(--s4)"><label></label><div>
+          <button onclick="revokeOthers()">退出其它设备</button>
+          <span class="muted xs">不改密码,只把别处的登录踢下线</span>
+        </div></div>
       </section>
       <section class="block">
         <h2>账号信息</h2>
@@ -334,7 +398,15 @@ async function doLogin() {
   el('loginErr').textContent = '';
   const r = await fetch(API + '/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: el('user').value, password: el('pw').value }) });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) { el('loginErr').textContent = d.error || '登录失败'; return; }
+  if (!r.ok) {
+    // 走错门:服务端已经验过这套凭证了,所以可以直接把对的那扇门指给他
+    if (r.status === 409 && d.redirect) {
+      el('loginErr').innerHTML = `${esc(d.error)} · <a href="${esc(d.redirect)}" style="color:var(--accent)">去那边登录</a>`;
+      return;
+    }
+    el('loginErr').textContent = d.error || '登录失败';
+    return;
+  }
   SESSION = d.session; sessionStorage.setItem('cc-trans-user', SESSION);
   el('pw').value = ''; enterApp();
 }
@@ -391,14 +463,82 @@ async function loadMe() {
     ].map(([l, v, cls]) => `<div class="metric"><div class="n ${cls || ''}">${v}</div><div class="l">${l}</div></div>`).join('');
     DEVICES = d.devices;
     renderQuota(d.quota);
+    loadQuota(); // 不 await:账户整体额度要问上游,不该拖住本页其它部分
     renderDevices(d);
     el('acctInfo').innerHTML = [
       ['用户名', esc(d.user.name)],
       ['分配设备', d.devices.length + ' 台'],
       ['创建时间', d.user.createdAt ? new Date(d.user.createdAt).toLocaleString('zh-CN') : '—'],
       ['最近登录', d.user.lastLoginAt ? new Date(d.user.lastLoginAt).toLocaleString('zh-CN') : '—'],
+      ['最近改密', d.user.passChangedAt ? new Date(d.user.passChangedAt).toLocaleString('zh-CN') : '从未修改'],
     ].map(([k, v]) => `<dt class="muted">${k}</dt><dd style="margin:0">${v}</dd>`).join('');
+    // 没有聊天权限就别摆一个点进去被拒的入口
+    el('chatLink').hidden = !(d.user.perms && d.user.perms.chat);
+    drawNotice(d.announcement);
+    drawSessions(d.sessions);
   } catch (e) {}
+}
+
+// ── 公告 ──
+function drawNotice(a) {
+  if (!a || !a.text) { el('notice').hidden = true; return; }
+  let seen = '';
+  try { seen = localStorage.getItem('cc-user-notice') || ''; } catch {}
+  const fp = String(a.updatedAt || 0) + ':' + a.text.length;
+  if (seen === fp) { el('notice').hidden = true; return; }
+  el('notice').className = 'notice ' + (a.level === 'warn' || a.level === 'err' ? a.level : '');
+  el('noticeText').textContent = a.text;
+  el('notice').dataset.fp = fp;
+  el('notice').hidden = false;
+}
+function dismissNotice() {
+  try { localStorage.setItem('cc-user-notice', el('notice').dataset.fp || ''); } catch {}
+  el('notice').hidden = true;
+}
+
+// ── 在线会话 ──
+// 「我在哪些设备上登着」此前完全看不到,而这恰恰是发现"号被别人用了"的唯一途径。
+function drawSessions(list) {
+  const rows = list || [];
+  if (!rows.length) { el('sessList').innerHTML = '<span class="muted">暂无</span>'; return; }
+  el('sessList').innerHTML = rows
+    .map((s) => `<div class="sess-item ${s.current ? 'cur' : ''}">
+      <span class="ip">${esc(s.ip)}</span>
+      ${s.current ? '<span class="st st-2">当前设备</span>' : ''}
+      <span class="ua" title="${esc(s.ua)}">${esc(s.ua)}</span>
+      <span class="muted xs">登录于 ${new Date(s.at).toLocaleString('zh-CN')}</span>
+    </div>`)
+    .join('');
+}
+
+async function revokeOthers() {
+  const r = await api('/sessions/revoke', { method: 'POST', body: '{}' });
+  const d = await r.json();
+  if (!r.ok || !d.ok) { toast(d.error || '操作失败', 'err'); return; }
+  toast(d.dropped ? `已退出其它 ${d.dropped} 个设备` : '没有其它设备在登录');
+  loadMe();
+}
+
+function peek(id, btn) {
+  const i = el(id);
+  const on = i.type === 'password';
+  i.type = on ? 'text' : 'password';
+  btn.textContent = on ? '隐藏' : '显示';
+}
+
+// 强度提示只做长度这一档。不搞"必须含大写+数字+符号" —— 那只会把人赶向
+// Password1! 这类可预测的写法,长度才是真正线性提升破解成本的维度。
+function gradePw() {
+  const v = el('newPw').value;
+  const v2 = el('newPw2').value;
+  const bits = [];
+  if (!v) { el('pwGrade').textContent = ''; return; }
+  if (v.length < 8) bits.push('还差 ' + (8 - v.length) + ' 位(至少 8 位)');
+  else if (v.length < 12) bits.push('够用');
+  else bits.push('不错,越长越好');
+  if (/^\d+$/.test(v)) bits.push('全是数字很容易被猜到');
+  if (v2 && v !== v2) bits.push('两次输入还不一致');
+  el('pwGrade').textContent = bits.join(' · ');
 }
 
 // 配额:与名下所有设备共享一份。不限时不占版面,有限额才显示进度。
@@ -417,6 +557,56 @@ function renderQuota(q) {
   if (q.tokens) rows.push(bar(q.usedTokens || 0, q.tokens, fmtNum));
   if (q.costUsd) rows.push(bar(q.usedCost || 0, q.costUsd, fmtUsd));
   box.innerHTML = `<div class="quota"><div class="qhead">配额<span class="muted xs">(与你名下所有设备共享)</span></div>${rows.join('')}</div>`;
+}
+
+// 账户整体额度。什么时候显示【不由前端决定】:管理员给你设了配额,服务端就只回
+// scope=user、连 account 字段都不下发;没设配额才回 account —— 因为那时候你真正
+// 会撞上的是订阅账户自己的 5 小时 / 7 天窗口,而不是某个个人上限。
+async function loadQuota() {
+  let d = null;
+  try { d = await (await api('/quota')).json(); } catch { return; }
+  const box = el('acctBox');
+  if (!d || d.scope !== 'account' || !d.account) { box.innerHTML = ''; return; }
+  const a = d.account;
+  const rows = [];
+  if (a.available) {
+    if (a.alert && !a.alert.exhausted && !a.alert.enabled) {
+      // percent=0 + out_of_credits 是真实账号的常见状态:不是"还有余量",是压根没有
+      rows.push(`<div class="qsub" style="margin-bottom:var(--s3)">额外用量额度:<b>不可用</b>${a.alert.reason ? '(' + esc(a.alert.reason) + ')' : ''} —— 下面的窗口用尽后没有兜底额度,只能等窗口重置。</div>`);
+    }
+    if (a.alert && a.alert.exhausted) {
+      rows.push(`<div class="qalert"><b>⚠️ 额外用量额度已用尽</b>${a.alert.reason ? ' · ' + esc(a.alert.reason) : ''}
+        <div class="qsub">上面那几个窗口还有余量时,请求也可能被上游拒成 <span class="mono">529 Overloaded</span> —— 官方那句报错只说 "Overloaded",看不出是账户的消费上限满了。</div></div>`);
+    }
+    for (const b of a.bars || []) {
+      const pct = Math.max(0, Math.min(100, Math.round(b.percent || 0)));
+      const cls = b.severity === 'critical' ? 'err' : b.severity === 'warn' ? 'warn' : '';
+      const bits = [];
+      if (b.resetsAt) bits.push(qReset(b.resetsAt));
+      if (b.isActive) bits.push('当前生效');
+      if (b.status && String(b.status).toLowerCase() !== 'allowed') bits.push(esc(String(b.status)));
+      rows.push(`<div class="qline">
+        <div class="qtop"><span>${esc(b.label || '')}</span><span class="muted">${pct}%</span></div>
+        <div class="qtrack"><i class="${cls}" style="width:${pct}%"></i></div>
+        ${bits.length ? `<div class="qsub">${bits.join(' · ')}</div>` : ''}</div>`);
+    }
+  }
+  if (!rows.length) {
+    box.innerHTML = `<div class="quota"><div class="qhead">账户整体额度</div><span class="muted">${esc(a.reason || '暂无数据')}</span></div>`;
+    return;
+  }
+  const src = a.source === 'oauth'
+    ? `数据来自订阅用量接口(与 Claude Code 的 /usage 同源),缓存 ${Math.round((a.ttlMs || 0) / 60000)} 分钟${a.fetchedAt ? ' · 更新于 ' + fmtTime(a.fetchedAt) : ''}`
+    : `数据来自最近一次转发响应里的上游限额头${a.fetchedAt ? ' · ' + fmtTime(a.fetchedAt) : ''}`;
+  box.innerHTML = `<div class="quota"><div class="qhead">账户整体额度<span class="muted xs">(管理员没给你单独设限额,你受这份约束)</span></div>${rows.join('')}
+    <div class="qsub">${esc(src)}</div></div>`;
+}
+
+function qReset(ts) {
+  const d = ts - Date.now();
+  if (d <= 0) return '已重置';
+  const h = Math.floor(d / 3600000), m = Math.round((d % 3600000) / 60000);
+  return h >= 24 ? `${Math.round(h / 24)} 天后重置` : h ? `${h} 小时${m ? m + ' 分' : ''}后重置` : `${Math.max(1, m)} 分钟后重置`;
 }
 
 // 参数下发对用户是只读信息:让他知道自己的请求会被怎么改写
@@ -542,7 +732,10 @@ async function changePw() {
   const d = await r.json();
   if (r.ok && d.ok) {
     el('oldPw').value = el('newPw').value = el('newPw2').value = '';
-    toast('密码已修改');
+    el('pwGrade').textContent = '';
+    // 把"别处被踢了几台"说出来:这是改密码的主要作用之一,不说等于没做
+    toast(d.dropped ? `密码已修改,其它 ${d.dropped} 个设备已退出登录` : '密码已修改');
+    loadMe();
   } else {
     m.className = 'err-msg'; m.textContent = d.error || '修改失败';
   }

@@ -4,7 +4,8 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CATALOG, CATALOG_VERSION, DEFAULT_OVERRIDES } from './models.js';
 import { applyHops } from './hops.js';
-import { PERMS, DEFAULT_PERMS, QUOTA_WINDOWS, effectiveQuota } from './users.js';
+import { PERMS, DEFAULT_PERMS, QUOTA_WINDOWS, effectiveQuota, MIN_PASSWORD_LEN } from './users.js';
+import { loginKeys } from './login_guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_FILE = path.join(__dirname, 'admin-ui.html');
@@ -41,7 +42,36 @@ function idOf(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 12);
 }
 
-export function createAdmin({ prefix, credentials, config, getOauth, getUpstreamAuth, metrics, tokenAdmin, users, chat, chatUi, modelStore, logStore, storage, upstreamAdmin, maskToken, log }) {
+export function createAdmin({
+  prefix,
+  credentials,
+  config,
+  getOauth,
+  getUpstreamAuth,
+  metrics,
+  tokenAdmin,
+  users,
+  chat,
+  chatUi,
+  modelStore,
+  logStore,
+  storage,
+  upstreamAdmin,
+  maskToken,
+  loginGuard = null,
+  // 用户端前缀 + 一个只读探针,用于"普通用户走错门"时把他指去 /u
+  userPortalPrefix = '/u',
+  // 公告的读写(权威值在 config.json,由 server.js 落盘)
+  announcement = () => null,
+  setAnnouncement = null,
+  // 订阅用量(账户整体额度)。与用户端共用同一个实例 = 共用同一份 10 分钟缓存,
+  // 上游那个接口才不会被两边各问一遍(它问得勤就会 429)。
+  subUsage = null,
+  // 「技能」= 命名的预设提示词(不是 Anthropic 的 Agent Skills,见 server.js readSkills)
+  skills = () => [],
+  setSkills = null,
+  log,
+}) {
   // provider 可被管理台热重建 —— 每次用时取当前实例,别缓存。
   // oauthNow() 只给订阅专属功能用(订阅用量面板);凡是"发一个上游请求"都该走
   // upstreamNow(),它对三种鉴权模式一视同仁。
@@ -88,25 +118,40 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
     };
   }
 
-  function newSession() {
+  // 会话记录带上签发时的凭证版本:改了管理台密码,别处那些会话立刻失效。
+  // (与普通用户的 passVersion 同一个道理,见 users.js;凭证变了旧会话就不该还算数。)
+  function newSession(req) {
     const t = crypto.randomBytes(24).toString('base64url');
-    sessions.set(t, Date.now() + SESSION_TTL_MS);
+    sessions.set(t, {
+      exp: Date.now() + SESSION_TTL_MS,
+      ver: credentials.version ? credentials.version() : 0,
+      ip: req ? String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '') : '',
+      at: Date.now(),
+    });
     return t;
   }
   function checkSession(token) {
-    const exp = sessions.get(token);
-    if (!exp) return false;
-    if (exp < Date.now()) {
+    const rec = sessions.get(token);
+    if (!rec) return false;
+    if (rec.exp < Date.now()) {
+      sessions.delete(token);
+      return false;
+    }
+    if (rec.ver !== (credentials.version ? credentials.version() : 0)) {
       sessions.delete(token);
       return false;
     }
     return true;
   }
-  function authed(req, u) {
+  function tokenOf(req, u) {
     const h = req.headers['authorization'];
     let s = h && h.toLowerCase().startsWith('bearer ') ? h.slice(7).trim() : null;
-    if (!s) s = u.searchParams.get('s');
-    return s && checkSession(s);
+    if (!s && u) s = u.searchParams.get('s');
+    return s || null;
+  }
+  function authed(req, u) {
+    const s = tokenOf(req, u);
+    return !!s && checkSession(s);
   }
 
   function statusPayload() {
@@ -144,82 +189,6 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
     };
   }
 
-  // 订阅用量(与 Claude Code /usage 同源的 OAuth 接口),默认 10 分钟缓存(避免频繁调用被上游限流 429);
-  // 前端「刷新」按钮传 force=1 可跳过缓存强制拉取。失败时前端回落到限额头。
-  const USAGE_TTL_MS = 10 * 60 * 1000;
-  let usageCache = { ts: 0, data: null };
-  async function fetchSubscriptionUsage(force = false) {
-    const oauth = oauthNow();
-    if (!oauth) return { available: false, reason: '非订阅 OAuth 模式' };
-    if (!force && usageCache.data && Date.now() - usageCache.ts < USAGE_TTL_MS) return usageCache.data;
-    try {
-      const token = await oauth.getAccessToken();
-      const r = await fetch(config.upstreamBaseUrl + '/api/oauth/usage', {
-        headers: { authorization: `Bearer ${token}`, 'anthropic-beta': oauth.beta },
-      });
-      const text = await r.text();
-      if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 120)}`);
-      const j = JSON.parse(text);
-      // 归一化。三处数据源各有各的用处,都要收(实测 2026-07-30 的真实响应):
-      //   · limits[]  —— 最全的一处:含【模型细分】窗口(scope.model.display_name,如 "Fable")
-      //                  与官方自己给的 severity。顶层那些 seven_day_opus/seven_day_sonnet
-      //                  在实测账号上全是 null,细分数据其实只在这个数组里。
-      //   · 顶层带 utilization 的对象 —— 老结构(five_hour/seven_day/extra_usage),继续收着兜底。
-      //   · spend —— 额外用量额度(credits)的消费上限。**它满了会让主配额还有余量时也吃 529**,
-      //              最容易被忽略、却最要紧,所以单独拎出来给前端做醒目告警。
-      const windows = [];
-      for (const [k, v] of Object.entries(j)) {
-        if (v && typeof v === 'object' && typeof v.utilization === 'number') {
-          windows.push({ key: k, utilization: v.utilization, resetsAt: v.resets_at || null });
-        }
-      }
-      const limits = (Array.isArray(j.limits) ? j.limits : []).map((l) => ({
-        kind: l.kind || '',
-        group: l.group || '',
-        percent: Number(l.percent) || 0,
-        severity: l.severity || 'normal',
-        resetsAt: l.resets_at || null,
-        isActive: !!l.is_active,
-        // 模型细分窗口把模型名带出来。id 实测常为 null,display_name 才是 "Fable" 这种可读名
-        model: l.scope && l.scope.model ? l.scope.model.display_name || l.scope.model.id || null : null,
-        surface: l.scope ? l.scope.surface || null : null,
-      }));
-      // 金额:官方用 minor unit + 指数(5008 / 10^2 = $50.08)。两个对象的指数字段名还不一样。
-      const money = (m, expKey = 'exponent') => {
-        if (!m || typeof m.amount_minor !== 'number') return null;
-        const exp = Number(m[expKey]);
-        return {
-          amount: m.amount_minor / 10 ** (Number.isFinite(exp) ? exp : 2),
-          currency: m.currency || 'USD',
-        };
-      };
-      const sp = j.spend;
-      const spend = sp ? {
-        used: money(sp.used),
-        limit: money(sp.limit),
-        percent: Number(sp.percent) || 0,
-        severity: sp.severity || 'normal',
-        enabled: !!sp.enabled,
-        disabledReason: sp.disabled_reason || null,
-      } : null;
-      const eu = j.extra_usage;
-      const extraUsage = eu ? {
-        isEnabled: !!eu.is_enabled,
-        utilization: Number(eu.utilization) || 0,
-        // 这里的指数字段叫 decimal_places(不是 exponent),别照抄 spend 那套
-        used: money({ amount_minor: eu.used_credits, currency: eu.currency, decimal_places: eu.decimal_places }, 'decimal_places'),
-        limit: money({ amount_minor: eu.monthly_limit, currency: eu.currency, decimal_places: eu.decimal_places }, 'decimal_places'),
-        spendLimitReached: !!eu.spend_limit_reached,
-        disabledReason: eu.disabled_reason || null,
-      } : null;
-      const data = { available: true, fetchedAt: Date.now(), windows, limits, spend, extraUsage };
-      usageCache = { ts: Date.now(), data };
-      return { ...data, cachedTtlMs: USAGE_TTL_MS };
-    } catch (err) {
-      return { available: false, reason: err.message };
-    }
-  }
-
   async function handle(req, res) {
     const u = new URL(req.url, 'http://localhost');
     const sub = u.pathname.slice(prefix.length) || '/';
@@ -241,20 +210,53 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
       return res.end(body);
     }
 
-    // 元信息(无需鉴权):供登录页显示默认用户名
+    // 元信息(无需鉴权):供登录页显示默认用户名与用户端入口
     if (sub === '/api/meta' && req.method === 'GET') {
-      return sendJson(res, 200, { service: 'cc-trans', user: credentials.user });
+      return sendJson(res, 200, {
+        service: 'cc-trans',
+        user: credentials.user,
+        userPortal: userPortalPrefix,
+        // 有普通用户账号存在时,登录页才值得摆一句"你是普通用户?去这里"
+        hasUsers: users ? users.count() > 0 : false,
+        minPasswordLen: MIN_PASSWORD_LEN,
+      });
     }
 
     // 登录(账号 + 密码)
     if (sub === '/api/login' && req.method === 'POST') {
       const b = await readJson(req);
+      const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '')
+        .split(',')[0]
+        .trim()
+        .replace(/^::ffff:/, '');
+      const name = String(b.username || '').slice(0, 32);
+      const keys = loginKeys('admin', ip, name);
+      if (loginGuard) {
+        const gate = loginGuard.check(keys);
+        if (!gate.ok) {
+          log(`[audit] 管理台登录被节流(${name}) · ip=${ip} · 还需等待 ${gate.retryAfterSec}s`);
+          return sendJson(res, 429, { error: `尝试过于频繁,请 ${gate.retryAfterSec} 秒后再试`, retryAfterSec: gate.retryAfterSec });
+        }
+      }
       if (!credentials.verify(b.username || '', b.password || '')) {
-        log(`管理台登录失败(账号或密码错误)`);
+        // 普通用户走错门 —— 这是"用 /admin 登录其他用户只会报错"的正解:
+        // 只有对方报出了该账号的【正确密码】才这么提示,所以它不泄露账号是否存在。
+        if (users && users.verifyCredentials && users.verifyCredentials(b.username || '', b.password || '')) {
+          log(`管理台登录:${name} 是普通用户账号,已引导至用户端 · ip=${ip}`);
+          if (loginGuard) loginGuard.succeed(keys);
+          return sendJson(res, 409, {
+            error: `「${name}」是普通用户账号,不是管理台账号`,
+            role: 'user',
+            redirect: userPortalPrefix,
+          });
+        }
+        if (loginGuard) loginGuard.fail(keys, `管理台 ${name}`);
+        log(`管理台登录失败(账号或密码错误) · ip=${ip}`);
         return sendJson(res, 401, { error: '账号或密码错误' });
       }
-      log(`管理台登录成功`);
-      return sendJson(res, 200, { session: newSession(), ttlMs: SESSION_TTL_MS });
+      if (loginGuard) loginGuard.succeed(keys);
+      log(`管理台登录成功 · ip=${ip}`);
+      return sendJson(res, 200, { session: newSession(req), ttlMs: SESSION_TTL_MS });
     }
 
     // 以下接口都要登录
@@ -281,10 +283,26 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
       return sendJson(res, 200, statusPayload());
     }
 
+    // 订阅用量(与 Claude Code /usage 同源)。默认吃 10 分钟缓存;前端「刷新」传 force=1
+    // 强制拉取 —— 这个口子只在管理台开,用户端永远吃缓存(见 subscription_usage.js)。
     if (sub === '/api/usage' && req.method === 'GET') {
+      if (!subUsage) return sendJson(res, 200, { available: false, reason: '未启用订阅用量' });
       const force = u.searchParams.get('force') === '1';
-      const data = await fetchSubscriptionUsage(force);
-      return sendJson(res, 200, { ...data, cachedAt: usageCache.ts || null });
+      const data = await subUsage.get(force);
+      return sendJson(res, 200, { ...data, cachedTtlMs: subUsage.ttlMs, cachedAt: subUsage.cachedAt() });
+    }
+
+    // 「我的用量」——与用户端 /u/api/quota 同名同形状,聊天页两个入口共用一份渲染。
+    // 管理员没有用户级配额(他就是配额的制定者),所以 scope 恒为 account。
+    if (sub === '/api/quota' && req.method === 'GET') {
+      const account = subUsage
+        ? await subUsage.accountView({ rateLimit: metrics.rateLimit(), includeMoney: true })
+        : { available: false, source: null, reason: '未启用订阅用量' };
+      return sendJson(res, 200, {
+        scope: 'account',
+        mine: { admin: true, unlimited: true, note: '管理员不受用户级配额限制' },
+        account,
+      });
     }
 
     // 本地 AI 订阅 / 上游凭证:读当前状态
@@ -313,6 +331,23 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
       return sendJson(res, 200, { ...row, user: row.name });
     }
 
+    // 改完凭证要把【别处】的会话踢掉、把【自己这条】续上新版本。
+    // 少了后半句,管理员改完自己的密码会当场被弹回登录页 —— 那不是安全,是 bug。
+    function reseatSelf(token) {
+      const ver = credentials.version ? credentials.version() : 0;
+      let dropped = 0;
+      for (const [t, rec] of [...sessions]) {
+        if (t === token) continue;
+        if (rec.ver !== ver) {
+          sessions.delete(t);
+          dropped++;
+        }
+      }
+      const rec = sessions.get(token);
+      if (rec) rec.ver = ver;
+      return dropped;
+    }
+
     // 管理台账号:登录名 + 密码在一个接口里改(都是凭证,都验当前密码,任填其一)
     if (sub === '/api/account' && req.method === 'POST') {
       const b = await readJson(req);
@@ -324,6 +359,7 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
             note: b.note,
           })
         : credentials.changePassword(b.oldPassword || '', b.newPassword || '');
+      if (r.ok && r.passwordChanged) r.otherSessionsDropped = reseatSelf(tokenOf(req, u));
       return sendJson(res, r.ok ? 200 : 400, r);
     }
 
@@ -331,6 +367,42 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
     if (sub === '/api/password' && req.method === 'POST') {
       const b = await readJson(req);
       const r = credentials.changePassword(b.oldPassword || '', b.newPassword || '');
+      if (r.ok) r.otherSessionsDropped = reseatSelf(tokenOf(req, u));
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    // 管理台的「退出其它设备」:不改密码,只把别的会话删掉
+    if (sub === '/api/sessions/revoke' && req.method === 'POST') {
+      const keep = tokenOf(req, u);
+      let dropped = 0;
+      for (const t of [...sessions.keys()]) {
+        if (t === keep) continue;
+        sessions.delete(t);
+        dropped++;
+      }
+      log(`[audit] 管理台已退出其它 ${dropped} 个会话`);
+      return sendJson(res, 200, { ok: true, dropped });
+    }
+
+    // 技能库:命名的预设提示词,聊天页可多选
+    if (sub === '/api/skills' && req.method === 'GET') {
+      return sendJson(res, 200, { skills: skills(), canManage: !!setSkills });
+    }
+    if (sub === '/api/skills' && req.method === 'POST') {
+      if (!setSkills) return sendJson(res, 400, { ok: false, error: '当前用环境变量配置,无法在线保存技能;请改用 config.json' });
+      const b = await readJson(req);
+      const r = setSkills(b.skills);
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    // 公告:管理员写一句话,用户端与聊天页顶部显示
+    if (sub === '/api/announcement' && req.method === 'GET') {
+      return sendJson(res, 200, { announcement: announcement(), canManage: !!setAnnouncement });
+    }
+    if (sub === '/api/announcement' && req.method === 'POST') {
+      if (!setAnnouncement) return sendJson(res, 400, { ok: false, error: '当前用环境变量配置,无法在线保存公告;请改用 config.json' });
+      const b = await readJson(req);
+      const r = setAnnouncement({ text: b.text, level: b.level });
       return sendJson(res, r.ok ? 200 : 400, r);
     }
 
@@ -379,6 +451,7 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
         permMeta: PERMS,
         permDefaults: DEFAULT_PERMS,
         quotaWindows: QUOTA_WINDOWS,
+        minPasswordLen: MIN_PASSWORD_LEN,
         users: list,
         // 管理员不在 config.users 里(凭证是 adminUser/adminPassword),但必须出现在这张表上:
         // 否则"系统里有哪些账号"这个问题在唯一该回答它的地方缺了一行。
@@ -397,10 +470,22 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
       return sendJson(res, r.ok ? 200 : 400, r);
     }
 
+    // 设置某个用户的密码。密码由调用方给出 —— 管理台的界面既能手动输入
+    // 也能一键随机,两条路走同一个接口(此前界面上只有"随机生成"这一条路)。
+    // keepSessions 默认 false:管理员改别人密码时把该用户的在线会话一并作废,
+    // 否则"密码可能泄露了所以改一个"这件事等于只做了一半。
     if (sub === '/api/users/password' && req.method === 'POST') {
       if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
       const b = await readJson(req);
-      const r = users.setPassword(b.name, b.password);
+      const r = users.setPassword(b.name, b.password, { keepSessions: !!b.keepSessions });
+      return sendJson(res, r.ok ? 200 : 400, r);
+    }
+
+    // 不改密码,只把该用户所有登录会话踢下线
+    if (sub === '/api/users/revoke' && req.method === 'POST') {
+      if (!users.canManage()) return sendJson(res, 400, { error: '无法在线管理用户' });
+      const b = await readJson(req);
+      const r = users.revokeSessions(b.name);
       return sendJson(res, r.ok ? 200 : 400, r);
     }
 
@@ -600,5 +685,9 @@ export function createAdmin({ prefix, credentials, config, getOauth, getUpstream
     return sendJson(res, 404, { error: 'not found' });
   }
 
-  return { handle };
+  return {
+    handle,
+    // 统一登录入口签发管理台会话时经这里 —— session Map 仍然只有这一个主人
+    mintSession: (req) => newSession(req),
+  };
 }

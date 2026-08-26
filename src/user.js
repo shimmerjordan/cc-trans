@@ -12,14 +12,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { tokenIdOf, effectiveQuota } from './users.js';
+import { tokenIdOf, effectiveQuota, passVersionOf } from './users.js';
+import { loginKeys } from './login_guard.js';
 
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const UI_FILE = path.join(__dirname, 'user-ui.html');
 const CHAT_UI_FILE = path.join(__dirname, 'chat-ui.html');
 const MD_FILE = path.join(__dirname, 'md.js');
 const TOKENS_FILE = path.join(__dirname, 'ui-tokens.css');
+const HAHA_TOKENS_FILE = path.join(__dirname, 'haha-tokens.css'); // 聊天页专用(见 haha-tokens.css 抬头)
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+// 配额窗口的口语说法。users.js 的 QUOTA_WINDOWS 是管理台口径("每天/每月/累计"=规则),
+// 给用户看的是"今天/本月/累计"(=已经发生的那段时间)—— 同一个 window,两种语气。
+const QUOTA_WINDOW_LABELS = { day: '今天', month: '本月', total: '累计' };
 
 // 用户端的 tab ←→ URL(与管理台同样的做法:每个 tab 一个可收藏的地址)
 export const USER_TABS = ['chat', 'devices', 'logs', 'account'];
@@ -49,7 +55,28 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
-export function createUserPortal({ prefix = '/u', users, metrics, logStore, tokenAdmin, maskToken, clientIp, chat, config, log = () => {} }) {
+export function createUserPortal({
+  prefix = '/u',
+  users,
+  metrics,
+  logStore,
+  tokenAdmin,
+  maskToken,
+  clientIp,
+  chat,
+  config,
+  loginGuard = null,
+  // 管理员凭证的只读探针。用途只有一个:管理员误在用户端登录时告诉他走 /admin,
+  // 而不是给他一句"账号或密码错误"让他以为自己记错了密码。
+  adminHint = null,
+  // 订阅用量(账户整体额度)。与管理台共用同一个实例 = 共用同一份缓存;
+  // 这里【永远不传 force】,所以用户刷新页面刷不动上游。
+  subUsage = null,
+  // 公告:管理员在设置页写一句话,用户端和聊天页顶部显示。自建服务里
+  // "今晚 11 点重启"这类事此前只能靠口头通知。
+  announcement = () => null,
+  log = () => {},
+}) {
   let ui = '';
   let chatUi = '';
   try {
@@ -60,7 +87,8 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
       .readFileSync(CHAT_UI_FILE, 'utf8')
       // 用替换【函数】而不是替换串:替换串里的 $& / $` / $' 是特殊模式,
       // 被注入的 JS/CSS 里出现这些字符就会把内容篡改掉(曾导致整页被重复插入 3 次)
-      .replace('/*__TOKENS__*/', () => fs.readFileSync(TOKENS_FILE, 'utf8'))
+      // 聊天页用的是 cc-haha 的「纸 · 墨 · 印」令牌,不是 /admin 与 /u 共享的那套
+      .replace('/*__TOKENS__*/', () => fs.readFileSync(HAHA_TOKENS_FILE, 'utf8'))
       .replace('/*__MD__*/', () => mdSrc);
   } catch (err) {
     log(`⚠️ 聊天页读取失败: ${err.message}`);
@@ -74,19 +102,43 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
     log(`⚠️ 用户端页面读取失败: ${err.message}`);
   }
 
-  const sessions = new Map(); // sessionToken -> { exp, user }
+  const sessions = new Map(); // sessionToken -> { exp, user, ver, ip, ua, at, lastSeen }
 
-  function newSession(name) {
+  function newSession(name, req) {
     const t = crypto.randomBytes(24).toString('base64url');
-    sessions.set(t, { exp: Date.now() + SESSION_TTL_MS, user: name });
+    const live = users.activeUser(name);
+    sessions.set(t, {
+      exp: Date.now() + SESSION_TTL_MS,
+      user: name,
+      // 签发时的凭证版本。改了密码 → users 里的版本 +1 → 这条对不上就作废。
+      // 这是"改完密码,别处那台还登着"唯一靠得住的解法(见 users.js passVersion)。
+      ver: live ? live.passVersion : 0,
+      ip: '',
+      ua: '',
+      at: Date.now(),
+      lastSeen: Date.now(),
+    });
+    if (req) touchMeta(t, req);
     return t;
   }
 
-  // 每次都回查用户状态:删号/禁用/改绑要立刻生效,不能只信登录那一刻的判断
-  function sessionUser(req, u) {
+  function touchMeta(token, req) {
+    const rec = sessions.get(token);
+    if (!rec) return;
+    rec.ip = clientIp(req);
+    rec.ua = String(req.headers['user-agent'] || '').slice(0, 160);
+  }
+
+  function tokenOf(req, u) {
     const h = req.headers['authorization'];
     let s = h && h.toLowerCase().startsWith('bearer ') ? h.slice(7).trim() : null;
     if (!s && u) s = u.searchParams.get('s');
+    return s || null;
+  }
+
+  // 每次都回查用户状态:删号/禁用/改绑/改密码要立刻生效,不能只信登录那一刻的判断
+  function sessionUser(req, u) {
+    const s = tokenOf(req, u);
     if (!s) return null;
     const rec = sessions.get(s);
     if (!rec) return null;
@@ -99,7 +151,40 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
       sessions.delete(s); // 用户已被禁用/删除 → 会话立即作废
       return null;
     }
+    if (passVersionOf(live) !== rec.ver) {
+      sessions.delete(s); // 密码变过 → 这条会话是旧凭证签的,作废
+      log(`[audit] 用户 ${rec.user} 的一条旧会话因密码变更被作废 · ip=${rec.ip || '-'}`);
+      return null;
+    }
+    rec.lastSeen = Date.now();
     return live;
+  }
+
+  // 这个账号名下现在有哪些登录会话(「我的账号」页要能看到并一键全踢)
+  function sessionsOf(name, currentToken) {
+    const out = [];
+    for (const [tok, rec] of sessions) {
+      if (rec.user !== name) continue;
+      out.push({
+        current: tok === currentToken,
+        ip: rec.ip || '-',
+        ua: rec.ua || '-',
+        at: rec.at,
+        lastSeen: rec.lastSeen,
+        expiresAt: rec.exp,
+      });
+    }
+    return out.sort((a, b) => b.lastSeen - a.lastSeen);
+  }
+
+  function dropSessionsOf(name, keepToken = null) {
+    let n = 0;
+    for (const [tok, rec] of [...sessions]) {
+      if (rec.user !== name || tok === keepToken) continue;
+      sessions.delete(tok);
+      n++;
+    }
+    return n;
   }
 
   // 该用户绑定的令牌(服务端推导,不采信任何客户端输入)
@@ -139,18 +224,43 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
 
     if (sub === '/api/login' && req.method === 'POST') {
       const b = await readJson(req);
+      const ip = clientIp(req);
+      const name = String(b.username || '').slice(0, 32);
+      const keys = loginKeys('user', ip, name);
+      // 节流先行:密码都不用验,被锁了就直接回 429(见 login_guard.js)
+      if (loginGuard) {
+        const gate = loginGuard.check(keys);
+        if (!gate.ok) {
+          log(`[audit] 用户端登录被节流(${name}) · ip=${ip} · 还需等待 ${gate.retryAfterSec}s`);
+          res.setHeader && res.setHeader('retry-after', String(gate.retryAfterSec));
+          return sendJson(res, 429, { error: `尝试过于频繁,请 ${gate.retryAfterSec} 秒后再试`, retryAfterSec: gate.retryAfterSec });
+        }
+      }
       const r = users.authenticate(b.username, b.password);
       if (!r.ok) {
-        log(`用户端登录失败(${String(b.username || '').slice(0, 32)}): ${r.error} · ip=${clientIp(req)}`);
+        // 管理员走错门:他报出的是管理台的正确口令,那就直接把门指给他,
+        // 而不是回一句"账号或密码错误"让他怀疑自己记错了密码。
+        // 只在密码【已经验证通过】时才这么说,所以它不是账号存在性探测器。
+        if (adminHint && adminHint.verify(b.username || '', b.password || '')) {
+          log(`用户端登录:管理员 ${name} 走错入口,已引导至管理台 · ip=${ip}`);
+          if (loginGuard) loginGuard.succeed(keys);
+          return sendJson(res, 409, {
+            error: '这是管理台账号,请到管理台登录',
+            role: 'admin',
+            redirect: adminHint.prefix,
+          });
+        }
+        if (loginGuard) loginGuard.fail(keys, `用户端 ${name}`);
+        log(`用户端登录失败(${name}): ${r.error} · ip=${ip}`);
         return sendJson(res, 401, { error: r.error });
       }
-      log(`用户端登录成功: ${r.user.name} · ip=${clientIp(req)}`);
-      return sendJson(res, 200, { session: newSession(r.user.name), ttlMs: SESSION_TTL_MS, user: r.user });
+      if (loginGuard) loginGuard.succeed(keys);
+      log(`用户端登录成功: ${r.user.name} · ip=${ip}`);
+      return sendJson(res, 200, { session: newSession(r.user.name, req), ttlMs: SESSION_TTL_MS, user: r.user });
     }
 
     if (sub === '/api/logout' && req.method === 'POST') {
-      const h = req.headers['authorization'];
-      const s = h && h.toLowerCase().startsWith('bearer ') ? h.slice(7).trim() : null;
+      const s = tokenOf(req, u);
       if (s) sessions.delete(s);
       return sendJson(res, 200, { ok: true });
     }
@@ -206,9 +316,80 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
         devices,
         total,
         quota,
+        announcement: announcement(),
+        sessions: sessionsOf(me.name, tokenOf(req, u)),
         // 接入信息:用户要在新设备上配置时照抄
         baseUrlHint: `http://<本服务地址>:${config.port}`,
       });
+    }
+
+    // 我的用量。两层口径,服务端决定给哪一层(前端不猜、也猜不到):
+    //   · 管理员给这个用户设了配额 → scope='user',看自己的额度(最贴切的那个数)
+    //   · 没设配额             → scope='account',看【账户整体】的订阅额度
+    //     (5 小时窗口 / 7 天窗口那些)—— 因为那才是他真正会撞上的那道墙。
+    // 没设配额时不返回 mine 的上限、有配额时【不返回 account】:能看什么是服务端的判断,
+    // 不是前端 hidden 一下 —— 后者一个 devtools 就绕过去了。
+    if (sub === '/api/quota' && req.method === 'GET') {
+      const q = effectiveQuota(me);
+      const names = tokensOf(me).map((t) => t.name);
+      const used = names.length ? metrics.usageFor(names, q.window) : { tokens: 0, cost: 0, requests: 0 };
+      const pct = (a, b) => (b > 0 ? Math.max(0, Math.min(100, Math.round((a / b) * 100))) : 0);
+      // 与 subscription_usage.js 的阈值保持一致:80% 提醒、95% 告警
+      const sev = (p) => (p >= 95 ? 'critical' : p >= 80 ? 'warn' : 'normal');
+      const mine = {
+        window: q.window,
+        windowLabel: QUOTA_WINDOW_LABELS[q.window] || q.window,
+        unlimited: q.unlimited,
+        tokens: q.tokens,
+        usedTokens: used.tokens || 0,
+        // 金额跟着 perms.cost 走:关掉时连上限一起抹掉(只抹数字,用量本身仍可见)
+        costUsd: me.perms.cost ? q.costUsd : null,
+        usedCost: me.perms.cost ? used.cost || 0 : null,
+        requests: used.requests || 0,
+        deviceCount: names.length,
+        // 最紧的那一项 —— 侧栏那条一行的用量条只画这一个数
+        percent: Math.max(pct(used.tokens || 0, q.tokens), pct(used.cost || 0, q.costUsd)),
+        // 与 account.bars 同一个形状,前端一套渲染函数画两层口径。
+        // 注意:没有 cost 权限时 used/limit 是 null 但【百分比照给】——
+        // 比例不泄露金额,而"我还剩多少"必须回答得了,否则限额等于形同虚设。
+        bars: [
+          ...(q.tokens ? [{
+            key: 'tokens', kind: 'tokens', label: `${QUOTA_WINDOW_LABELS[q.window] || q.window} token 额度`,
+            percent: pct(used.tokens || 0, q.tokens), used: used.tokens || 0, limit: q.tokens,
+            severity: sev(pct(used.tokens || 0, q.tokens)),
+          }] : []),
+          ...(q.costUsd ? [{
+            key: 'cost', kind: 'cost', label: `${QUOTA_WINDOW_LABELS[q.window] || q.window}花费额度`,
+            percent: pct(used.cost || 0, q.costUsd),
+            used: me.perms.cost ? used.cost || 0 : null,
+            limit: me.perms.cost ? q.costUsd : null,
+            severity: sev(pct(used.cost || 0, q.costUsd)),
+          }] : []),
+        ],
+      };
+      if (!q.unlimited) return sendJson(res, 200, { scope: 'user', mine });
+      const account = subUsage
+        ? await subUsage.accountView({ rateLimit: metrics.rateLimit(), includeMoney: !!me.perms.cost })
+        : { available: false, source: null, reason: '未启用订阅用量' };
+      return sendJson(res, 200, { scope: 'account', mine, account });
+    }
+
+    // 退出其它设备。密码不动,但把 passVersion 推一格 —— 别处那些会话
+    // 下一个请求就对不上版本,自然失效(比遍历 Map 删更可靠:漏一处就是漏一处)。
+    if (sub === '/api/sessions/revoke' && req.method === 'POST') {
+      const cur = tokenOf(req, u);
+      const r = users.revokeSessions(me.name);
+      if (!r.ok) return sendJson(res, 400, r);
+      const dropped = dropSessionsOf(me.name, cur);
+      // 当前这条要跟着新版本走,否则用户点完按钮把自己也踢了
+      const rec = sessions.get(cur);
+      if (rec) rec.ver = r.user.passVersion;
+      log(`[audit] 用户 ${me.name} 退出了其它 ${dropped} 个设备 · ip=${clientIp(req)}`);
+      return sendJson(res, 200, { ok: true, dropped });
+    }
+
+    if (sub === '/api/announcement' && req.method === 'GET') {
+      return sendJson(res, 200, { announcement: announcement() });
     }
 
     // 令牌明文回显 —— 只能取自己绑定的,每次留审计
@@ -260,16 +441,30 @@ export function createUserPortal({ prefix = '/u', users, metrics, logStore, toke
       return chat.handle(sub.slice('/api/chat'.length) || '/', req, res, me);
     }
 
-    // 自助改密(要验旧密码)
+    // 自助改密(要验旧密码)。改完 passVersion 变了 —— 别处登着的同一个账号
+    // 会当场掉线,当前这条则续上新版本,不至于把自己踢出去。
     if (sub === '/api/password' && req.method === 'POST') {
       const b = await readJson(req);
       const r = users.changePassword(me.name, b.oldPassword, b.newPassword);
       if (!r.ok) return sendJson(res, 400, r);
-      return sendJson(res, 200, { ok: true });
+      const cur = tokenOf(req, u);
+      const dropped = dropSessionsOf(me.name, cur);
+      const rec = sessions.get(cur);
+      if (rec) rec.ver = r.user.passVersion;
+      log(`[audit] 用户 ${me.name} 改密成功,同时踢掉 ${dropped} 个其它会话 · ip=${clientIp(req)}`);
+      return sendJson(res, 200, { ok: true, dropped });
     }
 
     return sendJson(res, 404, { error: 'not found' });
   }
 
-  return { handle, prefix, sessionCount: () => sessions.size };
+  return {
+    handle,
+    prefix,
+    sessionCount: () => sessions.size,
+    // 统一登录入口(/api/login)要把 session 交给对应的门去签,
+    // 两套 session Map 才不会互相认账 —— 这是越权风险最大的一处,
+    // 物理隔离比在同一个 handler 里判 role 可靠。
+    mintSession: (name, req) => newSession(name, req),
+  };
 }
