@@ -519,6 +519,20 @@ try {
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return !!hit && (hit === b || b.contains(hit) || hit.contains(b));
   `));
+  // 严重度上色不能只查 class 名有没有加上,要查【真的渲染出颜色了没有】——
+  // `var(--color-danger)` 这种没在 haha-tokens.css 里定义过的变量名,浏览器会
+  // 把它当无效值忽略,`class="err"` 照样加得上、宽度也照样是对的,唯独颜色是空的,
+  // 上面两条断言全部会通过而看不出问题。这正是这次真实踩到的坑。
+  ok('critical 严重度的条真的画出了颜色(不是变量名打错导致的空块)', await evalJs(`
+    const saved = USAGE;
+    USAGE = { scope: 'account', mine: { admin: true, unlimited: true }, account: { available: true, source: 'oauth', fetchedAt: Date.now(), ttlMs: 600000,
+      bars: [ { key: 'session', label: '会话窗口(5 小时)', percent: 97, resetsAt: Date.now() + 3600000, severity: 'critical', model: null, isActive: true, status: null } ] } };
+    drawUsage();
+    const i = document.querySelector('#usageBody .ubar .tr i');
+    const bg = getComputedStyle(i).backgroundColor;
+    USAGE = saved; drawUsage();
+    return i.className === 'err' && bg !== '' && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
+  `), await evalJs(`return getComputedStyle(document.querySelector('#usageBody .ubar .tr i')).backgroundColor`));
   // 有个人限额时的另一条分支:服务端此时不会下发 account,前端必须画自己的额度。
   // 这里直接喂一份 scope=user 的载荷 —— 接口层的判定由 test/usage.mjs 锁,
   // 这里锁的是"这条分支的 DOM 不会炸、金额被抹掉时仍然画得出百分比"。

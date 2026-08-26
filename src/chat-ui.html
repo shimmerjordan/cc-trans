@@ -194,10 +194,10 @@
   aside .foot .usage-strip .track { flex: 1; height: 4px; border-radius: 999px; background: var(--color-border); overflow: hidden; min-width: 24px; }
   aside .foot .usage-strip .track i { display: block; height: 100%; background: var(--color-brand); border-radius: 999px; transition: width var(--motion-fast) var(--motion-easing); }
   aside .foot .usage-strip .track i.warn { background: var(--color-warning); }
-  aside .foot .usage-strip .track i.err { background: var(--color-danger); }
+  aside .foot .usage-strip .track i.err { background: var(--color-error); }
   aside .foot .usage-strip .up { flex: none; font-variant-numeric: tabular-nums; }
   aside .foot .usage-strip .up.warn { color: var(--color-warning); }
-  aside .foot .usage-strip .up.err { color: var(--color-danger); }
+  aside .foot .usage-strip .up.err { color: var(--color-error); }
 
   /* 用量弹窗里的条目 */
   .ubar { margin-bottom: var(--s3); }
@@ -205,21 +205,21 @@
   .ubar .r1 b { font-weight: 550; color: var(--color-text-primary); }
   .ubar .r1 .p { font-variant-numeric: tabular-nums; color: var(--color-text-secondary); }
   .ubar .r1 .p.warn { color: var(--color-warning); }
-  .ubar .r1 .p.err { color: var(--color-danger); }
+  .ubar .r1 .p.err { color: var(--color-error); }
   .ubar .tr { height: 6px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
   .ubar .tr i { display: block; height: 100%; background: var(--color-brand); border-radius: 999px; }
   .ubar .tr i.warn { background: var(--color-warning); }
-  .ubar .tr i.err { background: var(--color-danger); }
+  .ubar .tr i.err { background: var(--color-error); }
   .ubar .sub { font-size: var(--fs-stamp); color: var(--color-text-tertiary); margin-top: 3px; }
   .u-head { font-size: var(--fs-note); font-weight: 550; color: var(--color-text-primary); margin: var(--s4) 0 var(--s2); }
   .u-head:first-child { margin-top: 0; }
   .u-nums { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--fs-note); color: var(--color-text-secondary); margin-bottom: var(--s2); }
   .u-nums b { color: var(--color-text-primary); font-weight: 550; font-variant-numeric: tabular-nums; }
   .u-alert {
-    border: 1px solid var(--color-danger); border-radius: var(--radius-md);
+    border: 1px solid var(--color-error); border-radius: var(--radius-md);
     padding: var(--s3); margin-bottom: var(--s3); font-size: var(--fs-note);
   }
-  .u-alert b { color: var(--color-danger); }
+  .u-alert b { color: var(--color-error); }
 
   /* ── 中栏 ── */
   main { display: flex; flex-direction: column; min-width: 0; background: var(--color-background); position: relative; }
