@@ -731,6 +731,140 @@ try {
     noteErrors();
     ok('＋ 菜单无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
   }
+  // ── 附件:拖拽 与 粘贴 ──
+  //
+  // 为什么值得单独有一段:这两条路是【只有真浏览器能验】的 —— 接口测试打的是
+  // /chat/image 与 /chat/file,它们一直是好的;坏的是页面上根本没有把文件交到
+  // 那两个接口手里。表现就是"拖进去没反应",而所有既有测试全绿。
+  //
+  // 假文件字节过不了服务端的魔数嗅探(putImage → sniffMatches),
+  // 所以这里必须用【真的】PNG / PDF 字节,否则拿回 400 会被误读成前端没接住。
+  {
+    const FIX = `
+      const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      function b64bytes(b64) { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+      function mkPng(n) { return new File([b64bytes(PNG_B64)], n || 'a.png', { type: 'image/png' }); }
+      function mkPdf(n) { return new File([new TextEncoder().encode('%PDF-1.4\\n1 0 obj<<>>endobj\\ntrailer<<>>\\n%%EOF\\n')], n || 'b.pdf', { type: 'application/pdf' }); }
+      function mkTxt(n) { return new File([new TextEncoder().encode('hello from a dropped text file')], n || 'c.txt', { type: 'text/plain' }); }
+      function dtOf(files) { const d = new DataTransfer(); for (const f of files) d.items.add(f); return d; }
+      function reset() { pendingImgs = []; pendingFiles = []; drawPending(); }
+      function fire(target, type, d) {
+        const ev = type === 'paste'
+          ? new ClipboardEvent('paste', { clipboardData: d, bubbles: true, cancelable: true })
+          : new DragEvent(type, { dataTransfer: d, bubbles: true, cancelable: true });
+        target.dispatchEvent(ev);
+        return ev;
+      }
+    `;
+
+    // 1) 拖到输入框上(唯一一直能用的落点)—— 回归保护
+    const onComposer = await evalJs(`${FIX}
+      return (async () => {      reset();
+      fire(document.getElementById('drop'), 'drop', dtOf([mkPng()]));
+      await new Promise(r => setTimeout(r, 800));
+      return { imgs: pendingImgs.length, thumbs: document.querySelectorAll('#pending .thumb').length };})();
+    `);
+    ok('拖到输入框上能收下图片', onComposer.imgs === 1 && onComposer.thumbs === 1, JSON.stringify(onComposer));
+
+    // 2) 拖到消息区 —— 用户最可能的落点。整页都该是投放区。
+    const onMsgs = await evalJs(`${FIX}
+      return (async () => {      reset();
+      const t = document.getElementById('msgs');
+      const over = fire(t, 'dragover', dtOf([mkPng()]));
+      fire(t, 'drop', dtOf([mkPng('d.png')]));
+      await new Promise(r => setTimeout(r, 800));
+      return { imgs: pendingImgs.length, overPrevented: over.defaultPrevented };})();
+    `);
+    ok('拖到消息区(不是输入框)也能收下', onMsgs.imgs === 1, JSON.stringify(onMsgs));
+    // 这一条是"拖进去整个页面被那张图顶掉"的根因:没人 preventDefault,
+    // 浏览器就按默认行为把标签页导航到那个文件,会话直接没了。
+    ok('拖文件时 dragover 被拦下(否则浏览器会把标签页导航到文件)', onMsgs.overPrevented === true);
+
+    // 3) 拖非文件(在输入框里拖选中的文字)不能被我们截胡 —— 那是浏览器原生功能
+    ok('拖纯文本时不拦截,原生拖字仍然可用', await evalJs(`
+      const d = new DataTransfer();
+      d.setData('text/plain', '一段被拖动的文字');
+      const ev = new DragEvent('dragover', { dataTransfer: d, bubbles: true, cancelable: true });
+      document.getElementById('input').dispatchEvent(ev);
+      return ev.defaultPrevented === false;
+    `));
+
+    // 4) 粘贴图片(焦点在输入框)—— 回归保护
+    const pasteImg = await evalJs(`${FIX}
+      return (async () => {      reset();
+      const i = document.getElementById('input'); i.focus();
+      fire(i, 'paste', dtOf([mkPng('p.png')]));
+      await new Promise(r => setTimeout(r, 800));
+      return pendingImgs.length;})();
+    `);
+    ok('在输入框里粘贴图片能收下', pasteImg === 1, String(pasteImg));
+
+    // 5) 粘贴的是【文件】(从文件管理器复制的 PDF / 文本)—— 旧实现只认 image/*
+    const pasteDoc = await evalJs(`${FIX}
+      return (async () => {      reset();
+      const i = document.getElementById('input'); i.focus();
+      fire(i, 'paste', dtOf([mkPdf('p.pdf'), mkTxt('p.txt')]));
+      await new Promise(r => setTimeout(r, 1000));
+      return { files: pendingFiles.length, names: pendingFiles.map(f => f.name) };})();
+    `);
+    ok('粘贴 PDF / 文本文件也能收下', pasteDoc.files === 2, JSON.stringify(pasteDoc));
+
+    // 6) 焦点不在输入框时粘贴 —— 旧实现把监听挂在 #input 上,点一下消息就失灵
+    const pasteBlur = await evalJs(`${FIX}
+      return (async () => {      reset();
+      document.getElementById('input').blur();
+      fire(document.body, 'paste', dtOf([mkPng('q.png')]));
+      await new Promise(r => setTimeout(r, 800));
+      return pendingImgs.length;})();
+    `);
+    ok('焦点不在输入框时粘贴也能收下', pasteBlur === 1, String(pasteBlur));
+
+    // 7) 粘贴纯文字不能被拦 —— 否则输入框里 Ctrl+V 贴不进字
+    ok('粘贴纯文字不拦截', await evalJs(`
+      const d = new DataTransfer();
+      d.setData('text/plain', '普通文字');
+      const ev = new ClipboardEvent('paste', { clipboardData: d, bubbles: true, cancelable: true });
+      document.getElementById('input').dispatchEvent(ev);
+      return ev.defaultPrevented === false;
+    `));
+
+    // 8) 拖进来的时候要看得见 —— 没有提示的话,用户根本不知道能往哪儿放
+    const hint = await evalJs(`${FIX}
+      return (async () => {      const d = dtOf([mkPng()]);
+      fire(document.body, 'dragenter', d);
+      fire(document.body, 'dragover', d);
+      await new Promise(r => setTimeout(r, 120));
+      const o = document.getElementById('dropVeil');
+      const shown = !!o && !o.hidden && getComputedStyle(o).display !== 'none';
+      fire(document.body, 'dragleave', d);
+      fire(document.body, 'drop', new DataTransfer());
+      await new Promise(r => setTimeout(r, 200));
+      const o2 = document.getElementById('dropVeil');
+      // 只看 hidden 属性不够:.drop-veil 自带 display:grid,类选择器会盖过
+      // UA 的 [hidden]{display:none}(页面顶上那条 !important 就是为这个加的)
+      return { shown, hiddenAfter: !o2 || (o2.hidden && getComputedStyle(o2).display === 'none') };})();
+    `);
+    ok('拖动时整页给出投放提示', hint.shown === true, JSON.stringify(hint));
+    ok('松手/离开后提示收起', hint.hiddenAfter === true, JSON.stringify(hint));
+
+    // 9) 事件直接派发到 window 时 e.target 就是 window(不是 Node)——
+    //    早期实现在这里对它调用 contains(),稳定抛 TypeError
+    ok('dragover 派发到 window 上不炸', await evalJs(`
+      const d = new DataTransfer();
+      const f = new File([new Uint8Array([1, 2, 3])], 'w.bin', { type: 'application/octet-stream' });
+      d.items.add(f);
+      try {
+        window.dispatchEvent(new DragEvent('dragover', { dataTransfer: d, bubbles: true, cancelable: true }));
+        showVeil(false);
+        return true;
+      } catch (e) { return 'throw: ' + e.message; }
+    `) === true);
+
+    // 收尾:别把附件留给后面的用例(pending 会被下一次 send() 带走)
+    await evalJs(`pendingImgs = []; pendingFiles = []; drawPending(); return 1`);
+    noteErrors();
+    ok('拖拽 / 粘贴全程无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
+  }
 
   // ── 模型 / 深度:嵌套菜单(对齐 claude.ai 的形状)──
   {

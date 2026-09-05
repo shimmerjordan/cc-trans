@@ -731,6 +731,31 @@
   .login .alt a { color: var(--color-text-accent); }
   .err-msg { color: var(--color-error); font-size: var(--fs-note); min-height: 18px; margin-top: var(--s2); text-align: center; }
 
+  /* 整页投放提示:拖着文件进来时才出现。用 --z-toast 之上的层,
+     因为它必须盖住侧栏抽屉与遮罩(在窄屏上那两个是 fixed 的)。 */
+  .drop-veil {
+    position: fixed; inset: 0; z-index: calc(var(--z-toast) + 1);
+    display: grid; place-items: center; padding: var(--s5);
+    background: rgba(var(--cc-scrim-rgb), .38);
+    /* 提示层自己不能吃掉拖拽事件:命中它会让 dragleave/drop 落在提示层上,
+       进而在鼠标移动时反复闪烁(第一版就是这么闪的)。 */
+    pointer-events: none;
+  }
+  .drop-veil-card {
+    display: grid; justify-items: center; gap: var(--s2);
+    padding: var(--s6) var(--s7); border-radius: var(--radius-2xl);
+    background: var(--color-surface); color: var(--color-text-primary);
+    border: 2px dashed var(--color-brand); box-shadow: var(--shadow-composer);
+    text-align: center;
+  }
+  .drop-veil-card svg { width: 34px; height: 34px; color: var(--color-brand); }
+  .drop-veil-card b { font-size: var(--fs-body); }
+  .drop-veil-card i { font-style: normal; font-size: var(--fs-note); color: var(--color-text-secondary); }
+  @media (prefers-reduced-motion: no-preference) {
+    .drop-veil-card { animation: dropPop 140ms var(--motion-easing); }
+    @keyframes dropPop { from { transform: scale(.97); opacity: 0; } to { transform: none; opacity: 1; } }
+  }
+
   .toasts { position: fixed; right: var(--s5); bottom: var(--s5); z-index: var(--z-toast); display: flex; flex-direction: column; gap: var(--s2); max-width: min(380px, calc(100vw - var(--s7))); }
   .toast {
     background: var(--color-surface); color: var(--color-text-primary);
@@ -984,6 +1009,18 @@
   </div>
 </div>
 
+<!-- 整页投放提示。挂在 <body> 下而不是 .app 里:.app 在未登录时是 hidden 的,
+     而且投放区覆盖的是整个视口,不该受布局容器的 overflow 影响。 -->
+<div class="drop-veil" id="dropVeil" hidden aria-hidden="true">
+  <div class="drop-veil-card">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5-5 5 5"/><path d="M12 5v14"/>
+    </svg>
+    <b>松手即可添加</b>
+    <i>图片、PDF、文本与代码文件</i>
+  </div>
+</div>
+
 <div class="nav-tip" id="navTip" hidden></div>
 <!-- 放大的图在打开时才建 <img>:预留一个空 src 的占位标签,在某些浏览器里
      会当成"加载失败的图"去请求当前页面 URL。 -->
@@ -1107,7 +1144,7 @@ function applyPlaceholder() {
     return;
   }
   const key = PREF.sendMode === 'mod' ? '⌘/Ctrl+Enter 发送' : 'Enter 发送,Shift+Enter 换行';
-  el('input').placeholder = `给 Claude 发消息…(${key},可粘贴或拖入图片)`;
+  el('input').placeholder = `给 Claude 发消息…(${key},图片/PDF/代码可直接拖入或粘贴)`;
 }
 
 function toast(msg, kind = 'ok') {
@@ -2450,19 +2487,76 @@ function drawPending() {
 function rmImage(i) { pendingImgs.splice(i, 1); drawPending(); }
 function rmFile(i) { pendingFiles.splice(i, 1); drawPending(); }
 
+// ── 拖拽 / 粘贴 ──
+//
+// 投放区是【整个窗口】,不是底部那一条输入框。原因很实际:输入框只有几十像素高,
+// 而人拖着文件时看的是那一大片对话区,十有八九往那儿放。落在输入框之外时,
+// 页面上没有任何人 preventDefault,浏览器就按默认行为把标签页导航到那个文件 ——
+// 表现是"拖进去之后整个页面变成了那张图",当前会话直接没了。
+//
+// 只在拖的确实是【文件】时才接管:拖选中的文字进输入框是浏览器原生功能,
+// 无条件 preventDefault 会把它一并吃掉(旧实现就吃掉了)。
 const drop = el('drop');
-drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
-drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-drop.addEventListener('drop', async (e) => {
-  e.preventDefault(); drop.classList.remove('over');
+const dropVeil = el('dropVeil');
+
+function dragHasFiles(dt) {
+  if (!dt) return false;
+  // types 在 dragover 阶段可读,files 在这个阶段是空的(规范如此),所以只能看 types
+  return [...(dt.types || [])].includes('Files');
+}
+// 有对话框开着时不抢:那会儿用户在改技能名/对话标题,往那儿拖文件不该
+// 悄悄挂到背后的输入框上。
+function attachBlocked() { return !!document.querySelector('dialog[open]'); }
+
+// dragenter/dragleave 会在【子元素之间移动时】成对触发,直接按事件收放提示层会疯狂闪。
+// 记进出深度,归零才收 —— 这是这类覆盖层的标准做法。
+let dragDepth = 0;
+function showVeil(on) {
+  if (!dropVeil) return;
+  dropVeil.hidden = !on;
+  if (!on) { dragDepth = 0; drop.classList.remove('over'); }
+}
+
+window.addEventListener('dragenter', (e) => {
+  if (!dragHasFiles(e.dataTransfer) || attachBlocked()) return;
+  e.preventDefault();
+  dragDepth++;
+  showVeil(true);
+});
+window.addEventListener('dragover', (e) => {
+  if (!dragHasFiles(e.dataTransfer) || attachBlocked()) return;
+  // 这一句才是"浏览器别把标签页导航走"的开关 —— 必须每次 dragover 都调
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'copy'; } catch {}
+  if (dropVeil && dropVeil.hidden) { dragDepth = Math.max(dragDepth, 1); showVeil(true); }
+  // e.target 不一定是 Node —— 直接往 window 上派发 dragover 时它就是 window,
+  // 那时 contains() 会抛 TypeError(自动化里第一次就撞上了)
+  drop.classList.toggle('over', e.target instanceof Node && drop.contains(e.target));
+});
+window.addEventListener('dragleave', (e) => {
+  if (!dragHasFiles(e.dataTransfer)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) showVeil(false);
+});
+// 拖到窗口外松手不会有 drop,只有 dragend/离开;不收尾的话提示层会一直挂着
+window.addEventListener('dragend', () => showVeil(false));
+window.addEventListener('drop', async (e) => {
+  if (!dragHasFiles(e.dataTransfer) || attachBlocked()) return;
+  e.preventDefault();
+  showVeil(false);
   for (const f of e.dataTransfer.files) await addFile(f);
 });
-el('input').addEventListener('paste', async (e) => {
-  const items = [...(e.clipboardData?.items || [])].filter((i) => i.type.startsWith('image/'));
-  for (const it of items) {
-    const f = it.getAsFile();
-    if (f) { e.preventDefault(); await addImage(f); }
-  }
+
+// 粘贴同理挂在 document 上,不是输入框上:点过一条消息之后焦点就不在输入框里了,
+// 这时 Ctrl+V 在旧实现里完全没反应。
+// 而且收的是 clipboardData.files 而不是"只挑 image/* 的 item" ——
+// 从文件管理器复制来的 PDF / 文本文件也该能贴进来。
+document.addEventListener('paste', async (e) => {
+  if (attachBlocked()) return;
+  const files = [...(e.clipboardData?.files || [])];
+  if (!files.length) return;      // 纯文字粘贴照常走浏览器默认行为
+  e.preventDefault();
+  for (const f of files) await addFile(f);
 });
 
 // ── 输入框 ──
