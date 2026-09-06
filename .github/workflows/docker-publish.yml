@@ -21,6 +21,16 @@ on:
   push:
     tags: ['v*'] # 只在打版本标签时发布
   workflow_dispatch: # 手动跑一次(在 main 上跑会同时更新 latest)
+    inputs:
+      version:
+        description: '版本号,如 0.2.1。留空 = 只发 latest + sha-xxxxxxx(旧行为)'
+        required: false
+        default: ''
+      on_conflict:
+        description: '这个版本号已经发过了怎么办'
+        type: choice
+        options: [pre, overwrite, fail]
+        default: pre
 
 env:
   REGISTRY: ghcr.io
@@ -30,13 +40,40 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # 手动填版本号时要建 git tag(只读不够)
       packages: write # 推送到 GHCR 必需
       attestations: write
       id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        # fetch-depth: 0 —— resolve-version.sh 要读已有 tag 才能判断这个版本号
+        # 发没发过。默认的浅克隆一个 tag 都看不到。
+        with:
+          fetch-depth: 0
+
+      # 手动触发且填了版本号时: 决定最终版本号(冲突就按策略走), 并把 tag 建出来。
+      # 与 repo_git / explore_journal / photo-ar 共用同一份 scripts/resolve-version.sh。
+      # 留空版本号 = 旧行为(只发 latest + sha-), 这一步整个跳过。
+      - name: 解析版本号并建 tag
+        id: ver
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        env:
+          RAW: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          RV="$(./scripts/resolve-version.sh "${RAW}" "${{ inputs.on_conflict }}")"
+          V="$(printf '%s\n' "$RV" | sed -n 's/^version=//p')"
+          VTAG="$(printf '%s\n' "$RV" | sed -n 's/^vtag=//p')"
+          PRE="$(printf '%s\n' "$RV" | sed -n 's/^prerelease=//p')"
+          git tag -f "${VTAG}" "${GITHUB_SHA}"
+          git push -f origin "refs/tags/${VTAG}"
+          {
+            echo "version=${V}"
+            echo "vtag=${VTAG}"
+            echo "prerelease=${PRE}"
+          } >> "$GITHUB_OUTPUT"
+          echo "发 ${VTAG} (预发布=${PRE})"
 
       # 多架构构建(amd64 + arm64):树莓派 / ARM 云主机 / Apple Silicon 也能直接用。
       # 镜像里只 COPY 源码、不编译原生依赖,所以 QEMU 交叉构建很快。
@@ -74,7 +111,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && github.ref_name == (github.event.repository.default_branch || 'main') }}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ steps.ver.outputs.version != '' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' && steps.ver.outputs.prerelease != 'true' && github.ref_name == (github.event.repository.default_branch || 'main') }}
           labels: |
             org.opencontainers.image.title=cc-trans
             org.opencontainers.image.description=零依赖 Anthropic API 反向代理(转发本机 Claude 订阅)+ Web 管理台
