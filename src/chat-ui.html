@@ -472,14 +472,70 @@
   }
   .drop textarea::placeholder { color: var(--color-text-tertiary); }
   .drop textarea:focus-visible { outline: none; }
+  /* ── 待发送附件:统一的方形瓦片(照 claude.ai / ChatGPT 的形状)──
+     关键不在好看,在于【文件一进来瓦片就在】:图片用本地 blob 直接出图,
+     不等服务端;上传过程画在瓦片自己身上。以前是传完才 push 进数组,
+     大文件走隧道要好几秒,那几秒里页面上什么都没有 —— 看起来就像没反应。 */
   .pending { display: flex; gap: var(--s2); flex-wrap: wrap; padding: var(--s3) 0 0; }
-  .pending .thumb { position: relative; }
-  .pending img { height: 56px; border-radius: var(--radius-md); border: 1px solid var(--color-border); display: block; }
-  .pending .x {
-    position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
-    background: var(--color-error); color: #fff; border: 0; font-size: 11px; line-height: 1;
-    display: flex; align-items: center; justify-content: center; padding: 0; min-height: 0;
+  .att-tile {
+    position: relative; flex: none; width: 72px; height: 72px;
+    border-radius: var(--radius-lg); overflow: hidden;
+    border: 1px solid var(--color-border); background: var(--color-surface-container);
+    animation: attIn 160ms var(--motion-easing);
   }
+  @media (prefers-reduced-motion: reduce) { .att-tile { animation: none; } }
+  @keyframes attIn { from { transform: scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+  .att-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* 非图片:图标 + 文件名 + 大小,塞进同样大小的方块里 */
+  /* 72px 见方里要塞下 图标 + 两行文件名 + 大小,竖向预算很紧:
+     18 + 2 + 24 + 2 + 11 = 57,加上下 padding 11 → 68 < 70(去掉边框的净高)。
+     gap 放宽到 3px 就会把文件名挤成一行(上一版就是这么被截成"季度报告.pd"的)。 */
+  .att-tile .doc-face {
+    width: 100%; height: 100%; padding: 6px 5px 5px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    text-align: center; color: var(--color-text-secondary);
+  }
+  .att-tile .doc-face svg { width: 18px; height: 18px; flex: none; color: var(--color-brand); }
+  .att-tile .doc-face .nm {
+    font-size: 10px; line-height: 1.2; color: var(--color-text-primary); width: 100%;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-all;
+  }
+  .att-tile .doc-face .sz { font-size: 9px; line-height: 1.2; color: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+  /* 上传中的遮罩 —— 盖在瓦片上,不改变布局,所以进度走完不会跳动 */
+  .att-tile .veil {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    background: rgba(0, 0, 0, .48); color: #fff;
+  }
+  .att-tile .veil .ring { width: 36px; height: 36px; transform: rotate(-90deg); }
+  .att-tile .veil .ring circle { fill: none; stroke-width: 3; }
+  .att-tile .veil .ring .bg { stroke: rgba(255, 255, 255, .3); }
+  .att-tile .veil .ring .fg { stroke: #fff; stroke-linecap: round; transition: stroke-dashoffset 120ms linear; }
+  .att-tile .veil .pct {
+    position: absolute; font-size: 10px; font-weight: 600; color: #fff;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  /* 失败态:红边 + 一个能点的重试(File 还在内存里,不用重新拖一次) */
+  .att-tile.err { border-color: var(--color-error); }
+  .att-tile.err .veil { background: rgba(0, 0, 0, .62); }
+  .att-tile .retry {
+    display: inline-flex; align-items: center; gap: 3px; padding: 3px 7px; min-height: 0;
+    border: 0; border-radius: var(--radius-full); font-size: 10px;
+    background: #fff; color: #111;
+  }
+  .att-tile .retry svg { width: 11px; height: 11px; }
+  .att-tile .why {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 4px;
+    font-size: 9px; line-height: 1.2; color: #fff; background: var(--color-error);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .att-tile .x {
+    position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%;
+    background: rgba(0, 0, 0, .58); color: #fff; border: 0; font-size: 11px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; padding: 0; min-height: 0;
+    z-index: 1;
+  }
+  .att-tile .x:hover { background: var(--color-error); }
   /* 控件行:+ / 模型 / 思考 / 深度 / 上下文 / 设备,最右是圆形发送键 */
   .send-row { display: flex; align-items: center; gap: var(--s2); padding-top: var(--s3); flex-wrap: nowrap; }
   /* 中段横向滚动:窄屏上控件多到放不下时是滑动而不是换行。
@@ -598,17 +654,6 @@
   }
   .mode-chip button { border: 0; background: none; padding: 0 0 0 2px; min-height: 0; color: inherit; opacity: .7; font-size: 11px; }
   .mode-chip button:hover { opacity: 1; background: none; }
-
-  /* 待发送附件:图片是缩略图,PDF/文本是一张小卡 */
-  .pending .doc {
-    display: inline-flex; align-items: center; gap: var(--s2); max-width: 240px;
-    background: var(--color-surface-container-low); border: 1px solid var(--color-border);
-    border-radius: var(--radius-md); padding: var(--s2) var(--s3); font-size: var(--fs-stamp);
-    position: relative;
-  }
-  .pending .doc .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-primary); }
-  .pending .doc .sz { color: var(--color-text-tertiary); flex: none; }
-  .pending .doc svg { width: 15px; height: 15px; flex: none; color: var(--color-brand); }
 
   /* 消息里的附件卡 */
   .msg .atts { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s2); }
@@ -1108,8 +1153,10 @@ let curId = null;          // 当前会话 id
 let messages = [];         // 当前会话消息
 let sessionRows = [];      // 会话列表(服务端返回的索引)
 let liveIds = new Set();   // 正在生成中的会话 id
-let pendingImgs = [];      // 待发送图片 [{id, mime, url}]
-let pendingFiles = [];     // 待发送的 PDF / 文本附件 [{id, kind, name, bytes}]
+// 待发送附件,一个数组管三类。瓦片在【选中的那一刻】就进这里,
+// 所以里面既有传完的(status:'done'),也有正在传和失败的。
+// [{uid, kind:'image'|'pdf'|'text', file, name, size, url, status, pct, error, xhr, id, mime, bytes}]
+let pending = [];
 let editIndex = null;      // 正在改写第几条用户消息
 let artifacts = [], artIndex = 0, panelMode = 'preview';
 // 当前这条流:reader 用来主动收尾,seq 是收到的最后一个事件序号(重连续传用)
@@ -2104,6 +2151,7 @@ function closeMenus() {
 }
 const ICO = {
   file: '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/>',
+  retry: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/>',
   flask: '<path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3"/>',
   skill: '<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2.5"/>',
@@ -2432,60 +2480,211 @@ async function reloadSkills() {
 // ── 附件(图片 / PDF / 文本)──
 function pickFile() { el('file').click(); }
 async function onFiles(files) {
-  for (const f of files) await addFile(f);
+  // 先把 FileList 拷成数组:input.value 一清空,FileList 就空了
+  const list = [...files];
   el('file').value = '';
+  for (const f of list) await addFile(f);
 }
 function fmtBytes(n) {
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
   return (n / 1048576).toFixed(1) + ' MB';
 }
+// ── 附件上传:瓦片先出现,进度画在瓦片上 ──
+//
+// 以前是「传完才 push 进数组」,于是大文件走隧道的那几秒里页面上什么都没有,
+// 看起来就是"拖进去没反应"。现在反过来:文件一到手先建瓦片(图片直接用本地
+// blob 出图,不等服务端),上传过程画成瓦片上的进度环,失败就地留错误态可重试。
+//
+// 一个数组管所有附件。以前分 pendingImgs / pendingFiles 两条线、按【数组下标】
+// 删除 —— 多个文件并发上传时完成顺序不定,下标会错位删错人。改成稳定的 uid。
+let pendingSeq = 0;
+
+function kindOfFile(file) {
+  if ((file.type || '').startsWith('image/')) return 'image';
+  if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) return 'pdf';
+  return 'text';
+}
+function capOf(kind) {
+  if (kind === 'image') return (META && META.maxImageBytes) || 5242880;
+  if (kind === 'pdf') return (META && META.maxPdfBytes) || 20971520;
+  return (META && META.maxTextBytes) || 1048576;
+}
+
+// 带进度的上传。必须用 XHR:fetch 拿不到上传进度事件,
+// 而"进度"正是这次要给的东西。
+function uploadWithProgress(path, payload, onPct) {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise((resolve, reject) => {
+    xhr.open('POST', API + path);
+    xhr.setRequestHeader('content-type', 'application/json');
+    xhr.setRequestHeader('authorization', 'Bearer ' + SESSION);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && e.total) onPct(e.loaded / e.total); };
+    xhr.onload = () => {
+      if (xhr.status === 401) { toLogin(); return reject(new Error('unauthorized')); }
+      let d = {};
+      // 隧道/反代出错时回的是 HTML 错误页,硬解析会抛 —— 那个异常以前正是
+      // "什么都没发生"的来源之一
+      try { d = JSON.parse(xhr.responseText || '{}'); } catch {}
+      if (xhr.status < 200 || xhr.status >= 300 || !d.ok) {
+        return reject(new Error(d.error || `上传失败(HTTP ${xhr.status})`));
+      }
+      resolve(d);
+    };
+    xhr.onerror = () => reject(new Error('网络中断'));
+    xhr.ontimeout = () => reject(new Error('上传超时'));
+    xhr.onabort = () => reject(Object.assign(new Error('已取消'), { aborted: true }));
+    xhr.send(JSON.stringify(payload));
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
+// 读文件转 base64。这一段对大文件不是瞬间的,所以也要算进进度里,
+// 否则进度条会先卡在 0 再突然跑完。
+function readAsBase64(file, onPct) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onprogress = (e) => { if (e.lengthComputable && e.total) onPct(e.loaded / e.total); };
+    fr.onload = () => res(String(fr.result).split(',')[1] || '');
+    fr.onerror = () => rej(new Error('这个文件读不出来'));
+    fr.readAsDataURL(file);
+  });
+}
+
+async function onFilesPicked(files) { for (const f of files) await addFile(f); }
+
 async function addFile(file) {
-  // 图片仍走原来那条路(image block + 缩略图预览)
-  if (file.type.startsWith('image/')) return addImage(file);
-  const cap = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)
-    ? (META && META.maxPdfBytes) || 20971520
-    : (META && META.maxTextBytes) || 1048576;
-  if (file.size > cap) { toast(`「${file.name}」超过 ${fmtBytes(cap)} 上限`, 'err'); return; }
-  const data = await new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => res(String(fr.result).split(',')[1] || '');
-    fr.onerror = rej;
-    fr.readAsDataURL(file);
-  });
-  const r = await api('/chat/file', { method: 'POST', body: JSON.stringify({ data, mime: file.type, name: file.name }) });
-  const d = await r.json();
-  if (!r.ok || !d.ok) { toast(d.error || '上传失败', 'err'); return; }
-  pendingFiles.push({ id: d.id, kind: d.kind, name: d.name, mime: d.mime, bytes: d.bytes });
-  drawPending();
+  const kind = kindOfFile(file);
+  const item = {
+    uid: ++pendingSeq, kind, file,
+    name: file.name || (kind === 'image' ? '图片' : '文件'),
+    size: file.size,
+    url: kind === 'image' ? URL.createObjectURL(file) : '',
+    status: 'uploading', pct: 0, error: '', xhr: null,
+  };
+  pending.push(item);
+  drawPending();          // ← 就是这一行让瓦片"立刻"出现
+  const cap = capOf(kind);
+  if (file.size > cap) {
+    // 超限也留一块在那儿:说清哪个文件为什么没进去,比弹一条转瞬即逝的
+    // toast 有用 —— 一次拖十个文件时尤其明显
+    failItem(item, `超过 ${fmtBytes(cap)} 上限`);
+    return;
+  }
+  await runUpload(item);
 }
+// 旧名字还有人调(拖拽/粘贴里对图片的快捷路径),保持可用
 async function addImage(file) {
-  if (!file.type.startsWith('image/')) { toast('只支持图片', 'err'); return; }
-  if (META && file.size > META.maxImageBytes) { toast(`图片超过 ${Math.round(META.maxImageBytes / 1048576)}MB`, 'err'); return; }
-  const data = await new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => res(String(fr.result).split(',')[1] || '');
-    fr.onerror = rej;
-    fr.readAsDataURL(file);
-  });
-  const r = await api('/chat/image', { method: 'POST', body: JSON.stringify({ data, mime: file.type }) });
-  const d = await r.json();
-  if (!r.ok) { toast(d.error || '上传失败', 'err'); return; }
-  pendingImgs.push({ id: d.id, mime: d.mime, url: URL.createObjectURL(file) });
+  if (!(file.type || '').startsWith('image/')) { toast('只支持图片', 'err'); return; }
+  return addFile(file);
+}
+
+// 读 30% + 传 70%:两段都算,进度才不会先卡住再跳。
+// 这个配比在本机和远程两种场景下都不精确,但保证单调递增、不倒退。
+const READ_SHARE = 0.3;
+async function runUpload(item) {
+  item.status = 'uploading'; item.error = ''; item.pct = 0;
+  drawPending();
+  try {
+    const data = await readAsBase64(item.file, (p) => setPct(item, p * READ_SHARE));
+    const path = item.kind === 'image' ? '/chat/image' : '/chat/file';
+    const payload = item.kind === 'image'
+      ? { data, mime: item.file.type }
+      : { data, mime: item.file.type, name: item.name };
+    const up = uploadWithProgress(path, payload, (p) => setPct(item, READ_SHARE + p * (1 - READ_SHARE)));
+    item.xhr = up;
+    const d = await up.promise;
+    item.xhr = null;
+    item.status = 'done'; item.pct = 1;
+    item.id = d.id; item.mime = d.mime; item.bytes = d.bytes;
+    if (d.kind) item.kind = d.kind;      // 服务端说了算(比如没扩展名的文本)
+    if (d.name) item.name = d.name;
+    drawPending();
+  } catch (e) {
+    item.xhr = null;
+    if (e && e.aborted) return;                       // 用户自己取消的,瓦片已经移除
+    if (e && e.message === 'unauthorized') { dropItem(item.uid); return; }  // 已跳登录页
+    failItem(item, (e && e.message) || '网络中断');
+  }
+}
+function setPct(item, p) {
+  const v = Math.max(0, Math.min(1, p));
+  if (Math.abs(v - item.pct) < 0.005 && v !== 1) return;   // 别为了 0.1% 重画
+  item.pct = v;
+  paintProgress(item);
+}
+function failItem(item, why) {
+  item.status = 'error'; item.error = why;
   drawPending();
 }
-function drawPending() {
-  const imgs = pendingImgs.map((p, i) =>
-    `<div class="thumb"><img src="${p.url}" alt="待发送图片" /><button class="x" onclick="rmImage(${i})" aria-label="移除">✕</button></div>`).join('');
-  const docs = pendingFiles.map((f, i) =>
-    `<div class="doc">${svg(f.kind === 'pdf' ? ICO.file : ICO.file, '')}
-      <span class="nm" title="${esc(f.name)}">${esc(f.name)}</span>
-      <span class="sz">${fmtBytes(f.bytes || 0)}</span>
-      <button class="x" onclick="rmFile(${i})" aria-label="移除">✕</button></div>`).join('');
-  el('pending').innerHTML = imgs + docs;
+function retryUpload(uid) {
+  const item = pending.find((p) => p.uid === uid);
+  if (item) runUpload(item);
 }
-function rmImage(i) { pendingImgs.splice(i, 1); drawPending(); }
-function rmFile(i) { pendingFiles.splice(i, 1); drawPending(); }
+function dropItem(uid) {
+  const i = pending.findIndex((p) => p.uid === uid);
+  if (i < 0) return;
+  const item = pending[i];
+  if (item.xhr) item.xhr.abort();                 // 传到一半就别浪费带宽了
+  if (item.url) URL.revokeObjectURL(item.url);    // 以前从来不 revoke,是条小泄漏
+  pending.splice(i, 1);
+  drawPending();
+}
+function clearPending() {
+  for (const p of pending) { if (p.xhr) p.xhr.abort(); if (p.url) URL.revokeObjectURL(p.url); }
+  pending = [];
+  drawPending();
+}
+
+// 结构变了才整体重画;进度那一格单独打补丁(见 paintProgress)——
+// 每收到一次 progress 就重设 innerHTML 的话,<img> 会被重建,瓦片一路闪。
+function drawPending() {
+  el('pending').innerHTML = pending.map(tileHtml).join('');
+  updateSendable();
+}
+function tileHtml(p) {
+  const face = p.kind === 'image' && p.url
+    ? `<img src="${p.url}" alt="${esc(p.name)}" />`
+    : `<div class="doc-face">${svg(ICO.file, '')}
+         <span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>
+         <span class="sz">${fmtBytes(p.size || p.bytes || 0)}</span>
+       </div>`;
+  let veil = '';
+  if (p.status === 'uploading') {
+    veil = `<div class="veil" data-veil="${p.uid}">${ringHtml(p.pct)}<span class="pct">${Math.round(p.pct * 100)}%</span></div>`;
+  } else if (p.status === 'error') {
+    veil = `<div class="veil">
+        <button class="retry" onclick="retryUpload(${p.uid})">${svg(ICO.retry, '')}重试</button>
+      </div><div class="why" title="${esc(p.error)}">${esc(p.error)}</div>`;
+  }
+  return `<div class="att-tile ${p.status === 'error' ? 'err' : ''}" data-uid="${p.uid}">
+      ${face}${veil}
+      <button class="x" onclick="dropItem(${p.uid})" aria-label="移除 ${esc(p.name)}">✕</button>
+    </div>`;
+}
+const RING_R = 15;
+const RING_C = 2 * Math.PI * RING_R;
+function ringHtml(pct) {
+  const off = RING_C * (1 - Math.max(0, Math.min(1, pct)));
+  return `<svg class="ring" viewBox="0 0 36 36" aria-hidden="true">
+      <circle class="bg" cx="18" cy="18" r="${RING_R}"/>
+      <circle class="fg" cx="18" cy="18" r="${RING_R}" stroke-dasharray="${RING_C.toFixed(2)}" stroke-dashoffset="${off.toFixed(2)}"/>
+    </svg>`;
+}
+// 只改这一块瓦片上的环和数字,不碰 DOM 结构
+function paintProgress(p) {
+  const veil = document.querySelector(`.att-tile[data-uid="${p.uid}"] .veil`);
+  if (!veil) return;
+  const fg = veil.querySelector('.ring .fg');
+  const txt = veil.querySelector('.pct');
+  if (fg) fg.setAttribute('stroke-dashoffset', (RING_C * (1 - p.pct)).toFixed(2));
+  if (txt) txt.textContent = Math.round(p.pct * 100) + '%';
+}
+
+// 还在传的时候不能发:否则会发出一条附件缺一半的消息
+function uploadingCount() { return pending.filter((p) => p.status === 'uploading').length; }
+function doneImages() { return pending.filter((p) => p.kind === 'image' && p.status === 'done'); }
+function doneFiles() { return pending.filter((p) => p.kind !== 'image' && p.status === 'done'); }
 
 // ── 拖拽 / 粘贴 ──
 //
@@ -2640,13 +2839,22 @@ function applyForced(d) {
 }
 
 // ── 发送 / 流式接收 ──
+// 附件还在传时把发送键按住 —— 这一条不加的话,用户会发出一条附件缺一半的消息。
+// 只在【空闲】时管它:生成中那会儿归 setBusy 管(它要显示的是停止键)。
+function updateSendable() {
+  const btn = el('sendBtn');
+  if (!btn || cur) return;
+  const n = uploadingCount();
+  btn.disabled = n > 0;
+  btn.title = n > 0 ? `还有 ${n} 个附件在上传` : '发送';
+}
 function setBusy(b) {
   // 一个圆键两种状态:空闲发送,生成中停止(cc-haha 也是这么换的)
   show('stopBtn', b);
   show('sendBtn', !b);
   el('sendBtn').disabled = b;
   if (b) { if (!statusTimer) statusTimer = setInterval(tickStatus, 1000); }
-  else { clearInterval(statusTimer); statusTimer = null; }
+  else { clearInterval(statusTimer); statusTimer = null; updateSendable(); }
 }
 
 // 「停止」是发给服务端的一条明确指令,不是把连接一关了事。
@@ -2703,7 +2911,9 @@ async function attach(fromSeq, announce) {
 
 async function send(opts = {}) {
   const text = el('input').value.trim();
-  if (!opts.regenerate && !text && !pendingImgs.length && !pendingFiles.length) return;
+  if (!opts.regenerate && !text && !pending.length) return;
+  // 附件还在传的时候发出去,消息里会缺一半 —— 挡住并说清在等什么
+  if (!opts.regenerate && uploadingCount()) { toast(`还有 ${uploadingCount()} 个附件在上传`, 'err'); return; }
   if (cur) return;
 
   // 改写:先把这条及之后的都砍掉(服务端也砍),再当成一条新消息发出去
@@ -2718,13 +2928,14 @@ async function send(opts = {}) {
     show('editingBar', false);
   }
 
-  const imgs = pendingImgs.map((p) => ({ id: p.id, mime: p.mime }));
-  const atts = pendingFiles.map((f) => ({ id: f.id, kind: f.kind, name: f.name }));
+  // 只带走传完的:失败的瓦片留在输入框里等用户处理,别偷偷丢掉
+  const imgs = doneImages().map((p) => ({ id: p.id, mime: p.mime }));
+  const atts = doneFiles().map((f) => ({ id: f.id, kind: f.kind, name: f.name }));
   if (!opts.regenerate) {
     messages.push({ role: 'user', content: text, images: imgs, files: atts, ts: Date.now() });
     el('input').value = ''; autoGrow();
     try { localStorage.removeItem(draftKey()); } catch {}
-    pendingImgs = []; pendingFiles = []; drawPending();
+    clearPending();
   } else {
     while (messages.length && messages[messages.length - 1].role === 'assistant') messages.pop();
   }

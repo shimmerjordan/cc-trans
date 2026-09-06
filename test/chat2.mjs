@@ -757,6 +757,39 @@ try {
     const zip = await post('/u/api/chat/file', { data: 'AAAA', mime: 'application/zip', name: 'a.zip' }, bearer(S));
     ok('不支持的类型明确拒绝', zip.status === 400 && /不支持/.test((await zip.json()).error || ''));
 
+    // 「宣称的上限」必须真的能传上去。
+    //
+    // 这里曾经自相矛盾:readJson 把 HTTP body 卡在 12MiB,而 body 是 base64
+    // (膨胀 4/3),于是真实文件超过约 9MiB 就爆 —— 可界面写的是「PDF ≤ 20MB」。
+    // 更糟的是超限时服务端直接 req.destroy() 掐连接,不回状态码,
+    // 浏览器那头 fetch 抛的是 TypeError 而不是一个能读的响应,
+    // 前端于是【什么都不显示】。用户看到的就是"拖进去没反应"。
+    const big = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(15 * 1024 * 1024, 0x20)]);
+    let bigOk = false, bigNote = '';
+    try {
+      const bigUp = await post('/u/api/chat/file', { data: big.toString('base64'), mime: 'application/pdf', name: '大报告.pdf' }, bearer(S));
+      const bigD = await bigUp.json().catch(() => ({}));
+      bigOk = bigUp.ok && bigD.ok === true;
+      bigNote = `status=${bigUp.status} ${JSON.stringify(bigD).slice(0, 120)}`;
+    } catch (e) {
+      // 连接被掐 → fetch 直接抛。这正是浏览器里"什么都没发生"的那一刻。
+      bigNote = 'FETCH-THREW: ' + e.message;
+    }
+    ok('15MB 的 PDF(在宣称的 20MB 之内)能传上去', bigOk, bigNote);
+
+    // 真超限的时候要给一个【读得到的】响应,而不是把连接掐了
+    const over = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(21 * 1024 * 1024, 0x20)]);
+    let overStatus = 0, overErr = '';
+    try {
+      const r = await post('/u/api/chat/file', { data: over.toString('base64'), mime: 'application/pdf', name: '太大.pdf' }, bearer(S));
+      overStatus = r.status;
+      overErr = ((await r.json().catch(() => ({}))).error) || '';
+    } catch (e) {
+      overErr = 'FETCH-THREW: ' + e.message;   // 连接被掐 → 前端没法讲清哪里错了
+    }
+    ok('超过上限时回一个能读的响应(不是掐连接)', overStatus >= 400 && overStatus < 500, `status=${overStatus} err=${overErr}`);
+    ok('超限的报错说得清是文件太大', /太大|过大|上限|超过/.test(overErr), overErr);
+
     // 发一条带 PDF + 代码文件的消息,验请求体的块结构
     const mark = seen.length;
     const c = await (await post('/u/api/chat/sessions', { title: 'atts' }, bearer(S))).json();

@@ -32,20 +32,50 @@ function sendJson(res, code, obj) {
   res.end(body);
 }
 
+// 上传接口的 body 上限。它是【兜底】,不是业务上限 —— 业务上限只有一个权威,
+// 就是 chat_store 里那几个 MAX_*。
+//
+// 所以这里要比"合法载荷的最大值"再宽出一截:body 装的是 base64(膨胀 4/3),
+// 而稍微超一点的文件应该由 store 去回那句精确的「图片超过 5MB 上限」,
+// 而不是被传输层拿一句笼统的"太大"截胡。留 2 倍余量,离谱的体积才由这里挡下,
+// 省得把几十 MB 收完再拒。
+//
+// (这两个数以前是各写各的:body 卡在 12MiB,MAX_PDF_BYTES 写着 20MiB,
+//  于是 9MiB 以上的 PDF 谁也传不上去,界面还写着"PDF ≤ 20MB"。)
+function uploadBodyLimit(maxContentBytes) {
+  return Math.ceil(maxContentBytes * 2 * 4 / 3) + 64 * 1024;
+}
+function uploadErr(err, what) {
+  if (err && err.tooLarge) return `${what}太大,超过了上传上限`;
+  return `请求体无法解析(${what}损坏?)`;
+}
+
 function readJson(req, limitBytes = 12 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
-    const chunks = [];
+    let chunks = [];
     let n = 0;
+    let over = false;
     req.on('data', (c) => {
+      if (over) return;
       n += c.length;
       if (n > limitBytes) {
-        reject(new Error('请求体过大'));
-        req.destroy();
+        // 【不能 destroy】。掐掉连接时响应还没写出去,浏览器那头 fetch 抛的是
+        // TypeError 而不是一个能读的状态码 —— 前端于是连"文件太大"都说不出口,
+        // 表现成"拖进去完全没反应"。所以这里只是停止收集并把剩下的数据排掉,
+        // 让路由把 413 正正经经写回去。
+        over = true;
+        chunks = [];
+        const err = new Error('请求体过大');
+        err.tooLarge = true;
+        err.limitBytes = limitBytes;
+        reject(err);
+        req.resume();   // 继续排空,否则连接会因为背压卡住
         return;
       }
       chunks.push(c);
     });
     req.on('end', () => {
+      if (over) return;   // 已经 reject 过了,这会儿只是把剩下的数据排完
       try {
         resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
       } catch (err) {
@@ -484,16 +514,21 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     }
 
     // ── 图片上传 / 读取 ──
+    //
+    // 上传这两条路的 body 上限必须【从内容上限推出来】,不能另写一个数:
+    // body 里装的是 base64(膨胀 4/3)再套一层 JSON。以前 body 卡在 12MiB 而
+    // MAX_PDF_BYTES 写着 20MiB,于是 9MiB 以上的 PDF 全都传不上去,
+    // 界面却还写着"PDF ≤ 20MB"—— 两个上限对不上,谁也没发现。
     if (sub === '/image' && req.method === 'POST') {
-      const b = await readJson(req).catch(() => null);
-      if (!b) return sendJson(res, 400, { error: '请求体无法解析(图片过大?)' });
+      const b = await readJson(req, uploadBodyLimit(store.MAX_IMAGE_BYTES)).catch((e) => e);
+      if (b instanceof Error) return sendJson(res, b.tooLarge ? 413 : 400, { error: uploadErr(b, '图片') });
       const r = store.putImage(me.name, { data: b.data, mime: b.mime });
       return sendJson(res, r.ok ? 200 : 400, r);
     }
     // 通用附件:图片 / PDF / 文本(代码)。图片仍走 /image 保持旧路径可用。
     if (sub === '/file' && req.method === 'POST') {
-      const b = await readJson(req).catch(() => null);
-      if (!b) return sendJson(res, 400, { error: '请求体无法解析(文件过大?)' });
+      const b = await readJson(req, uploadBodyLimit(store.MAX_PDF_BYTES)).catch((e) => e);
+      if (b instanceof Error) return sendJson(res, b.tooLarge ? 413 : 400, { error: uploadErr(b, '文件') });
       const r = store.putFile(me.name, { data: b.data, mime: b.mime, name: b.name });
       return sendJson(res, r.ok ? 200 : 400, r);
     }

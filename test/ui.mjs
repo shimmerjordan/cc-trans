@@ -747,7 +747,7 @@ try {
       function mkPdf(n) { return new File([new TextEncoder().encode('%PDF-1.4\\n1 0 obj<<>>endobj\\ntrailer<<>>\\n%%EOF\\n')], n || 'b.pdf', { type: 'application/pdf' }); }
       function mkTxt(n) { return new File([new TextEncoder().encode('hello from a dropped text file')], n || 'c.txt', { type: 'text/plain' }); }
       function dtOf(files) { const d = new DataTransfer(); for (const f of files) d.items.add(f); return d; }
-      function reset() { pendingImgs = []; pendingFiles = []; drawPending(); }
+      function reset() { clearPending(); }
       function fire(target, type, d) {
         const ev = type === 'paste'
           ? new ClipboardEvent('paste', { clipboardData: d, bubbles: true, cancelable: true })
@@ -762,9 +762,9 @@ try {
       return (async () => {      reset();
       fire(document.getElementById('drop'), 'drop', dtOf([mkPng()]));
       await new Promise(r => setTimeout(r, 800));
-      return { imgs: pendingImgs.length, thumbs: document.querySelectorAll('#pending .thumb').length };})();
+      return { imgs: doneImages().length, tiles: document.querySelectorAll('#pending .att-tile').length };})();
     `);
-    ok('拖到输入框上能收下图片', onComposer.imgs === 1 && onComposer.thumbs === 1, JSON.stringify(onComposer));
+    ok('拖到输入框上能收下图片', onComposer.imgs === 1 && onComposer.tiles === 1, JSON.stringify(onComposer));
 
     // 2) 拖到消息区 —— 用户最可能的落点。整页都该是投放区。
     const onMsgs = await evalJs(`${FIX}
@@ -773,7 +773,7 @@ try {
       const over = fire(t, 'dragover', dtOf([mkPng()]));
       fire(t, 'drop', dtOf([mkPng('d.png')]));
       await new Promise(r => setTimeout(r, 800));
-      return { imgs: pendingImgs.length, overPrevented: over.defaultPrevented };})();
+      return { imgs: doneImages().length, overPrevented: over.defaultPrevented };})();
     `);
     ok('拖到消息区(不是输入框)也能收下', onMsgs.imgs === 1, JSON.stringify(onMsgs));
     // 这一条是"拖进去整个页面被那张图顶掉"的根因:没人 preventDefault,
@@ -795,7 +795,7 @@ try {
       const i = document.getElementById('input'); i.focus();
       fire(i, 'paste', dtOf([mkPng('p.png')]));
       await new Promise(r => setTimeout(r, 800));
-      return pendingImgs.length;})();
+      return doneImages().length;})();
     `);
     ok('在输入框里粘贴图片能收下', pasteImg === 1, String(pasteImg));
 
@@ -805,7 +805,7 @@ try {
       const i = document.getElementById('input'); i.focus();
       fire(i, 'paste', dtOf([mkPdf('p.pdf'), mkTxt('p.txt')]));
       await new Promise(r => setTimeout(r, 1000));
-      return { files: pendingFiles.length, names: pendingFiles.map(f => f.name) };})();
+      return { files: doneFiles().length, names: doneFiles().map(f => f.name) };})();
     `);
     ok('粘贴 PDF / 文本文件也能收下', pasteDoc.files === 2, JSON.stringify(pasteDoc));
 
@@ -815,7 +815,7 @@ try {
       document.getElementById('input').blur();
       fire(document.body, 'paste', dtOf([mkPng('q.png')]));
       await new Promise(r => setTimeout(r, 800));
-      return pendingImgs.length;})();
+      return doneImages().length;})();
     `);
     ok('焦点不在输入框时粘贴也能收下', pasteBlur === 1, String(pasteBlur));
 
@@ -860,8 +860,106 @@ try {
       } catch (e) { return 'throw: ' + e.message; }
     `) === true);
 
+    // 10) 上传失败必须【说话】。
+    //
+    // 这是"拖进去完全没反应"的那一半根因:addFile 里的 api() 没有 try/catch,
+    // 网络层失败(连接被掐、超时、隧道断)时 fetch 抛 TypeError,异常从 async
+    // 事件处理器里逃逸成 unhandled rejection —— 没有 toast、没有瓦片、什么都没有。
+    // 这里用 CDP 把上传请求直接判死,验前端至少得给一句话。
+    {
+      await client.send('Fetch.enable', { patterns: [{ urlPattern: '*chat/file*', requestStage: 'Request' }] });
+      client.events.length = 0;
+      const started = evalJs(`
+        return (async () => {
+          const f = new File([new TextEncoder().encode('some text')], 'net-fail.txt', { type: 'text/plain' });
+          try { await addFile(f); } catch (e) { window.__escaped = String((e && e.message) || e); }
+          await new Promise(r => setTimeout(r, 400));
+          const err = document.querySelector('#pending .att-tile.err');
+          return { hasErrTile: !!err,
+                   why: err ? (err.querySelector('.why') || {}).textContent || '' : '',
+                   canRetry: !!(err && err.querySelector('.retry')),
+                   escaped: window.__escaped || '' };
+        })();
+      `);
+      // 等到请求被拦住,然后把它判死
+      const paused = await waitFor(() => client.events.find((e) => e.method === 'Fetch.requestPaused'), 60, 100);
+      if (paused) await client.send('Fetch.failRequest', { requestId: paused.params.requestId, errorReason: 'ConnectionAborted' });
+      const r = await started.catch((e) => ({ toasts: [], tiles: -1, escaped: 'EVAL-THREW ' + e.message }));
+      await client.send('Fetch.disable');
+      // 报错就地留在瓦片上,比一条转瞬即逝的 toast 有用 —— 一次拖十个文件时尤其明显
+      ok('上传被掐断时瓦片留在原地并标红(不是静默消失)', r.hasErrTile === true, JSON.stringify(r).slice(0, 200));
+      ok('瓦片上写清了为什么失败', typeof r.why === 'string' && r.why.length > 0, r.why);
+      ok('失败的瓦片可以重试', r.canRetry === true);
+      ok('网络失败时异常不会逃逸出 addFile', r.escaped === '', r.escaped);
+    }
+
+    // 11) 本次改动的【核心契约】:瓦片在上传【完成之前】就已经在页面上。
+    //
+    // 证法是把上传请求在 CDP 层挂住不放行,在它还没返回的那一刻去看 DOM。
+    // 如果只在请求结束后断言,那"传完才出现"和"立刻出现"两种实现都会通过 ——
+    // 这正是之前漏掉这个问题的原因。
+    {
+      await client.send('Fetch.enable', { patterns: [{ urlPattern: '*chat/image*', requestStage: 'Request' }] });
+      client.events.length = 0;
+      const started = evalJs(`
+        return (async () => {
+          const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+          const s = atob(b64); const u = new Uint8Array(s.length);
+          for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+          clearPending();
+          addFile(new File([u], 'slow.png', { type: 'image/png' }));   // 【不 await】
+          await new Promise(r => setTimeout(r, 300));
+          const tile = document.querySelector('#pending .att-tile');
+          return {
+            上传中就有瓦片: !!tile,
+            是图片预览: !!(tile && tile.querySelector('img')),
+            预览是本地blob: !!(tile && tile.querySelector('img') && tile.querySelector('img').src.startsWith('blob:')),
+            有进度遮罩: !!(tile && tile.querySelector('.veil')),
+            有进度环: !!(tile && tile.querySelector('.veil .ring')),
+            有百分比: /%/.test((tile && (tile.querySelector('.pct') || {}).textContent) || ''),
+            这会儿还没传完: doneImages().length === 0,
+            发送键被按住: document.getElementById('sendBtn').disabled === true,
+          };
+        })();
+      `);
+      const paused = await waitFor(() => client.events.find((e) => e.method === 'Fetch.requestPaused'), 60, 100);
+      const mid = await started;
+      ok('上传【进行中】瓦片就已经在了', mid.上传中就有瓦片 === true, JSON.stringify(mid));
+      ok('图片预览用的是本地 blob(不等服务端回图)', mid.预览是本地blob === true, JSON.stringify(mid));
+      ok('瓦片上有进度遮罩 + 进度环 + 百分比',
+        mid.有进度遮罩 && mid.有进度环 && mid.有百分比, JSON.stringify(mid));
+      ok('这一刻确实还没传完(证明不是"传完才出现")', mid.这会儿还没传完 === true, JSON.stringify(mid));
+      ok('还在上传时发送键被按住', mid.发送键被按住 === true, JSON.stringify(mid));
+
+      // 放行,应该翻成 done:遮罩撤掉、发送键恢复
+      if (paused) await client.send('Fetch.continueRequest', { requestId: paused.params.requestId });
+      const after = await waitFor(async () => {
+        const v = await evalJs(`return (async () => ({ done: doneImages().length,
+          veil: document.querySelectorAll('#pending .att-tile .veil').length,
+          sendable: document.getElementById('sendBtn').disabled === false }))();`);
+        return v && v.done === 1 ? v : null;
+      }, 60, 150);
+      await client.send('Fetch.disable');
+      ok('放行后翻成已完成', !!after && after.done === 1, JSON.stringify(after));
+      ok('传完后进度遮罩撤掉', !!after && after.veil === 0, JSON.stringify(after));
+      ok('传完后发送键恢复', !!after && after.sendable === true, JSON.stringify(after));
+    }
+
+    // 12) 并发上传时按 uid 删除,不能按数组下标 —— 完成顺序不定会删错人
+    ok('多个附件时删中间那个,删掉的是对的那个', await evalJs(`
+      return (async () => {
+        clearPending();
+        const mk = (n) => new File([new TextEncoder().encode('x'.repeat(20))], n, { type: 'text/plain' });
+        await addFile(mk('one.txt')); await addFile(mk('two.txt')); await addFile(mk('three.txt'));
+        if (pending.length !== 3) return 'expected 3, got ' + pending.length;
+        dropItem(pending[1].uid);
+        const names = pending.map(p => p.name).join(',');
+        return names === 'one.txt,three.txt' ? true : 'got ' + names;
+      })();
+    `) === true);
+
     // 收尾:别把附件留给后面的用例(pending 会被下一次 send() 带走)
-    await evalJs(`pendingImgs = []; pendingFiles = []; drawPending(); return 1`);
+    await evalJs(`clearPending(); return 1`);
     noteErrors();
     ok('拖拽 / 粘贴全程无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
   }

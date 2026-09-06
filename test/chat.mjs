@@ -352,6 +352,23 @@ try {
     ok('非图片类型被拒', badMime.status === 400);
     const huge = await post('/u/api/chat/image', { data: Buffer.alloc(6 * 1024 * 1024).toString('base64'), mime: 'image/png' }, bearer(sa));
     ok('超限图片被拒', huge.status === 400);
+    // 稍微超一点的,要由 chat_store 回那句【精确】的上限说明,
+    // 而不是被传输层拿一句笼统的"太大"截胡
+    ok('超限图片的报错点明了是 5MB 上限', /5MB|上限/.test((await huge.json()).error || ''));
+
+    // 离谱体积走传输层兜底。关键不是"被拒",而是【回了一个能读的响应】——
+    // 以前这里是 req.destroy() 掐连接,浏览器 fetch 抛 TypeError,
+    // 前端连"太大"都说不出口,表现成"拖进去完全没反应"。
+    let absurdStatus = 0, absurdErr = '';
+    try {
+      const absurd = await post('/u/api/chat/image', { data: Buffer.alloc(11 * 1024 * 1024).toString('base64'), mime: 'image/png' }, bearer(sa));
+      absurdStatus = absurd.status;
+      absurdErr = ((await absurd.json().catch(() => ({}))).error) || '';
+    } catch (e) {
+      absurdErr = 'FETCH-THREW: ' + e.message;
+    }
+    ok('体积离谱时也回一个能读的响应(不是掐连接)', absurdStatus === 413, `status=${absurdStatus} err=${absurdErr}`);
+    ok('兜底报错也说得清是太大', /太大|上限/.test(absurdErr), absurdErr);
 
     const img = await get(`/u/api/chat/image?id=${encodeURIComponent(d.id)}`, bearer(sa));
     ok('能取回自己的图片', img.status === 200 && img.headers.get('content-type') === 'image/png');
