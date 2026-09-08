@@ -135,6 +135,14 @@ export function createMetrics({ maxRecent = 500, persistFile = null, logStore = 
     if (e.ip) c.lastIp = e.ip;
     if (e.ua) c.lastUa = e.ua;
     if (e.path) c.lastPath = e.path;
+    // 网页聊天单独计一笔。它和 Claude Code 共用同一个设备名、走同一套记账,
+    // 不分开数的话"这台设备的量到底是命令行还是网页产生的"就永远看不出来。
+    // 【只加计数,不进 bumpAggregate】—— requests/tokens 是配额判定的口径,
+    // 往里掺东西会让人莫名其妙撞上限。
+    if (e.ua && e.ua.startsWith('cc-trans-web-chat')) {
+      c.webRequests = (c.webRequests || 0) + 1;
+      c.lastWebAt = e.ts;
+    }
     if (isError(e.status)) {
       c.lastErrorAt = e.ts;
       c.lastErrorStatus = e.status;

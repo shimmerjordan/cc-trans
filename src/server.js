@@ -32,6 +32,7 @@ import { createRunRegistry } from './chat_runs.js';
 import { createChatStore } from './chat_store.js';
 import { createChat } from './chat.js';
 import { createUserPortal } from './user.js';
+import { createModelRefresher } from './model_refresh.js';
 import { createSubscriptionUsage } from './subscription_usage.js';
 
 function generateClientToken() {
@@ -576,7 +577,7 @@ const chatRuns = adminOn
   : null;
 
 const chat = adminOn
-  ? createChat({ store: chatStore, modelStore, tokenAdmin, tokenIdOf, forward: chatForward, runs: chatRuns, config, skills: readSkills, log })
+  ? createChat({ store: chatStore, modelStore, tokenAdmin, tokenIdOf, forward: chatForward, runs: chatRuns, config, skills: readSkills, clientIp, log })
   : null;
 
 // ── 公告 ────────────────────────────────────────────────────────────────
@@ -742,22 +743,32 @@ function captureRateLimit(headers) {
 // 限流/并发、成本估算与日志统计 —— 同一份额度、同一份账。
 // 与 handleProxy 的区别只在于:入口是一个 JS 对象而不是 HTTP 请求,出口是 Response
 // 而不是直接写 res(SSE 的翻译交给 chat.js)。规则本身完全复用同一批函数。
-async function chatForward({ tokenEntry, payload, signal, req }) {
+async function chatForward({ tokenEntry, payload, signal, req, origin = null }) {
   const ov = effectiveOverrides(tokenEntry.overrides, { subscription: upstreamAuth.isSubscription });
   const started = Date.now();
   const clientName = tokenEntry.name;
 
-  // 伪造一个最小 req 给复用的改写/记账函数(它们只读 url 与 headers)
+  // 伪造一个最小 req 给复用的改写/记账函数(它们只读 url 与 headers)。
+  //
+  // 来源优先用 origin 这份【值快照】:网页聊天的回合能活过它的 HTTP 请求
+  // (断线保活),那时真 req 的 socket 已经销毁,读 remoteAddress 只会拿到脏值。
+  // 快照里的 ua 已经标了 cc-trans-web-chat,设备行上才分得清是网页还是 Claude Code。
   const fakeReq = {
     method: 'POST',
     url: '/v1/messages',
     headers: {
       'content-type': 'application/json',
-      'user-agent': String((req && req.headers['user-agent']) || 'cc-trans-web-chat'),
-      ...(req && req.headers['x-forwarded-for'] ? { 'x-forwarded-for': req.headers['x-forwarded-for'] } : {}),
-      ...(req && req.socket ? {} : {}),
+      'user-agent': String(
+        (origin && origin.ua) || (req && req.headers['user-agent']) || 'cc-trans-web-chat',
+      ),
+      // clientIp 优先读 x-forwarded-for,所以塞这里就够,不用碰 socket
+      ...(origin && origin.ip
+        ? { 'x-forwarded-for': origin.ip }
+        : req && req.headers['x-forwarded-for']
+          ? { 'x-forwarded-for': req.headers['x-forwarded-for'] }
+          : {}),
     },
-    socket: req ? req.socket : undefined,
+    socket: origin ? undefined : req ? req.socket : undefined,
   };
 
   const t = applyBodyTransforms(Buffer.from(JSON.stringify(payload), 'utf8'), fakeReq, ov);
@@ -828,6 +839,8 @@ const userPortal = adminOn
   ? createUserPortal({
       prefix: USER_PREFIX,
       users,
+      // 有 refreshModels 权限的用户可以在聊天页刷新模型列表(走的是和管理台同一段逻辑)
+      modelRefresher: createModelRefresher({ getUpstreamAuth: () => upstreamAuth, modelStore, log }),
       metrics,
       logStore,
       tokenAdmin,

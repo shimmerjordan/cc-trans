@@ -348,10 +348,45 @@ try {
 
     const fake = await post('/u/api/chat/image', { data: Buffer.from('not an image').toString('base64'), mime: 'image/png' }, bearer(sa));
     ok('内容与声明类型不符被拒', fake.status === 400, (await fake.json()).error);
+    // 契约变了:类型以【内容】为准,所以"真 PNG 但 mime 写错"应当收下 ——
+    // 这正是"照片改名成 .png"能用的同一条规则。真正要挡的是内容不是图片。
     const badMime = await post('/u/api/chat/image', { data: PNG.toString('base64'), mime: 'application/pdf' }, bearer(sa));
-    ok('非图片类型被拒', badMime.status === 400);
+    ok('mime 写错但内容是真 PNG:按内容收下', badMime.ok && (await badMime.json()).mime === 'image/png');
+    const pdfToImage = await post('/u/api/chat/image', { data: Buffer.from('%PDF-1.4\n%%EOF\n').toString('base64'), mime: 'image/png' }, bearer(sa));
+    ok('把 PDF 送到图片接口仍然被拒', pdfToImage.status === 400, JSON.stringify(await pdfToImage.json()).slice(0, 90));
     const huge = await post('/u/api/chat/image', { data: Buffer.alloc(6 * 1024 * 1024).toString('base64'), mime: 'image/png' }, bearer(sa));
     ok('超限图片被拒', huge.status === 400);
+
+    // 魔数是权威,声明的 mime 不是。
+    //
+    // 浏览器的 file.type 是【按扩展名】给的:一张 JPEG 改名成 .png,
+    // file.type 就是 image/png。这不是攻击,是日常(截图工具、微信导出、
+    // 相册转存都会这样)。以前这里直接拒,报"文件内容与声明的图片类型不符",
+    // 用户完全不明白为什么传不了一张看得见的图。
+    const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.from('JFIF'), Buffer.alloc(64, 0x20)]);
+    const misnamed = await post('/u/api/chat/image', { data: JPEG.toString('base64'), mime: 'image/png', name: '照片.png' }, bearer(sa));
+    const md = await misnamed.json();
+    ok('内容是 JPEG 但声明 image/png:按内容收下', misnamed.ok && md.ok === true, `status=${misnamed.status} ${JSON.stringify(md).slice(0, 120)}`);
+    // 存下来的必须是【真实类型】—— 它会原样进 API 的 image block media_type,
+    // 存错了就是让上游去拒
+    ok('记的是真实类型 image/jpeg', md.mime === 'image/jpeg', String(md.mime));
+    ok('落盘扩展名也跟着真实类型走', /\.jpg$/.test(String(md.id || '')), String(md.id));
+
+    const WEBP = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP'), Buffer.alloc(64, 0x20)]);
+    const webpAsPng = await post('/u/api/chat/image', { data: WEBP.toString('base64'), mime: 'image/png', name: 'a.png' }, bearer(sa));
+    ok('真 WebP 叫 .png 也能收下', webpAsPng.ok && (await webpAsPng.json()).mime === 'image/webp');
+
+    // 但真不是图片的,还是要挡 —— 嗅探的价值(别让二进制混进来)不能丢
+    const notImg = await post('/u/api/chat/image', { data: Buffer.from('#!/bin/sh\nrm -rf /').toString('base64'), mime: 'image/png', name: 'x.png' }, bearer(sa));
+    ok('真不是图片的仍然被挡', notImg.status === 400, JSON.stringify(await notImg.json()).slice(0, 100));
+
+    // 模型只认 JPEG/PNG/GIF/WebP。HEIC 这类要给【说得清怎么办】的提示,
+    // 而不是笼统的"类型不符"
+    const HEIC = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypheic'), Buffer.alloc(64, 0x20)]);
+    const heic = await post('/u/api/chat/image', { data: HEIC.toString('base64'), mime: 'image/heic', name: 'IMG_1234.heic' }, bearer(sa));
+    const hd = await heic.json();
+    ok('HEIC 被拒,但说清了支持哪几种', heic.status === 400 && /HEIC|JPEG|PNG|转/.test(hd.error || ''), hd.error);
+
     // 稍微超一点的,要由 chat_store 回那句【精确】的上限说明,
     // 而不是被传输层拿一句笼统的"太大"截胡
     ok('超限图片的报错点明了是 5MB 上限', /5MB|上限/.test((await huge.json()).error || ''));

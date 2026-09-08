@@ -369,6 +369,38 @@ try {
     await post('/admin/api/users/perms', { name: 'alice', perms: { chat: true, logs: true, cost: true, revealToken: true } }, bearer(adminSession));
     const back = JSON.parse(fs.readFileSync(configFile, 'utf8'));
     ok('恢复全默认后字段被清掉(配置保持干净)', !('perms' in back.users.find((u) => u.name === 'alice')));
+
+    // ── refreshModels:唯一默认关闭的权限 ──
+    //
+    // 它改写的是【全局共享】的模型库(谁刷新所有人都跟着变),所以不能像别的
+    // 权限那样默认开。这一组盯的就是"默认关 + 只有被显式授予才放行"。
+    {
+      const meDefault = await (await get('/u/api/me', bearer(s))).json().catch(() => ({}));
+      const denied = await post('/u/api/models/refresh', {}, bearer(s));
+      ok('默认没有刷新模型的权限(403)', denied.status === 403, `status=${denied.status}`);
+      const dj = await denied.json().catch(() => ({}));
+      ok('403 说清了是权限问题', /权限/.test(dj.error || ''), dj.error);
+
+      // 授予之后才放行。这里只验"过了权限这一关"——真去拉上游会失败(mock 上游
+      // 没有 /v1/models),所以判据是【不再是 403】,而不是 ok:true。
+      await post('/admin/api/users/perms',
+        { name: 'alice', perms: { chat: true, logs: true, cost: true, revealToken: true, refreshModels: true } },
+        bearer(adminSession));
+      const allowed = await post('/u/api/models/refresh', {}, bearer(s));
+      ok('授予后不再被权限挡下', allowed.status !== 403, `status=${allowed.status}`);
+
+      const saved2 = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      ok('非默认权限会写回 config.json',
+        saved2.users.find((u) => u.name === 'alice').perms.refreshModels === true,
+        JSON.stringify(saved2.users.find((u) => u.name === 'alice').perms));
+
+      // 收回
+      await post('/admin/api/users/perms',
+        { name: 'alice', perms: { chat: true, logs: true, cost: true, revealToken: true, refreshModels: false } },
+        bearer(adminSession));
+      const again = await post('/u/api/models/refresh', {}, bearer(s));
+      ok('收回权限后立刻又被挡下', again.status === 403, `status=${again.status}`);
+    }
     ok('恢复后日志可看', (await get('/u/api/logs', bearer(s))).ok);
   }
 
@@ -422,6 +454,31 @@ try {
     const me = await (await get('/u/api/me', bearer(s))).json();
     ok('用户端能看到配额', me.quota && me.quota.tokens === 100 && me.quota.unlimited === false, JSON.stringify(me.quota));
     ok('用户端能看到已用量', typeof me.quota.usedTokens === 'number');
+
+    // ── 网页聊天要出现在【客户端统计】里 ──
+    //
+    // 用量本来就记在同一套 key 空间(按设备名聚合),缺的是"来源"——
+    // 网页聊天以前不带 IP/UA,设备行上永远显示最后一次 Claude Code 的来源,
+    // 于是"这台设备的量到底是命令行还是网页产生的"完全看不出来。
+    //
+    // 用管理员的聊天来发:他没有配额、且绑着全部设备,不会把别的用例带偏。
+    {
+      const r = await post('/admin/api/chat/stream', { text: '统计用的一句话', model: 'claude-x' }, bearer(adminSession));
+      await r.text();                       // 把 SSE 读完 —— 记账发生在流结束时
+      await new Promise((res) => setTimeout(res, 500));
+
+      const cl = await (await get('/admin/api/clients', bearer(adminSession))).json();
+      const rows = (cl.tokens || []).map((t) => t.stats).filter(Boolean);
+      const web = rows.find((c) => /^cc-trans-web-chat/.test(c.lastUa || ''));
+      ok('有设备被标成了网页聊天来源', !!web,
+        JSON.stringify((cl.tokens || []).map((t) => `${t.name}:${(t.stats && t.stats.lastUa) || '-'}`)));
+      ok('网页请求单独计了一笔', !!web && (web.webRequests || 0) >= 1, String(web && web.webRequests));
+      ok('来源 IP 也记下来了', !!web && !!web.lastIp, web && web.lastIp);
+      // 这一笔【不能】掺进配额口径 —— requests 是配额判定用的,往里加会让人莫名撞上限
+      ok('网页计数没有把请求数翻倍', !!web && web.requests >= web.webRequests,
+        JSON.stringify({ requests: web && web.requests, web: web && web.webRequests }));
+    }
+
 
     // 花费配额:先用一个【在价格表里】的模型打一次,否则 costOf 返回 0(claude-x 匹配不到定价)
     await post('/admin/api/users/quota', { name: 'alice', quota: { window: 'total', tokens: 0, costUsd: 0 } }, bearer(adminSession));

@@ -270,6 +270,101 @@ function sink() {
 
   const big = contextUsage({ model: 'claude-sonnet-5[1m]', messages: [] }, 'claude-sonnet-5[1m]');
   ok('[1m] 变体窗口是 1M', big.window === 1_000_000);
+
+  // 上游知道真值时以上游为准。
+  //
+  // contextWindowOf() 只是个按 id 猜的近似(带 [1m] 就 1M,否则一律 200k)——
+  // 那对"名字里没写 1m 但其实是 1M 窗口"的模型是错的,而这正是现在的多数模型。
+  // 上游 /v1/models 会给 max_input_tokens,拿到就该用真值。
+  const byUpstream = contextUsage(
+    { model: 'some-model', messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'yo', usage: { input: 1000 } }] },
+    'some-model',
+    (id) => (id === 'some-model' ? 500_000 : 0),
+  );
+  ok('有上游真值时窗口用真值', byUpstream.window === 500_000, String(byUpstream.window));
+  ok('用真值算出的百分比也跟着变', Math.abs(byUpstream.percent - 0.2) < 0.001, String(byUpstream.percent));
+
+  // 解析器给不出来时必须退回推断值,不能变成 0 —— 分母为 0 会让指示器整块消失
+  const fallback = contextUsage(
+    { model: 'claude-sonnet-5[1m]', messages: [] }, 'claude-sonnet-5[1m]', () => 0,
+  );
+  ok('上游没给就退回推断值(不能变成 0)', fallback.window === 1_000_000, String(fallback.window));
+}
+
+// ── 11a. 压缩包:解出来的东西要真的进对话 ──
+{
+  const { createChatStore } = await import('../src/chat_store.js');
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-arcstore-'));
+  const st = createChatStore({ dir: path.join(dir, 'chats') });
+
+  // 用系统 zip 造一个"像真项目"的包:代码 + 说明 + 图片 + PDF + 二进制
+  const src = path.join(dir, 'proj');
+  fs.mkdirSync(path.join(src, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(src, 'README.md'), '# 项目说明\n\n这是自动化测试用的项目。\n');
+  fs.writeFileSync(path.join(src, 'src', 'app.js'), 'export const answer = 42;\n');
+  fs.writeFileSync(path.join(src, 'logo.png'),
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+  fs.writeFileSync(path.join(src, 'manual.pdf'), Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(32, 0x20)]));
+  fs.writeFileSync(path.join(src, 'blob.bin'), Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x00]));
+  const zipPath = path.join(dir, 'proj.zip');
+  execFileSync('zip', ['-q', '-r', zipPath, 'proj'], { cwd: dir });
+
+  const up = st.putFile('u1', {
+    data: fs.readFileSync(zipPath).toString('base64'),
+    mime: 'application/zip', name: 'proj.zip',
+  });
+  ok('ZIP 被当成压缩包收下', up.ok === true && up.kind === 'archive', JSON.stringify(up).slice(0, 160));
+  const byPath = Object.fromEntries((up.entries || []).map((e) => [e.path, e]));
+  ok('文本条目被认出来', byPath['proj/README.md'] && byPath['proj/README.md'].kind === 'text', JSON.stringify(Object.keys(byPath)));
+  ok('代码条目被认出来', byPath['proj/src/app.js'] && byPath['proj/src/app.js'].kind === 'text');
+  ok('图片条目被认出来', byPath['proj/logo.png'] && byPath['proj/logo.png'].kind === 'image');
+  ok('PDF 条目被认出来', byPath['proj/manual.pdf'] && byPath['proj/manual.pdf'].kind === 'pdf');
+  ok('二进制条目进了"未展开"清单', (up.skipped || []).some((x) => /blob\.bin/.test(x.path)), JSON.stringify(up.skipped));
+  ok('每个条目都拿到了自己的 id', (up.entries || []).every((e) => !!e.id));
+
+  // 关键:送进 API 请求时要真的展开
+  const msgs = toAnthropicMessages(
+    // 消息里必须带上 skipped/truncated —— 少了它们,模型会以为自己看到了整个包
+    [{ role: 'user', content: '看看这个项目', files: [{ id: up.id, kind: 'archive', name: up.name, entries: up.entries, skipped: up.skipped, truncated: up.truncated }] }],
+    (id) => st.getImage('u1', id),
+    { loadFile: (id) => st.getFile('u1', id) },
+  );
+  const blocks = msgs[0].content;
+  const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  ok('文本条目内联进了正文', /这是自动化测试用的项目/.test(text), text.slice(0, 200));
+  ok('内联时带上了包内路径', /proj\/src\/app\.js/.test(text), text.slice(0, 300));
+  ok('代码内容也在', /answer = 42/.test(text));
+  ok('包里的图片变成了 image block', blocks.some((b) => b.type === 'image'), JSON.stringify(blocks.map((b) => b.type)));
+  ok('包里的 PDF 变成了 document block', blocks.some((b) => b.type === 'document'), JSON.stringify(blocks.map((b) => b.type)));
+  ok('未展开的文件在正文里列了出来(模型才知道包里还有什么)', /blob\.bin/.test(text), text.slice(-300));
+  ok('用户自己的话还在', /看看这个项目/.test(text));
+
+  // 7z 之类要明确拒绝，而不是当成坏文件
+  const sevenz = st.putFile('u1', {
+    data: Buffer.concat([Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]), Buffer.alloc(64)]).toString('base64'),
+    mime: 'application/x-7z-compressed', name: 'a.7z',
+  });
+  ok('7z 明确拒绝并说明原因', sevenz.ok === false && /7z/.test(sevenz.error || ''), sevenz.error);
+}
+
+// ── 11b. 模型库要把上游给的上下文上限存下来 ──
+{
+  const { createModelStore } = await import('../src/model_store.js');
+  const st = createModelStore({});
+  st.replaceFromUpstream([
+    { id: 'up-a', displayName: 'A', maxInputTokens: 750_000 },
+    { id: 'up-b', displayName: 'B' },
+  ]);
+  const all = st.list().models;
+  const a = all.find((m) => m.id === 'up-a');
+  const b = all.find((m) => m.id === 'up-b');
+  ok('上游给了 max_input_tokens 就用它', a && a.contextWindow === 750_000, JSON.stringify(a && a.contextWindow));
+  ok('并记下来源是上游', a && a.contextSource === 'upstream', String(a && a.contextSource));
+  ok('上游没给的仍按 id 推断', b && b.contextWindow === 200_000, String(b && b.contextWindow));
+  ok('没给的来源标为推断', b && b.contextSource === 'inferred', String(b && b.contextSource));
+  ok('store 暴露按 id 查窗口的方法', typeof st.contextWindowFor === 'function' && st.contextWindowFor('up-a') === 750_000,
+    String(st.contextWindowFor && st.contextWindowFor('up-a')));
 }
 
 // ── 起 mock 上游 + 被测服务 ────────────────────────────────────────────

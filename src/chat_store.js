@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { detectArchive, readArchive } from './archive.js';
 
 // 这三个上限是【磁盘保护】,不是额度:超了删最旧的,不会拒绝请求,也不区分管理员
 // (谁的对话都一样占盘)。默认值只是"自用服务的合理默认",可在 config.json 调,
@@ -25,14 +26,54 @@ const MAX_PDF_BYTES = 20 * 1024 * 1024;
 // 文本类文件是内联进消息正文的,受 token 而不是磁盘约束。1MB 已经约 25 万 token,
 // 远超任何模型的窗口,再大只会让请求直接被拒。
 const MAX_TEXT_BYTES = 1024 * 1024;
+// 压缩包本身的上限。解出来的【总量】另有上限:上游整个请求卡在 32MB,
+// 所以展开后能带走多少由 MAX_ARCHIVE_EXPAND 说了算,而不是这个数。
+const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024;
+const MAX_ARCHIVE_EXPAND = 24 * 1024 * 1024;
 // 孤儿图片的宽限期:刚上传还没发送的图按引用判定就是孤儿,清扫必须绕开它们
 export const ORPHAN_GRACE_MS = 60 * 60 * 1000;
+// 模型只认这四种(Anthropic Messages API 的 image block 就这四个 media_type),
+// 所以能收下的图片种类由它决定,不是由我们想支持什么决定。
 const MIME_EXT = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/gif': 'gif',
 };
+const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+
+// 从【内容】认图片格式。返回 ext,认不出来返回 null。
+//
+// 这是权威,声明的 mime 不是:浏览器的 file.type 是按扩展名给的,一张 JPEG
+// 改名成 .png,file.type 就是 image/png。这不是攻击,是日常(截图工具、
+// 相册转存、微信导出都会这样)。以前拿声明去【核对】内容、对不上就拒,
+// 于是用户传一张看得见的图却被告知"类型不符",完全不知道该怎么办。
+// 改成拿内容去【识别】类型:认得出来就收,并按真实类型存。
+export function sniffImageExt(buf) {
+  const b = buf;
+  if (!b || b.length < 12) return null;
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.slice(0, 3).toString('ascii') === 'GIF') return 'gif';
+  if (b.slice(0, 4).toString('ascii') === 'RIFF' && b.slice(8, 12).toString('ascii') === 'WEBP') return 'webp';
+  return null;
+}
+
+// 认得出是【什么】但模型收不了的图片格式。单独认出来,是为了能给一句
+// 说得清怎么办的话("HEIC 请先转成 JPEG"),而不是笼统的"不支持"。
+export function sniffUnsupportedImage(buf) {
+  const b = buf;
+  if (!b || b.length < 12) return null;
+  if (b.slice(4, 8).toString('ascii') === 'ftyp') {
+    const brand = b.slice(8, 12).toString('ascii');
+    if (brand.startsWith('avif') || brand.startsWith('avis')) return 'AVIF';
+    if (brand.startsWith('heic') || brand.startsWith('heix') || brand.startsWith('hevc') || brand.startsWith('mif1')) return 'HEIC';
+  }
+  if (b[0] === 0x42 && b[1] === 0x4d) return 'BMP';
+  if ((b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a) || (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0x00)) return 'TIFF';
+  if (b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && b[3] === 0x00) return 'ICO';
+  return null;
+}
 
 // 非图片附件。三类走三条完全不同的路,所以类型判定必须在存的时候就定下来:
 //   image → image block(base64)
@@ -64,6 +105,38 @@ export function kindOf(mime, name) {
   if (TEXT_EXT.has(extOf(name))) return 'text';
   // mime 说自己是纯文本、扩展名又不认识时仍然按文本收(比如没有扩展名的配置文件)
   if (m.startsWith('text/')) return 'text';
+  return null;
+}
+
+// "不支持这种文件"太笼统 —— 用户不知道是格式问题还是坏了。能认出来是什么的,
+// 就说出来,并说清该怎么办。
+const ARCHIVE_SIGS = [
+  { name: 'ZIP', test: (b) => b[0] === 0x50 && b[1] === 0x4b && (b[2] === 0x03 || b[2] === 0x05 || b[2] === 0x07) },
+  { name: 'GZIP', test: (b) => b[0] === 0x1f && b[1] === 0x8b },
+  { name: 'RAR', test: (b) => b.slice(0, 4).toString('ascii') === 'Rar!' },
+  { name: '7z', test: (b) => b[0] === 0x37 && b[1] === 0x7a && b[2] === 0xbc && b[3] === 0xaf },
+  { name: 'BZIP2', test: (b) => b.slice(0, 3).toString('ascii') === 'BZh' },
+  { name: 'XZ', test: (b) => b[0] === 0xfd && b.slice(1, 4).toString('ascii') === '7zX' },
+  { name: 'TAR', test: (b) => b.length > 262 && b.slice(257, 262).toString('ascii') === 'ustar' },
+];
+export function describeUnsupported(buf, name, mime) {
+  const who = String(name || mime || '这个文件');
+  const badImg = sniffUnsupportedImage(buf);
+  if (badImg) return `${badImg} 格式模型读不了,请先转成 JPEG 或 PNG 再传`;
+  const arc = ARCHIVE_SIGS.find((a) => a.test(buf));
+  if (arc) return `${arc.name} 压缩包暂不支持,请解压后把里面的文件传进来`;
+  return `不支持这种文件(${who})—— 可传图片(PNG/JPEG/WebP/GIF)、PDF,或文本/代码文件`;
+}
+
+// 包里一个条目到底是什么。和上传单个文件同一条规则:【内容说了算】。
+export function classifyEntry(buf) {
+  if (!buf || !buf.length) return null;
+  if (sniffImageExt(buf)) return 'image';
+  if (buf.slice(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+  // 文本的判据是"能无损往返 UTF-8 且不含 NUL" —— 二进制混进正文只会变成
+  // 一大片乱码,白烧一次额度才发现
+  const text = buf.toString('utf8');
+  if (Buffer.from(text, 'utf8').length === buf.length && !text.includes('\u0000')) return 'text';
   return null;
 }
 
@@ -420,8 +493,6 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
   function putImage(user, { data, mime }) {
     const md = mediaDir(user);
     if (!md) return { ok: false, error: '非法用户名或未启用数据目录' };
-    const ext = MIME_EXT[String(mime || '').toLowerCase()];
-    if (!ext) return { ok: false, error: '只支持 PNG / JPEG / WebP / GIF' };
     let buf;
     try {
       buf = Buffer.from(String(data || ''), 'base64');
@@ -429,11 +500,24 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
       return { ok: false, error: '图片数据无法解析' };
     }
     if (!buf.length) return { ok: false, error: '图片为空' };
+    // 体积先判:比嗅探便宜,而且"太大了"永远比"认不出格式"更贴近用户要做的事
     if (buf.length > MAX_IMAGE_BYTES) {
       return { ok: false, error: `图片超过 ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB 上限` };
     }
-    // 校验魔数:别人说是 png 不算,得真的是
-    if (!sniffMatches(buf, ext)) return { ok: false, error: '文件内容与声明的图片类型不符' };
+    // 类型由【内容】说了算 —— 声明的 mime 只在内容认不出来时用来措辞
+    const ext = sniffImageExt(buf);
+    if (!ext) {
+      const named = sniffUnsupportedImage(buf);
+      if (named) {
+        return { ok: false, error: `${named} 格式模型读不了,请先转成 JPEG 或 PNG 再传` };
+      }
+      return {
+        ok: false,
+        error: MIME_EXT[String(mime || '').toLowerCase()]
+          ? '这个文件不是能识别的图片(内容已损坏?)—— 支持 PNG / JPEG / WebP / GIF'
+          : '只支持 PNG / JPEG / WebP / GIF',
+      };
+    }
     const hash = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
     const name = `${hash}.${ext}`;
     const file = path.join(md, name);
@@ -441,7 +525,9 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
       fs.mkdirSync(md, { recursive: true });
       fs.writeFileSync(file, buf, { mode: 0o600 });
     }
-    return { ok: true, id: name, mime: String(mime).toLowerCase(), bytes: buf.length };
+    // 回真实类型,不是声明的:它会原样进 API 的 image block media_type,
+    // 存错了等于让上游去拒
+    return { ok: true, id: name, mime: EXT_MIME[ext], bytes: buf.length };
   }
 
   // ── 用户自己的技能(预设提示词)────────────────────────────────
@@ -481,15 +567,60 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     return { ok: true, skills: clean };
   }
 
+  // ── 压缩包 ────────────────────────────────────────────────
+  //
+  // 思路:【不引入新的存储格式】。包里每个条目按现有方式内容寻址落盘、各拿一个 id,
+  // 条目清单直接跟着消息记录走(消息本来就是 JSON)。于是发送时
+  // toAnthropicMessages 用的还是同一个 loadFile/loadImage,不需要认识"清单文件"。
+  function putArchive(user, { buf, name, format }) {
+    const md = mediaDir(user);
+    if (!md) return { ok: false, error: '非法用户名或未启用数据目录' };
+    if (buf.length > MAX_ARCHIVE_BYTES) {
+      return { ok: false, error: `压缩包超过 ${Math.round(MAX_ARCHIVE_BYTES / 1048576)}MB 上限` };
+    }
+    const r = readArchive(buf, { name, maxTotalBytes: MAX_ARCHIVE_EXPAND });
+    if (!r.ok) return { ok: false, error: r.error };
+
+    fs.mkdirSync(md, { recursive: true });
+    const entries = [];
+    const skipped = [...(r.skipped || [])];
+    for (const e of r.entries) {
+      const kind = classifyEntry(e.data);
+      if (!kind) { skipped.push({ path: e.path, why: '不是文本/图片/PDF,未展开' }); continue; }
+      // 单条目也受各自类型的上限约束 —— 包里塞一个 50MB 的 PDF 同样送不进上游
+      const cap = kind === 'image' ? MAX_IMAGE_BYTES : kind === 'pdf' ? MAX_PDF_BYTES : MAX_TEXT_BYTES;
+      if (e.data.length > cap) { skipped.push({ path: e.path, why: `超过 ${Math.round(cap / 1048576) || 1}MB 上限,未展开` }); continue; }
+      const ext = kind === 'image' ? sniffImageExt(e.data) : kind === 'pdf' ? 'pdf' : 'txt';
+      const id = writeMedia(md, e.data, ext);
+      entries.push({ path: e.path, kind, id, bytes: e.data.length });
+    }
+    if (!entries.length && !skipped.length) return { ok: false, error: '这个压缩包是空的' };
+
+    // 原包也存一份,「下载」还能拿回原文件
+    const selfExt = format === 'zip' ? 'zip' : format === 'tgz' ? 'tgz' : format === 'gz' ? 'gz' : 'tar';
+    const id = writeMedia(md, buf, selfExt);
+    const clean = String(name || '').split(/[\\/]/).pop().slice(0, 120) || '压缩包';
+    return {
+      ok: true, id, kind: 'archive', name: clean,
+      mime: 'application/zip', bytes: buf.length,
+      format, entries, skipped, truncated: !!r.truncated,
+    };
+  }
+
+  // 内容寻址写盘。三处(图片/文件/压缩包条目)共用,免得哈希与命名规则各写一遍。
+  function writeMedia(md, buf, ext) {
+    const hash = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 32);
+    const id = `${hash}.${ext}`;
+    const file = path.join(md, id);
+    if (!fs.existsSync(file)) fs.writeFileSync(file, buf, { mode: 0o600 });
+    return id;
+  }
+
   // 通用附件入口。图片仍走 putImage(保持旧路径可用),PDF 与文本走这里。
   // 三类共用同一个内容寻址的 media/ 目录,但发送时走三条不同的路 —— 见 kindOf()。
   function putFile(user, { data, mime, name }) {
     const md = mediaDir(user);
     if (!md) return { ok: false, error: '非法用户名或未启用数据目录' };
-    const kind = kindOf(mime, name);
-    if (!kind) return { ok: false, error: `不支持这种文件(${String(name || mime || '未知')})—— 可传图片、PDF,或文本/代码文件` };
-    if (kind === 'image') return putImage(user, { data, mime });
-
     let buf;
     try {
       buf = Buffer.from(String(data || ''), 'base64');
@@ -497,6 +628,22 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
       return { ok: false, error: '文件数据无法解析' };
     }
     if (!buf.length) return { ok: false, error: '文件是空的' };
+
+    // 压缩包先认:它是个容器,里面的东西才是要送进对话的内容
+    const det = detectArchive(buf, name);
+    if (det.format) return putArchive(user, { buf, name, format: det.format });
+    if (det.unsupported) {
+      return { ok: false, error: `${det.unsupported} 压缩包需要外部解压工具,暂不支持 —— 请解压后把里面的文件传进来` };
+    }
+    // Office 文档不走压缩包这条路(它确实是 ZIP,但展开只会吐一堆 XML),
+    // 落到下面按普通文件处理,由 kindOf 去判 —— 认不出来就照常报"不支持"
+
+    let kind = kindOf(mime, name);
+    // 名字和 mime 都看不出来时,问内容 —— 没扩展名的照片、被改过名的截图
+    // 都走这条路(同一条"内容是权威"的规则)
+    if (!kind && sniffImageExt(buf)) kind = 'image';
+    if (!kind) return { ok: false, error: describeUnsupported(buf, name, mime) };
+    if (kind === 'image') return putImage(user, { data, mime });
 
     const clean = String(name || '').split(/[\\/]/).pop().slice(0, 120) || '未命名';
     if (kind === 'pdf') {
@@ -559,14 +706,6 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     }
   }
 
-  function sniffMatches(buf, ext) {
-    const b = buf;
-    if (ext === 'png') return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
-    if (ext === 'jpg') return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
-    if (ext === 'gif') return b.slice(0, 3).toString('ascii') === 'GIF';
-    if (ext === 'webp') return b.length > 12 && b.slice(0, 4).toString('ascii') === 'RIFF' && b.slice(8, 12).toString('ascii') === 'WEBP';
-    return false;
-  }
 
   function stats(user) {
     const idx = loadIndex(user);
@@ -613,6 +752,7 @@ export function createChatStore({ dir, maxSessions, maxMessages, log = () => {} 
     sweepOrphanMedia,
     listUsers,
     MAX_IMAGE_BYTES,
+    MAX_ARCHIVE_BYTES,
     MAX_PDF_BYTES,
     MAX_TEXT_BYTES,
   };

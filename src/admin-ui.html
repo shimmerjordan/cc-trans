@@ -252,6 +252,13 @@
      不往 DOM 里塞冗余节点)。
      日志表【不】走这套 —— 它是密集等宽数据、靠上下扫读,翻成卡片会变成一屏一条,
      反而更难用;那张表继续横向滚动。 */
+  /* 层级徽章只在手机上出现 —— 桌面有独立的「层级」列,重复显示是噪音 */
+  .tier-badge { display: none; }
+  /* 桌面上把 temperature 的符号补成完整说法(手机上只留符号,省横向空间) */
+  #catalogRows td[data-short="temp"] .v::after { content: attr(title); }
+  #catalogRows td[data-short="temp"] .v { font-size: 0; }
+  #catalogRows td[data-short="temp"] .v::after { font-size: var(--fs); }
+
   @media (max-width: 640px) {
     .table-wrap:has(table.cards) {
       border: 0; box-shadow: none; background: none; overflow: visible;
@@ -296,6 +303,38 @@
     table.cards td.act button { flex: 1 1 auto; }
     /* 空单元格不该留一行空标签 */
     table.cards td:empty { display: none; }
+    /* ── 模型目录:7 列堆成 7 行会让每张卡高得离谱 ──
+       只压这一张表(#catalogRows)。上面那套 table.cards 规则是 4 张表共用的
+       (客户端/其它/用户/存储),不限定作用域就会把它们一起改掉。
+       做法:层级并进标题徽章,temperature/thinking/effort 三项压成一排行内徽章,
+       说明与操作保持原样。 */
+    #catalogRows .tier-badge { display: inline-block; margin-left: var(--s2); }
+    #catalogRows td:nth-child(2) { display: none; }           /* 层级已并入标题 */
+    #catalogRows td:nth-child(3),
+    #catalogRows td:nth-child(4),
+    #catalogRows td:nth-child(5) {
+      display: inline-flex; align-items: baseline; gap: 4px;
+      width: auto; max-width: 31%; padding: 2px 0; margin-right: var(--s2);
+      border-top: 0;   /* `td + td` 的分隔线会横插进这一排,必须清掉 */
+      font-size: var(--fs-sm);
+    }
+    /* 标签换成短写(temp / think / effort)——「temperature」这一个词就把
+       一行 390px 吃掉近三分之一,三格必然换行(第一版只改了布局没改文案,
+       实测三格各宽 150/282/260px,一行根本排不下)。 */
+    #catalogRows td:nth-child(3)::before,
+    #catalogRows td:nth-child(4)::before,
+    #catalogRows td:nth-child(5)::before {
+      content: attr(data-short);
+      display: inline; margin: 0 2px 0 0; flex: none;
+    }
+    /* 值太长就截断,完整内容在 title 里 */
+    #catalogRows td .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    /* 手机上 temperature 只留符号 */
+    #catalogRows td[data-short="temp"] .v { font-size: var(--fs-sm); }
+    #catalogRows td[data-short="temp"] .v::after { content: none; }
+    /* 说明另起一段,和上面那排徽章分开 */
+    #catalogRows td:nth-child(6) { border-top: 0; padding-top: var(--s2); }
+
     /* 桌面上为了行高整齐设的 nowrap/截断,在卡片里要放开 */
     table.cards td.trunc, table.cards td.path, table.cards td.usage { max-width: none; overflow: visible; }
     table.cards .qcell { min-width: 0; }
@@ -1677,6 +1716,17 @@ function errCell(s) {
   ].filter(Boolean).join('\n');
   return `<span class="hint" title="${esc(tip)}">${n}</span>`;
 }
+// 网页聊天的那部分单独标出来。
+//
+// 网页聊天和 Claude Code 共用同一个设备名、同一套记账,所以"这台设备的量
+// 到底是命令行还是网页产生的"本来完全看不出来。数字记下了却不显示,等于没记。
+function webBadge(s) {
+  const n = (s && s.webRequests) || 0;
+  if (!n) return '';
+  const when = s.lastWebAt ? `\n最近一次:${new Date(s.lastWebAt).toLocaleString('zh-CN')}` : '';
+  return ` <span class="tag" title="其中 ${n} 次来自网页聊天${when}">网页 ${n}</span>`;
+}
+
 // 多来源 IP 徽标
 function ipsBadge(errorIps) {
   if (!errorIps) return '';
@@ -1713,7 +1763,7 @@ async function refreshClients() {
       <td data-label="归属用户">${(t.owners || []).length
         ? (t.owners || []).map((o) => `<span class="tag ok">${esc(o)}</span>`).join(' ')
         : '<span class="muted">未分配</span>'}</td>
-      <td class="mono" data-label="令牌">${esc(t.tokenMask)}</td><td class="num" data-label="请求数">${fmtNum(s.requests)}</td>
+      <td class="mono" data-label="令牌">${esc(t.tokenMask)}</td><td class="num" data-label="请求数">${fmtNum(s.requests)}${webBadge(s)}</td>
       <td class="num ${s.errors ? 'st-5' : ''}" data-label="错误">${errCell(s)}</td><td class="num" data-label="输入/输出">${fmtNum(s.inTokens)} / ${fmtNum(s.outTokens)}</td>
       <td class="num" title="按模型定价估算" data-label="成本">${fmtUsd(s.cost)}</td>
       <td data-label="参数下发">${ovBadge(t.overrides)}</td><td data-label="最近活跃">${ago(s.lastSeen)}</td>
@@ -2004,11 +2054,11 @@ function renderCatalog(d) {
     ? '列表已来自上游拉取结果,可再次拉取以同步最新。'
     : '当前是内置种子列表 —— 点右侧「从上游拉取并更新列表」获取订阅实际可用的模型。';
   el('catalogRows').innerHTML = CATALOG.map((m) => `<tr>
-      <td class="mono" data-label="模型">${esc(m.id)}${m.latest ? ' <span class="tag ok">最新</span>' : ''}${m.unknown ? ' <span class="tag warn">规则推断</span>' : ''}</td>
+      <td class="mono" data-label="模型">${esc(m.id)}${m.latest ? ' <span class="tag ok">最新</span>' : ''}${m.unknown ? ' <span class="tag warn">规则推断</span>' : ''}<span class="tag tier-badge">${esc(m.tier)}</span></td>
       <td data-label="层级">${esc(m.tier)}</td>
-      <td class="${m.temperature ? '' : 'st-4'}" data-label="temperature">${m.temperature ? '✓ 可用' : '✗ 已移除'}</td>
-      <td class="sm-cell" data-label="thinking">${esc(m.thinking)}</td>
-      <td class="sm-cell" data-label="effort">${esc(m.effort)}</td>
+      <td class="${m.temperature ? '' : 'st-4'}" data-label="temperature" data-short="temp"><span class="v" title="temperature:${m.temperature ? '可用' : '已移除'}">${m.temperature ? '✓' : '✗'}</span></td>
+      <td class="sm-cell" data-label="thinking" data-short="think"><span class="v" title="thinking:${esc(m.thinking)}">${esc(m.thinking)}</span></td>
+      <td class="sm-cell" data-label="effort" data-short="effort"><span class="v" title="effort:${esc(m.effort)}">${esc(m.effort)}</span></td>
       <td class="muted sm-cell" data-label="说明">${esc(m.note)}</td>
       <td class="act"><button class="sm danger" onclick="removeModel('${esc(m.id)}')">移除</button></td></tr>`).join('')
     || '<tr><td colspan="7"><div class="empty"><b>模型列表是空的</b><span class="sub">点右上「从上游拉取并更新列表」,或在左侧输入框手动补一个模型 id。</span></div></td></tr>';

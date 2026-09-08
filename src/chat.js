@@ -90,6 +90,36 @@ function readJson(req, limitBytes = 12 * 1024 * 1024) {
 //
 // cacheBreak=true 时在最后一个 block 上打 cache_control:下一回合的前缀
 // (= 这一整段历史)就能命中缓存。多轮长对话里这是最省的一处,而且不改变语义。
+// 把附件列表摊平成 { texts, pdfs, images, notes }。
+//
+// 压缩包是个【容器】,API 那边没有对应的 block 类型,所以它必须在这里散开成
+// 三类普通附件。包里的条目在上传时已经各自落盘拿了 id,这里只是按 kind 分流。
+// notes 是"没能展开的部分"的说明 —— 不写进去的话,模型会以为它看到了整个包。
+function flattenFiles(files) {
+  const out = { texts: [], pdfs: [], images: [], notes: [] };
+  for (const f of files) {
+    if (!f) continue;
+    if (f.kind === 'archive') {
+      const label = f.name || '压缩包';
+      for (const e of Array.isArray(f.entries) ? f.entries : []) {
+        if (!e || !e.id) continue;
+        if (e.kind === 'text') out.texts.push({ id: e.id, name: `${label} → ${e.path}` });
+        else if (e.kind === 'pdf') out.pdfs.push({ id: e.id, name: `${label} → ${e.path}` });
+        else if (e.kind === 'image') out.images.push({ id: e.id });
+      }
+      const sk = (Array.isArray(f.skipped) ? f.skipped : []).map((x) => x && x.path).filter(Boolean);
+      if (sk.length) {
+        out.notes.push(`压缩包 ${label} 内另有 ${sk.length} 个文件未展开(非文本/图片/PDF,或超出上限):\n${sk.join('、')}`);
+      }
+      if (f.truncated) out.notes.push(`压缩包 ${label} 内容超出单次请求上限,只展开了其中一部分。`);
+      continue;
+    }
+    if (f.kind === 'text') out.texts.push({ id: f.id, name: f.name });
+    else if (f.kind === 'pdf') out.pdfs.push({ id: f.id, name: f.name });
+  }
+  return out;
+}
+
 export function toAnthropicMessages(messages, loadImage, { cacheBreak = false, loadFile = null } = {}) {
   const out = [];
   for (const m of messages) {
@@ -99,23 +129,30 @@ export function toAnthropicMessages(messages, loadImage, { cacheBreak = false, l
     const imgs = Array.isArray(m.images) ? m.images : [];
     const files = Array.isArray(m.files) ? m.files : [];
 
+    // 压缩包在这里【摊平】成三类普通附件。用的还是同一批 id 与同一个 loadFile ——
+    // 所以下面的逻辑不需要认识"压缩包"这回事,也不需要一种新的存储格式。
+    const flat = flattenFiles(files);
+
     // 文本类附件不进 block,而是内联进正文 —— 模型对"带文件名的围栏块"
     // 理解得最好,而且这样它能被提示缓存覆盖到(document block 不行)。
-    const textFiles = files.filter((f) => f && f.kind === 'text');
-    if (m.role === 'user' && textFiles.length && loadFile) {
+    if (m.role === 'user' && (flat.texts.length || flat.notes.length) && loadFile) {
       const parts = [];
-      for (const f of textFiles) {
+      for (const f of flat.texts) {
         const got = loadFile(f.id);
         if (!got) continue;
         const body = got.buf.toString('utf8');
         parts.push(`附件 ${f.name}:\n\n\u0060\u0060\u0060\n${body}\n\u0060\u0060\u0060`);
       }
+      // 没展开的东西也要说出来:模型至少该知道包里还有什么,
+      // 否则它会以为自己看到的就是全部
+      parts.push(...flat.notes);
       if (parts.length) text = parts.join('\n\n') + (text.trim() ? '\n\n' + text : '');
     }
 
-    const pdfs = m.role === 'user' && loadFile ? files.filter((f) => f && f.kind === 'pdf') : [];
+    const pdfs = m.role === 'user' && loadFile ? flat.pdfs : [];
+    const allImgs = m.role === 'user' ? [...imgs, ...flat.images] : imgs;
 
-    if (m.role === 'user' && (imgs.length || pdfs.length)) {
+    if (m.role === 'user' && (allImgs.length || pdfs.length)) {
       const blocks = [];
       // 顺序有讲究:document / image 必须排在文字块【前面】,这是 API 的要求
       for (const f of pdfs) {
@@ -127,7 +164,7 @@ export function toAnthropicMessages(messages, loadImage, { cacheBreak = false, l
           title: f.name || undefined,
         });
       }
-      for (const im of imgs) {
+      for (const im of allImgs) {
         const got = loadImage(im.id);
         if (!got) continue;
         blocks.push({
@@ -202,8 +239,14 @@ function charsOf(messages) {
 // 上下文占用:优先用上游给过的真实 usage(最后一条 assistant 的 input+cacheRead),
 // 没有就按 3.2 字符/token 粗估。前端那个百分比只要"够准到能提醒你该开新对话",
 // 拿真实数字当分子已经远好过纯估算。
-export function contextUsage(session, model) {
-  const window = contextWindowOf(model || (session && session.model) || '');
+// windowOf 是可选的解析器:优先问它(它背后是模型库里从上游拿到的
+// max_input_tokens),问不出来才退回 contextWindowOf 的按 id 推断。
+// 推断那条路不能删 —— inherit 模式下上游可能是另一台 cc-trans 或第三方中转,
+// /v1/models 只回 id 和 display_name,真值根本拿不到。
+export function contextUsage(session, model, windowOf) {
+  const id = model || (session && session.model) || '';
+  const real = typeof windowOf === 'function' ? Number(windowOf(id)) || 0 : 0;
+  const window = real > 0 ? real : contextWindowOf(id);
   const msgs = (session && session.messages) || [];
   let used = 0;
   let source = 'estimate';
@@ -262,7 +305,7 @@ function cleanTitle(raw) {
   return s;
 }
 
-export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, runs, config, skills = () => [], log = () => {} }) {
+export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, runs, config, skills = () => [], clientIp = null, log = () => {} }) {
   const autoTitle = config.chatAutoTitle !== false;
   const promptCache = config.chatPromptCache !== false;
   const maxRetries = Number.isFinite(Number(config.chatMaxRetries)) ? Math.max(0, Number(config.chatMaxRetries)) : 2;
@@ -292,6 +335,10 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     return ((modelStore.list ? modelStore.list() : null) || {}).models || [];
   }
 
+  // 模型库知道真值就用真值(它是从上游 /v1/models 的 max_input_tokens 存下来的)
+  const ctxWindowFor = (id) =>
+    (modelStore && typeof modelStore.contextWindowFor === 'function' && modelStore.contextWindowFor(id)) || 0;
+
   function modelChoices() {
     return allModels().map((m) => {
       const meta = m.tier ? m : { ...m, ...inferModelMeta(m.id) };
@@ -302,7 +349,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
         // 前端据此决定 effort / thinking 选择器出不出现、给哪些值
         effort: meta.effort,
         thinking: meta.thinking,
-        contextWindow: contextWindowOf(m.id),
+        contextWindow: ctxWindowFor(m.id) || contextWindowOf(m.id),
         supportsEffort: !/不支持/.test(String(meta.effort || '')),
         thinkingDisabledOk: !/不接受 disabled|只能省略/.test(String(meta.thinking || '')),
       };
@@ -337,7 +384,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     return String(text || '').replace(/\s+/g, ' ').trim().slice(0, TITLE_FROM_CHARS) || '新对话';
   }
 
-  async function generateTitle(me, dev, session) {
+  async function generateTitle(me, dev, session, origin = null) {
     if (!autoTitle || !dev) return;
     const model = titleModel();
     if (!model) return;
@@ -360,7 +407,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     };
     let fwd;
     try {
-      fwd = await forward({ tokenEntry: dev, payload, signal: undefined, req: null });
+      fwd = await forward({ tokenEntry: dev, payload, signal: undefined, origin });
     } catch (err) {
       log(`[chat] 标题生成转发失败(不影响对话): ${err.message}`);
       return;
@@ -426,7 +473,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
         session: s,
         // 正在生成中?带上序号,前端拿它去 /attach 续传
         live: runs ? runs.live(keyOf(me, s.id)) : null,
-        context: contextUsage(s, s.model),
+        context: contextUsage(s, s.model, ctxWindowFor),
       });
     }
     if (sub === '/session/rename' && req.method === 'POST') {
@@ -495,7 +542,11 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
         models: modelChoices(),
         devices: devs,
         defaultMaxTokens: DEFAULT_MAX_TOKENS,
+        // 聊天页据此决定「刷新模型列表」这一项出不出现。默认关(见 users.js),
+        // 因为它改写的是全局共享的模型库
+        canRefreshModels: !!(me.perms && me.perms.refreshModels),
         maxImageBytes: store.MAX_IMAGE_BYTES,
+        maxArchiveBytes: store.MAX_ARCHIVE_BYTES,
         maxPdfBytes: store.MAX_PDF_BYTES,
         maxTextBytes: store.MAX_TEXT_BYTES,
         maxInputChars: MAX_INPUT_CHARS,
@@ -595,7 +646,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
       if (!dev) return sendJson(res, 403, { error: '没有可用设备' });
       s.titleLocked = false;
       store.save(me.name, s);
-      await generateTitle(me, dev, s);
+      await generateTitle(me, dev, s, originOf(req));
       const fresh = store.get(me.name, s.id);
       return sendJson(res, 200, { ok: true, title: fresh ? fresh.title : s.title });
     }
@@ -661,6 +712,17 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     if (!sub.live) return; // subscribe 已经补完并收尾
     // 客户端走了只是"没人看",不取消上游 —— 宽限期由 registry 管
     res.on('close', () => sub.unsubscribe());
+  }
+
+  // 从请求里取一份【值快照】。绝不能把 req 本身往下传:一个回合能活过它的 HTTP
+  // 请求(断线保活的宽限期默认 5 分钟),那时 req.socket 早已销毁,
+  // 再去读 remoteAddress 只会拿到脏值或直接抛。
+  function originOf(req) {
+    return {
+      ip: (typeof clientIp === 'function' ? clientIp(req) : '') || '',
+      // 标出是网页聊天:设备行上"最近来源"otherwise 分不清是 Claude Code 还是网页
+      ua: `cc-trans-web-chat (${String((req && req.headers && req.headers['user-agent']) || '未知').slice(0, 160)})`,
+    };
   }
 
   async function handleStream(req, res, me) {
@@ -760,8 +822,12 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     const effort = b.effort || (mode === 'research' ? 'high' : '');
     if (effort) payload.output_config = { effort: String(effort) };
 
+    // 来源快照:【必须在这里取】。req 还活着的时候把值抄下来,
+    // 之后整个回合都只带着这份快照走(见 originOf 的说明)。
+    const origin = originOf(req);
+
     // 没有 registry(理论上不会发生)时退回"连接即生命周期"的老路,别整块功能罢工
-    if (!runs) return legacyStream(req, res, me, { session, dev, payload });
+    if (!runs) return legacyStream(req, res, me, { session, dev, payload, origin });
 
     const started = runs.start({
       key: keyOf(me, session.id),
@@ -769,7 +835,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
       sessionId: session.id,
       model,
       deviceName: dev.name,
-      runner: (api) => runTurn(api, { me, dev, session, payload, firstTurn, mode }),
+      runner: (api) => runTurn(api, { me, dev, session, payload, firstTurn, mode, origin }),
     });
     if (!started.ok) {
       if (started.busy) return sendJson(res, 409, { error: '这个对话正在生成中', live: runs.live(keyOf(me, session.id)) });
@@ -784,7 +850,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
 
   // 一个回合的实际执行:发上游、翻译 SSE、落盘、记账。
   // 注意它【不认识 res】—— 所有输出都经 api.emit 广播,谁在听是 registry 的事。
-  async function runTurn(api, { me, dev, session, payload, firstTurn, mode = '' }) {
+  async function runTurn(api, { me, dev, session, payload, firstTurn, mode = '', origin = null }) {
     const t0 = Date.now();
     let full = '';
     let thinking = '';
@@ -802,7 +868,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
     for (let attempt = 0; ; attempt++) {
       let fwd;
       try {
-        fwd = await forward({ tokenEntry: dev, payload, signal: api.signal, req: null });
+        fwd = await forward({ tokenEntry: dev, payload, signal: api.signal, origin });
       } catch (err) {
         failed = '转发失败: ' + err.message;
         lastStatus = 502;
@@ -1048,20 +1114,20 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
       stopped,
       disconnected: droppedOut,
       ms: Date.now() - t0,
-      context: contextUsage(fresh, payload.model),
+      context: contextUsage(fresh, payload.model, ctxWindowFor),
     });
 
     // 第一回合说完了才生成标题(有了回复,标题才有内容可依据)。
     // 放在 done 之后:标题慢一秒没人在意,回答慢一秒人人都在意。
     if (firstTurn && full && !fresh.titleLocked) {
-      await generateTitle(me, dev, fresh);
+      await generateTitle(me, dev, fresh, origin);
       const after = store.get(me.name, fresh.id);
       if (after && after.title !== fresh.title) api.emit({ t: 'title', title: after.title, sessionId: after.id });
     }
   }
 
   // 没有 registry 时的退化路径:连接断开即取消(改造前的语义)
-  async function legacyStream(req, res, me, { session, dev, payload }) {
+  async function legacyStream(req, res, me, { session, dev, payload, origin = null }) {
     const sink = openSse(res);
     sink.send({ t: 'start', sessionId: session.id, title: session.title, model: payload.model });
     const ac = new AbortController();
@@ -1076,7 +1142,7 @@ export function createChat({ store, modelStore, tokenAdmin, tokenIdOf, forward, 
       abortedByDisconnect: () => false,
     };
     try {
-      await runTurn(api, { me, dev, session, payload, firstTurn: false });
+      await runTurn(api, { me, dev, session, payload, firstTurn: false, origin });
     } finally {
       sink.end();
     }

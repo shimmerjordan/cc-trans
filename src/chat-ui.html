@@ -734,8 +734,34 @@
   .seg button.on { background: var(--color-brand); color: var(--color-on-primary); }
   .art-open { margin-left: auto; }
 
-  .lightbox { position: fixed; inset: 0; z-index: var(--z-modal); background: rgba(var(--cc-scrim-rgb), .82); display: grid; place-items: center; padding: var(--s5); }
-  .lightbox img { max-width: 100%; max-height: 100%; border-radius: var(--radius-lg); }
+  .lightbox { position: fixed; inset: 0; z-index: var(--z-modal); background: rgba(var(--cc-scrim-rgb), .82); overflow: hidden; }
+  /* 图用 transform 定位,不参与布局 —— 缩放/平移都只改 transform,
+     不会引起重排,也不会让容器长出滚动条。 */
+  .lightbox img {
+    position: absolute; top: 0; left: 0; transform-origin: 0 0;
+    border-radius: var(--radius-md); user-select: none; -webkit-user-drag: none;
+    cursor: grab; max-width: none; max-height: none;   /* 尺寸完全由 JS 的 transform 决定 */
+  }
+  .lightbox.panning img { cursor: grabbing; }
+  .lb-bar {
+    position: absolute; left: 50%; bottom: var(--s5); transform: translateX(-50%);
+    display: flex; align-items: center; gap: var(--s1);
+    padding: 6px; border-radius: var(--radius-full);
+    background: rgba(0, 0, 0, .62); backdrop-filter: blur(6px);
+  }
+  .lb-bar button {
+    min-height: 0; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
+    background: none; color: #fff; font-size: 15px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lb-bar button:hover:not(:disabled) { background: rgba(255, 255, 255, .18); }
+  .lb-bar button:disabled { opacity: .35; }
+  .lb-bar .pct {
+    min-width: 52px; padding: 0 var(--s2); color: #fff; font-size: var(--fs-note);
+    font-variant-numeric: tabular-nums; text-align: center; cursor: pointer;
+    background: none; border: 0; border-radius: var(--radius-full); width: auto; height: 28px;
+  }
+  .lb-bar .sep { width: 1px; height: 18px; background: rgba(255, 255, 255, .25); margin: 0 2px; }
 
   /* 空态 */
   .empty { padding: 12vh var(--s5) 0; text-align: center; color: var(--color-text-secondary); }
@@ -1069,7 +1095,7 @@
 <div class="nav-tip" id="navTip" hidden></div>
 <!-- 放大的图在打开时才建 <img>:预留一个空 src 的占位标签,在某些浏览器里
      会当成"加载失败的图"去请求当前页面 URL。 -->
-<div class="lightbox" id="lightbox" hidden onclick="closeLightbox()"></div>
+<div class="lightbox" id="lightbox" hidden></div>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <dialog id="renameDlg">
@@ -1682,16 +1708,26 @@ function drawContext(ctx) {
   // 不到 1% 时报 token 数而不是「0.0%」:后者既没信息量,又像是坏了。
   // 到了有意义的量级再切成百分比 —— 那时人关心的才是"离满还有多远"。
   el('ctxPct').textContent = pct >= 1 ? Math.round(pct) + '%' : fmtNum(ctx.used) + ' tok';
-  el('ctxChip').classList.toggle('warn', pct >= 70);
+  el('ctxChip').classList.toggle('warn', ctxHeavy(ctx));
   el('ctxChip').title = `上下文已用 ${fmtNum(ctx.used)} / ${fmtNum(ctx.window)} token（${ctx.source === 'measured' ? '来自上游实际用量' : '按字数估算'}）`;
   show('ctxChip', true);
+}
+// 「该开新对话了」的判据是【比例或绝对量任一触发】。
+//
+// 只看比例的话,1M 窗口的模型要到 70 万 token 才提醒 —— 那时每轮请求光输入就
+// 好几美元了,提醒得太晚。只看绝对量又对 200k 的小窗口太吵。所以两条都留。
+const CTX_HEAVY_TOKENS = 200_000;
+function ctxHeavy(ctx) {
+  if (!ctx) return false;
+  return (ctx.percent || 0) >= 70 || (ctx.used || 0) >= CTX_HEAVY_TOKENS;
 }
 function explainCtx() {
   if (!lastCtx) return;
   const pct = Math.round(lastCtx.percent || 0);
+  const from = lastCtx.source === 'measured' ? '上游实际用量' : '字数估算';
   toast(
-    `这段对话已占用上下文 ${fmtNum(lastCtx.used)} / ${fmtNum(lastCtx.window)} token(${pct}%)。` +
-      (pct >= 70 ? ' 越长越慢越贵 —— 换个话题时开新对话更划算。' : ' 数字来自' + (lastCtx.source === 'measured' ? '上游实际用量。' : '字数估算。')),
+    `这段对话已占用上下文 ${fmtNum(lastCtx.used)} / ${fmtNum(lastCtx.window)} token(${pct}%,来自${from})。` +
+      (ctxHeavy(lastCtx) ? ' 越长越慢越贵 —— 换个话题时开新对话更划算。' : ''),
   );
 }
 
@@ -1724,7 +1760,9 @@ function thinkTail(text, streaming) {
 
 function renderMsg(m, i, isLast) {
   const acts = [];
-  if (m.content) acts.push(`<button data-act="copy" data-i="${i}" title="复制这条">复制</button>`);
+  // assistant 占位一渲染就把复制摆出来:流还在跑的时候也能把已收到的部分拿走。
+  // (以前是 `if (m.content)`,而占位的 content 是空串 —— 于是整条流下来都没有复制键。)
+  if (m.content || m.role === 'assistant') acts.push(`<button data-act="copy" data-i="${i}" title="复制这条">复制</button>`);
   if (m.role === 'user') {
     acts.push(`<button data-act="edit" data-i="${i}" title="改写这条提问并重新发送">改写</button>`);
   } else {
@@ -1896,6 +1934,21 @@ el('msgs').addEventListener('click', (e) => {
   if (fill) { el('input').value = fill.dataset.fill; autoGrow(); send(); return; }
   const zoom = e.target.closest('img[data-zoom]');
   if (zoom) { openLightbox(zoom.src); return; }
+  // 代码块的复制走【委托】,不是逐节点 onclick。
+  //
+  // 流式期间每收到一个 token 就 `.body.innerHTML = ...` 整块重建,原来那种
+  // 在 bindCodeButtons() 里挂 onclick 的做法就永远挂在"上一帧"的按钮上 ——
+  // 而 bindCodeButtons 只在 render() 与 refreshArtifacts() 里调,delta 路径根本不调。
+  // 于是流没结束时点复制【完全没反应,连报错都没有】。委托挂在 #msgs 上,
+  // 里面的 DOM 怎么换都接得住,连围栏还没闭合的代码块也能复制(复制已收到的部分)。
+  const cp = e.target.closest('[data-copy]');
+  if (cp) {
+    const blk = cp.closest('.code-block');
+    const code = blk && blk.querySelector('code');
+    if (!code) return;
+    copyText(code.textContent, '已复制代码');
+    return;
+  }
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const i = Number(btn.dataset.i);
@@ -1906,21 +1959,174 @@ el('msgs').addEventListener('click', (e) => {
   else if (act === 'regen') regen();
 });
 
+// 复制的统一入口。
+//
+// navigator.clipboard 只在【安全上下文】可用 —— 本机 127.0.0.1 算,但通过隧道用
+// http 域名访问时不算,那时它是 undefined,直接调会抛。所以留一条 execCommand
+// 的老路兜底:它不要求安全上下文,只要求在用户手势里同步执行(点击回调里正合适)。
+function copyText(text, okMsg = '已复制') {
+  const s = String(text == null ? '' : text);
+  if (!s) { toast('没有可复制的内容'); return; }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(s)
+      .then(() => toast(okMsg))
+      .catch(() => { if (!legacyCopy(s)) toast('复制失败', 'err'); else toast(okMsg); });
+    return;
+  }
+  if (legacyCopy(s)) toast(okMsg);
+  else toast('这个浏览器不允许复制,请手动选中', 'err');
+}
+function legacyCopy(s) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    // 不能用 display:none —— 那样选不中,execCommand 会失败
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, s.length);
+    const done = document.execCommand('copy');
+    ta.remove();
+    return done;
+  } catch { return false; }
+}
+
 function copyMsg(i) {
   const m = messages[i];
   if (!m) return;
-  navigator.clipboard.writeText(m.content || '').then(() => toast('已复制这条')).catch(() => toast('复制失败', 'err'));
+  if (!m.content) { toast('这条还没有内容'); return; }
+  copyText(m.content, '已复制这条');
 }
+
+// ── 图片查看器 ──
+//
+// 以前是 `display:grid; place-items:center` + `img{max-height:100%}`。
+// 【百分比 max-height 在自动尺寸的 grid 轨道上解析不出来】,等于没写 ——
+// 900×3000 的长截图就按原尺寸铺出去,视口外的部分看不到、滚不动、也缩不小。
+//
+// 现在图完全用 transform 定位:scale 与位移都不参与布局,不会重排,
+// 也就不会再出现"装不下"这件事。
+const LB = { scale: 1, fit: 1, x: 0, y: 0, nw: 0, nh: 0, dragged: false };
+const LB_MIN = 0.1, LB_MAX = 8;
 
 function openLightbox(src) {
   const box = el('lightbox');
   const img = document.createElement('img');
   img.alt = '放大的附图';
+  img.id = 'lbImg';
+  img.draggable = false;
+  img.onload = () => { LB.nw = img.naturalWidth; LB.nh = img.naturalHeight; lbFit(); };
   img.src = src;
-  box.replaceChildren(img);
+  box.replaceChildren(img, lbBar());
   show('lightbox', true);
+  // 已经在缓存里时 onload 可能不触发
+  if (img.complete && img.naturalWidth) { LB.nw = img.naturalWidth; LB.nh = img.naturalHeight; lbFit(); }
 }
+function lbBar() {
+  const bar = document.createElement('div');
+  bar.className = 'lb-bar';
+  bar.innerHTML =
+    `<button data-lb="out" title="缩小 (-)" aria-label="缩小">−</button>` +
+    `<button class="pct" data-lb="toggle" title="在「适应窗口」与 100% 之间切换">100%</button>` +
+    `<button data-lb="in" title="放大 (+)" aria-label="放大">+</button>` +
+    `<span class="sep"></span>` +
+    `<button data-lb="reset" title="重置 (0)" aria-label="重置">⤢</button>` +
+    `<button data-lb="close" title="关闭 (Esc)" aria-label="关闭">✕</button>`;
+  return bar;
+}
+// 适应窗口:留一点边距,并且【不放大】小图(把 16×16 的图标撑满屏没有意义)
+function lbFit() {
+  const pad = 48;
+  const bw = Math.max(1, window.innerWidth - pad * 2);
+  const bh = Math.max(1, window.innerHeight - pad * 2);
+  LB.fit = Math.min(bw / (LB.nw || 1), bh / (LB.nh || 1), 1) || 1;
+  lbSet(LB.fit, null, null);
+}
+function lbSet(scale, cx, cy) {
+  const next = Math.max(LB_MIN, Math.min(LB_MAX, scale));
+  const img = el('lbImg');
+  if (!img) return;
+  if (cx == null) {
+    // 没有锚点就居中
+    LB.x = (window.innerWidth - LB.nw * next) / 2;
+    LB.y = (window.innerHeight - LB.nh * next) / 2;
+  } else {
+    // 以光标为锚点缩放:不这么做的话,放大后想看的那块会跑出屏幕
+    const k = next / LB.scale;
+    LB.x = cx - (cx - LB.x) * k;
+    LB.y = cy - (cy - LB.y) * k;
+  }
+  LB.scale = next;
+  img.style.transform = `translate(${LB.x}px, ${LB.y}px) scale(${next})`;
+  const pct = document.querySelector('#lightbox .pct');
+  if (pct) pct.textContent = Math.round(next * 100) + '%';
+  const out = document.querySelector('#lightbox [data-lb="out"]');
+  const zin = document.querySelector('#lightbox [data-lb="in"]');
+  if (out) out.disabled = next <= LB_MIN + 1e-6;
+  if (zin) zin.disabled = next >= LB_MAX - 1e-6;
+}
+function lbZoom(mult, cx, cy) { lbSet(LB.scale * mult, cx, cy); }
 function closeLightbox() { show('lightbox', false); el('lightbox').replaceChildren(); }
+
+{
+  const box = el('lightbox');
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-lb]');
+    if (b) {
+      const a = b.dataset.lb;
+      if (a === 'in') lbZoom(1.4, window.innerWidth / 2, window.innerHeight / 2);
+      else if (a === 'out') lbZoom(1 / 1.4, window.innerWidth / 2, window.innerHeight / 2);
+      else if (a === 'reset') lbFit();
+      else if (a === 'close') closeLightbox();
+      else if (a === 'toggle') {
+        // 在「适应窗口」与 100% 之间来回切,和看图软件一致
+        if (Math.abs(LB.scale - LB.fit) < 0.01) lbSet(1, null, null);
+        else lbFit();
+      }
+      return;
+    }
+    // 只有点【图片以外的空白】才关。而且拖动过就不关 ——
+    // 以前整个遮罩挂着 onclick=closeLightbox,放大后一拖就把窗口关了。
+    if (LB.dragged) { LB.dragged = false; return; }
+    if (e.target === box) closeLightbox();
+  });
+
+  box.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    lbZoom(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+  }, { passive: false });
+
+  box.addEventListener('dblclick', (e) => {
+    if (Math.abs(LB.scale - LB.fit) < 0.01) lbSet(1, e.clientX, e.clientY);
+    else lbFit();
+  });
+
+  // 拖动平移
+  let drag = null;
+  box.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('[data-lb]')) return;
+    drag = { x: e.clientX, y: e.clientY, ox: LB.x, oy: LB.y, moved: false };
+    LB.dragged = false;
+    box.classList.add('panning');
+  });
+  window.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) drag.moved = true;
+    LB.x = drag.ox + dx; LB.y = drag.oy + dy;
+    const img = el('lbImg');
+    if (img) img.style.transform = `translate(${LB.x}px, ${LB.y}px) scale(${LB.scale})`;
+  });
+  window.addEventListener('pointerup', () => {
+    if (!drag) return;
+    LB.dragged = drag.moved;     // 拖过就别让随后的 click 把窗口关了
+    drag = null;
+    box.classList.remove('panning');
+  });
+
+  window.addEventListener('resize', () => { if (!box.hidden) lbFit(); });
+}
 
 // ── 改写提问 ──
 // cc-haha 里这叫"编辑并重发"。它替代的动作是:手动复制上一条、新开一段、
@@ -2021,14 +2227,7 @@ function scrollDown(force) {
 // 代码块的「复制」与「在侧栏打开」——事件委托后绑定,避免 innerHTML 里塞 onclick
 function bindCodeButtons() {
   el('msgs').querySelectorAll('.code-block').forEach((blk) => {
-    const copyBtn = blk.querySelector('[data-copy]');
-    if (copyBtn && !copyBtn.dataset.bound) {
-      copyBtn.dataset.bound = '1';
-      copyBtn.onclick = () => {
-        navigator.clipboard.writeText(blk.querySelector('code').textContent)
-          .then(() => toast('已复制代码')).catch(() => toast('复制失败', 'err'));
-      };
-    }
+    // 复制按钮不在这里绑了 —— 见上面 #msgs 的事件委托
     const idx = Number(blk.dataset.codeIndex);
     const art = artifacts.find((a) => a.index === idx);
     if (art && !blk.querySelector('.art-open')) {
@@ -2090,7 +2289,7 @@ function drawPanel() {
 function copyArtifact() {
   const a = artifacts[artIndex];
   if (!a) return;
-  navigator.clipboard.writeText(a.code).then(() => toast('已复制')).catch(() => toast('复制失败', 'err'));
+  copyText(a.code);
 }
 function downloadArtifact() {
   const a = artifacts[artIndex];
@@ -2152,6 +2351,7 @@ function closeMenus() {
 const ICO = {
   file: '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z"/><path d="M13 3v6h6"/>',
   retry: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>',
+  archive: '<path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/>',
   flask: '<path d="M9 3h6M10 3v5l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 17l-5-9V3"/>',
   skill: '<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="18" cy="18" r="2.5"/>',
@@ -2285,6 +2485,33 @@ function toggleModelMenu() {
   closeMenus();
   if (open) { drawModelMenu(); el('modelMenu').hidden = false; }
 }
+// 用 META.models 重建模型下拉。抽出来是因为「刷新模型列表」拉完之后
+// 也要重建一次 —— 否则菜单换了、下拉还停在旧列表上。
+function fillModelSelect() {
+  const models = (META && META.models) || [];
+  const keep = el('model').value;
+  // 按档位分组:一长串扁平的 id 里挑模型,得先在心里给它们分类
+  const tiers = [...new Set(models.map((m) => m.tier || '其它'))];
+  el('model').innerHTML = tiers
+    .map((t) => {
+      const opts = models
+        .filter((m) => (m.tier || '其它') === t)
+        .map((m) => `<option value="${esc(m.id)}">${esc(m.id)}${m.latest ? ' ·最新' : ''}</option>`)
+        .join('');
+      return `<optgroup label="${esc(t)}">${opts}</optgroup>`;
+    })
+    .join('');
+  // 刷新后优先保留当前选中的那个(它可能还在新列表里)
+  let want = keep && models.some((m) => m.id === keep) ? keep : null;
+  if (!want) { try { want = localStorage.getItem('cc-chat-model'); } catch {} }
+  if (want && models.some((m) => m.id === want)) el('model').value = want;
+  else {
+    // 默认挑一个"最新"的中高端模型,别让用户第一件事就是选模型
+    const pref = models.find((m) => m.latest && /opus|sonnet/i.test(m.id)) || models.find((m) => m.latest) || models[0];
+    if (pref) el('model').value = pref.id;
+  }
+}
+
 function drawModelMenu() {
   const models = (META && META.models) || [];
   const cur = el('model').value;
@@ -2304,8 +2531,36 @@ function drawModelMenu() {
     (models.length > shown.length
       ? `<button class="menu-item" data-sub="all" onclick="openAllModelsSub(this)">
            <span class="lbl"><b>更多模型</b></span><span class="caret">▸</span></button>`
+      : '') +
+    // 副文案必须写明"所有人" —— 这个动作改的是全局共享的模型库,
+    // 不说清楚的话会被当成"刷新我自己的列表"
+    (META && META.canRefreshModels
+      ? `<hr /><button class="menu-item" id="refreshModelsItem" onclick="refreshModels()">
+           <span class="lbl"><b>刷新模型列表</b><i>从上游重新拉取 · 对所有人生效</i></span></button>`
       : '');
   closeSub();
+}
+async function refreshModels() {
+  const item = el('refreshModelsItem');
+  if (item) { item.disabled = true; item.querySelector('b').textContent = '正在拉取…'; }
+  try {
+    const r = await api('/models/refresh', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) { toast(d.error || `刷新失败(HTTP ${r.status})`, 'err'); return; }
+    // 拉完要把本地这份也换掉,否则菜单和 <select> 还是旧列表
+    META = await (await api('/chat/meta')).json();
+    fillModelSelect();
+    const bits = [`共 ${(d.models || []).length} 个`];
+    if ((d.added || []).length) bits.push(`新增 ${d.added.length}`);
+    if ((d.removed || []).length) bits.push(`移除 ${d.removed.length}`);
+    toast('模型列表已更新:' + bits.join(','));
+  } catch (e) {
+    if (e && e.message === 'unauthorized') return;
+    toast('刷新失败:' + ((e && e.message) || '网络中断'), 'err');
+  } finally {
+    if (el('refreshModelsItem')) { el('refreshModelsItem').disabled = false; }
+    drawModelMenu();
+  }
 }
 function effortSubHtml() {
   const cur = el('model').value;
@@ -2500,14 +2755,19 @@ function fmtBytes(n) {
 // 删除 —— 多个文件并发上传时完成顺序不定,下标会错位删错人。改成稳定的 uid。
 let pendingSeq = 0;
 
+const ARCHIVE_RE = /\.(zip|tar|tgz|gz|tar\.gz)$/i;
 function kindOfFile(file) {
   if ((file.type || '').startsWith('image/')) return 'image';
   if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) return 'pdf';
+  // 压缩包按扩展名先认一手,只为了【选对体积上限】——
+  // 真正算不算压缩包由服务端看魔数定(.zip 后缀的 docx 就不该当压缩包展开)
+  if (ARCHIVE_RE.test(file.name || '') || /zip|gzip|x-tar|compressed/i.test(file.type || '')) return 'archive';
   return 'text';
 }
 function capOf(kind) {
   if (kind === 'image') return (META && META.maxImageBytes) || 5242880;
   if (kind === 'pdf') return (META && META.maxPdfBytes) || 20971520;
+  if (kind === 'archive') return (META && META.maxArchiveBytes) || 20971520;
   return (META && META.maxTextBytes) || 1048576;
 }
 
@@ -2587,7 +2847,7 @@ async function runUpload(item) {
   drawPending();
   try {
     const data = await readAsBase64(item.file, (p) => setPct(item, p * READ_SHARE));
-    const path = item.kind === 'image' ? '/chat/image' : '/chat/file';
+    const path = item.kind === 'image' ? '/chat/image' : '/chat/file';   // 压缩包也走 /chat/file
     const payload = item.kind === 'image'
       ? { data, mime: item.file.type }
       : { data, mime: item.file.type, name: item.name };
@@ -2597,8 +2857,16 @@ async function runUpload(item) {
     item.xhr = null;
     item.status = 'done'; item.pct = 1;
     item.id = d.id; item.mime = d.mime; item.bytes = d.bytes;
-    if (d.kind) item.kind = d.kind;      // 服务端说了算(比如没扩展名的文本)
+    if (d.kind) item.kind = d.kind;      // 服务端说了算(比如没扩展名的文本、或其实是压缩包)
     if (d.name) item.name = d.name;
+    // 压缩包:条目清单跟着消息走,发送时服务端据此展开。
+    // skipped/truncated 也必须带上 —— 少了它们,模型会以为自己看到了整个包。
+    if (d.kind === 'archive') {
+      item.entries = d.entries || [];
+      item.skipped = d.skipped || [];
+      item.truncated = !!d.truncated;
+      item.format = d.format;
+    }
     drawPending();
   } catch (e) {
     item.xhr = null;
@@ -2645,9 +2913,11 @@ function drawPending() {
 function tileHtml(p) {
   const face = p.kind === 'image' && p.url
     ? `<img src="${p.url}" alt="${esc(p.name)}" />`
-    : `<div class="doc-face">${svg(ICO.file, '')}
+    : `<div class="doc-face">${svg(p.kind === 'archive' ? ICO.archive : ICO.file, '')}
          <span class="nm" title="${esc(p.name)}">${esc(p.name)}</span>
-         <span class="sz">${fmtBytes(p.size || p.bytes || 0)}</span>
+         <span class="sz">${p.kind === 'archive' && p.entries
+           ? `${p.entries.length} 个文件`
+           : fmtBytes(p.size || p.bytes || 0)}</span>
        </div>`;
   let veil = '';
   if (p.status === 'uploading') {
@@ -2930,7 +3200,9 @@ async function send(opts = {}) {
 
   // 只带走传完的:失败的瓦片留在输入框里等用户处理,别偷偷丢掉
   const imgs = doneImages().map((p) => ({ id: p.id, mime: p.mime }));
-  const atts = doneFiles().map((f) => ({ id: f.id, kind: f.kind, name: f.name }));
+  const atts = doneFiles().map((f) => (f.kind === 'archive'
+    ? { id: f.id, kind: f.kind, name: f.name, entries: f.entries || [], skipped: f.skipped || [], truncated: !!f.truncated }
+    : { id: f.id, kind: f.kind, name: f.name }));
   if (!opts.regenerate) {
     messages.push({ role: 'user', content: text, images: imgs, files: atts, ts: Date.now() });
     el('input').value = ''; autoGrow();
@@ -3160,26 +3432,7 @@ async function boot() {
   }
 
   META = await (await api('/chat/meta')).json();
-  const models = META.models || [];
-  // 按档位分组:一长串扁平的 id 里挑模型,得先在心里给它们分类
-  const tiers = [...new Set(models.map((m) => m.tier || '其它'))];
-  el('model').innerHTML = tiers
-    .map((t) => {
-      const opts = models
-        .filter((m) => (m.tier || '其它') === t)
-        .map((m) => `<option value="${esc(m.id)}">${esc(m.id)}${m.latest ? ' ·最新' : ''}</option>`)
-        .join('');
-      return `<optgroup label="${esc(t)}">${opts}</optgroup>`;
-    })
-    .join('');
-  let want = null;
-  try { want = localStorage.getItem('cc-chat-model'); } catch {}
-  if (want && models.some((m) => m.id === want)) el('model').value = want;
-  else {
-    // 默认挑一个"最新"的中高端模型,别让用户第一件事就是选模型
-    const pref = models.find((m) => m.latest && /opus|sonnet/i.test(m.id)) || models.find((m) => m.latest) || models[0];
-    if (pref) el('model').value = pref.id;
-  }
+  fillModelSelect();
   try {
     const th = localStorage.getItem('cc-chat-thinking');
     const ef = localStorage.getItem('cc-chat-effort');

@@ -187,6 +187,8 @@ const upstream = http.createServer((req, res) => {
       send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '# 标题\n\n这是**回答**。\n\n' } });
       if (gap) await wait(gap);
       send({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '```html\n<h1>hi</h1>\n```\n' } });
+      // 代码块之后再留一个间隔:否则"流中就能复制代码"这件事没有可观测的窗口
+      if (gap) await wait(gap);
       send({ type: 'message_delta', delta: {}, usage: { output_tokens: 25 } });
       send({ type: 'message_stop' });
       res.end();
@@ -614,6 +616,59 @@ try {
     const last = all[all.length - 1];
     return !!(last && last.querySelector('.think'));
   `));
+  // ── 流【还没结束】时就要能复制 ──
+  //
+  // 这一组必须在流中断言。等流结束再测的话,"传完才能复制"和"边传边能复制"
+  // 两种实现都会通过 —— 之前正是这样漏掉的。
+  {
+    // 等代码块在流中出现(mock 在代码块后还留了 500ms)
+    const hasCode = await waitFor(async () => await evalJs(`
+      const all = document.querySelectorAll('#msgs .msg.assistant');
+      const last = all[all.length - 1];
+      return !!(last && last.querySelector('.code-block [data-copy]'));
+    `), 40, 120);
+    ok('流进行中代码块的复制按钮已经在了', !!hasCode);
+    ok('此刻流确实还开着(证明不是"结束后才行")', await evalJs(`return !!document.getElementById('turnStatus')`));
+
+    // 真的点它 —— 委托必须接住。剪贴板在无头下不可用,所以监听 toast 结果。
+    const copied = await evalJs(`
+      const all = document.querySelectorAll('#msgs .msg.assistant');
+      const last = all[all.length - 1];
+      const btn = last.querySelector('.code-block [data-copy]');
+      if (!btn) return 'no-button';
+      const before = document.querySelectorAll('.toast').length;
+      btn.click();
+      return new Promise((r) => setTimeout(() => {
+        const toasts = [...document.querySelectorAll('.toast')].map((t) => t.textContent.trim());
+        r(toasts.length > before ? toasts[toasts.length - 1] : 'no-feedback');
+      }, 400));
+    `);
+    // 关键是【点了有反应】(成功或明确失败),而不是像以前那样静默无事发生
+    ok('点流中的代码复制键有反应(不是静默)', copied !== 'no-feedback' && copied !== 'no-button', String(copied));
+
+    // 非安全上下文(隧道上的 http 域名)没有 navigator.clipboard —— 必须走降级,
+    // 而不是抛异常或静默。这里把环境打桩来验分支,不依赖无头浏览器的剪贴板。
+    ok('没有 navigator.clipboard 时走 execCommand 降级', await evalJs(`
+      const realExec = document.execCommand;
+      let called = null;
+      document.execCommand = (cmd) => { called = cmd; return true; };
+      const desc = Object.getOwnPropertyDescriptor(Navigator.prototype, 'clipboard');
+      Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+      let threw = '';
+      try { copyText('要复制的文字', '已复制'); } catch (e) { threw = String(e && e.message || e); }
+      document.execCommand = realExec;
+      if (desc) Object.defineProperty(navigator, 'clipboard', desc); else delete navigator.clipboard;
+      return threw === '' && called === 'copy';
+    `) === true);
+
+    // 消息级「复制这条」在流式期间也要在
+    ok('流进行中「复制这条」按钮已经在了', await evalJs(`
+      const all = document.querySelectorAll('#msgs .msg.assistant');
+      const last = all[all.length - 1];
+      return !!(last && last.querySelector('.acts-row button[data-act="copy"]'));
+    `));
+  }
+
   // 等它自己跑完
   await waitFor(async () => !(await evalJs(`return !!document.getElementById('turnStatus')`)), 60, 200);
   await wait(600);
@@ -958,6 +1013,68 @@ try {
       })();
     `) === true);
 
+    // 13) 压缩包:拖进去要被解开,瓦片上显示包内文件数
+    {
+      // 在浏览器里手搓一个 stored(不压缩)的 ZIP —— 用真实的 ZIP 字节结构,
+      // 而不是让服务端相信一个假 mime
+      const zipOk = await evalJs(`
+        return (async () => {
+          function mkZip(entries) {
+            const enc = new TextEncoder();
+            const locals = [], central = [];
+            let off = 0;
+            for (const [name, body] of entries) {
+              const n = enc.encode(name), d = enc.encode(body);
+              const lh = new DataView(new ArrayBuffer(30));
+              lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true);
+              lh.setUint16(8, 0, true);
+              lh.setUint32(18, d.length, true); lh.setUint32(22, d.length, true);
+              lh.setUint16(26, n.length, true); lh.setUint16(28, 0, true);
+              locals.push(new Uint8Array(lh.buffer), n, d);
+              const ch = new DataView(new ArrayBuffer(46));
+              ch.setUint32(0, 0x02014b50, true); ch.setUint16(6, 20, true);
+              ch.setUint16(10, 0, true);
+              ch.setUint32(20, d.length, true); ch.setUint32(24, d.length, true);
+              ch.setUint16(28, n.length, true); ch.setUint32(42, off, true);
+              central.push(new Uint8Array(ch.buffer), n);
+              off += 30 + n.length + d.length;
+            }
+            const cat = (arrs) => { const t = arrs.reduce((a, x) => a + x.length, 0);
+              const o = new Uint8Array(t); let p = 0; for (const x of arrs) { o.set(x, p); p += x.length; } return o; };
+            const L = cat(locals), C = cat(central);
+            const e = new DataView(new ArrayBuffer(22));
+            e.setUint32(0, 0x06054b50, true);
+            e.setUint16(8, entries.length, true); e.setUint16(10, entries.length, true);
+            e.setUint32(12, C.length, true); e.setUint32(16, L.length, true);
+            return cat([L, C, new Uint8Array(e.buffer)]);
+          }
+          clearPending();
+          const bytes = mkZip([['proj/README.md', '# 你好，这是包里的说明。'], ['proj/app.js', 'const x = 1;']]);
+          await addFile(new File([bytes], 'proj.zip', { type: 'application/zip' }));
+          const p0 = pending[0] || {};
+          const tile = document.querySelector('#pending .att-tile');
+          return {
+            状态: p0.status, 类型: p0.kind, 错误: p0.error || '',
+            条目数: (p0.entries || []).length,
+            瓦片文案: tile ? (tile.querySelector('.sz') || {}).textContent || '' : '(无瓦片)',
+          };
+        })();
+      `);
+      ok('ZIP 上传成功并被识别为压缩包', zipOk.状态 === 'done' && zipOk.类型 === 'archive', JSON.stringify(zipOk));
+      ok('包里两个文件都被解出来', zipOk.条目数 === 2, JSON.stringify(zipOk));
+      ok('瓦片上显示的是文件数而不是体积', /2 个文件/.test(zipOk.瓦片文案), JSON.stringify(zipOk));
+
+      // 发送时条目清单要跟着走(服务端据此展开)
+      ok('发送载荷里带上了条目清单', await evalJs(`
+        const f = doneFiles()[0];
+        const att = f.kind === 'archive'
+          ? { id: f.id, kind: f.kind, name: f.name, entries: f.entries || [], skipped: f.skipped || [], truncated: !!f.truncated }
+          : null;
+        return !!att && att.entries.length === 2 && Array.isArray(att.skipped);
+      `) === true);
+      await evalJs(`clearPending(); return 1`);
+    }
+
     // 收尾:别把附件留给后面的用例(pending 会被下一次 send() 带走)
     await evalJs(`clearPending(); return 1`);
     noteErrors();
@@ -1224,6 +1341,171 @@ try {
     `scrollWidth=${await evalJs(`return document.documentElement.scrollWidth`)} vs ${await evalJs(`return window.innerWidth`)}`);
   noteErrors();
   ok('手机视口下无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
+
+  // 「刷新模型列表」入口:默认没有权限就不该出现。
+  // 它改写的是全局共享的模型库,所以这一条是权限可见性,不只是布局。
+  {
+    await evalJs(`closeMenus(); toggleModelMenu(); return 1`);
+    await wait(200);
+    ok('没有 refreshModels 权限时菜单里没有刷新入口', await evalJs(`
+      return META.canRefreshModels !== true && !document.getElementById('refreshModelsItem');
+    `));
+    ok('有权限时刷新入口出现,并写明影响所有人', await evalJs(`
+      const keep = META.canRefreshModels;
+      META = { ...META, canRefreshModels: true };
+      drawModelMenu();
+      const it = document.getElementById('refreshModelsItem');
+      const txt = it ? it.textContent : '';
+      META = { ...META, canRefreshModels: keep };
+      drawModelMenu();
+      return !!it && /所有人/.test(txt);
+    `));
+    await evalJs(`closeMenus(); return 1`);
+  }
+
+  // ── 图片查看器:必须装得下 + 能缩放 ──
+  //
+  // 根因是 CSS:.lightbox 是 display:grid + place-items:center,而 img 用
+  // max-height:100%。【百分比 max-height 在自动尺寸的 grid 轨道上解析不出来】,
+  // 等于没写 —— 900×3000 的长截图就按原尺寸铺出去,视口外的部分你根本看不到,
+  // 也没法滚、没法缩小。
+  {
+    const shot = await evalJs(`
+      return (async () => {
+        const cv = document.createElement('canvas'); cv.width = 900; cv.height = 3000;
+        const g = cv.getContext('2d');
+        for (let i = 0; i < 30; i++) { g.fillStyle = i % 2 ? '#c33' : '#36c'; g.fillRect(0, i * 100, 900, 100); }
+        openLightbox(cv.toDataURL('image/png'));
+        await new Promise(r => setTimeout(r, 400));
+        const im = document.querySelector('#lightbox img');
+        const r = im.getBoundingClientRect();
+        return {
+          原图高: im.naturalHeight,
+          显示高: Math.round(r.height),
+          视口高: window.innerHeight,
+          装得下: Math.round(r.height) <= window.innerHeight + 1,
+          有缩放控件: document.querySelectorAll('#lightbox [data-lb]').length,
+        };
+      })();
+    `);
+    ok('长图默认要装得下视口(不是按原尺寸铺出去)', shot.装得下 === true, JSON.stringify(shot));
+    ok('查看器有缩放控件', shot.有缩放控件 >= 3, JSON.stringify(shot));
+
+    const zoom = await evalJs(`
+      return (async () => {
+        const im = document.querySelector('#lightbox img');
+        const before = im.getBoundingClientRect().height;
+        document.querySelector('[data-lb="in"]').click();
+        await new Promise(r => setTimeout(r, 250));
+        const after = im.getBoundingClientRect().height;
+        document.querySelector('[data-lb="reset"]').click();
+        await new Promise(r => setTimeout(r, 250));
+        const back = im.getBoundingClientRect().height;
+        return { before: Math.round(before), after: Math.round(after), back: Math.round(back) };
+      })();
+    `);
+    ok('点放大后图真的变大', zoom.after > zoom.before, JSON.stringify(zoom));
+    ok('重置能回到适应窗口', Math.abs(zoom.back - zoom.before) <= 2, JSON.stringify(zoom));
+
+    ok('滚轮可以缩放', await evalJs(`
+      return (async () => {
+        const im = document.querySelector('#lightbox img');
+        const b = im.getBoundingClientRect().height;
+        document.getElementById('lightbox').dispatchEvent(
+          new WheelEvent('wheel', { deltaY: -300, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+        await new Promise(r => setTimeout(r, 200));
+        return im.getBoundingClientRect().height > b;
+      })();
+    `) === true);
+
+    // 放大后要能拖着看,而拖动结束时【不能】把查看器关掉 ——
+    // 现在整个遮罩挂着 onclick=closeLightbox,一拖就关
+    ok('拖动平移后查看器不会被误关', await evalJs(`
+      return (async () => {
+        const lb = document.getElementById('lightbox');
+        const im = document.querySelector('#lightbox img');
+        im.dispatchEvent(new PointerEvent('pointerdown', { clientX: 400, clientY: 300, bubbles: true, pointerId: 1 }));
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: 460, clientY: 340, bubbles: true, pointerId: 1 }));
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: 460, clientY: 340, bubbles: true, pointerId: 1 }));
+        await new Promise(r => setTimeout(r, 200));
+        return lb.hidden === false;
+      })();
+    `) === true);
+
+    ok('点图片外的空白仍然能关掉', await evalJs(`
+      return (async () => {
+        const lb = document.getElementById('lightbox');
+        lb.dispatchEvent(new PointerEvent('pointerdown', { clientX: 5, clientY: 5, bubbles: true, pointerId: 2 }));
+        lb.dispatchEvent(new PointerEvent('pointerup', { clientX: 5, clientY: 5, bubbles: true, pointerId: 2 }));
+        lb.click();
+        await new Promise(r => setTimeout(r, 200));
+        return lb.hidden === true;
+      })();
+    `) === true);
+    await evalJs(`closeLightbox(); return 1`);
+  }
+
+  // 上下文告警:比例或绝对量任一触发。
+  // 只看比例的话,1M 窗口要到 70 万 token 才提醒,那时每轮光输入就好几美元了。
+  ok('上下文告警按「比例或绝对量」判定', await evalJs(`
+    return [
+      ctxHeavy({ percent: 75, used: 150000 }) === true,    // 比例到了
+      ctxHeavy({ percent: 25, used: 250000 }) === true,    // 1M 窗口下比例不高但量已很大
+      ctxHeavy({ percent: 10, used: 5000 }) === false,     // 都没到
+      ctxHeavy(null) === false,
+    ].every(Boolean);
+  `) === true);
+
+  // ── 手机视口:管理台「模型/参数」的模型目录 ──
+  //
+  // 这张表有 7 列,手机上 table.cards 会把每列翻成一行 —— 一个模型就是 7 行,
+  // 卡片高得离谱、要划半天。断言的是"中间三项排在同一行",而不是截图对比:
+  // 前者说得清坏在哪,后者只会告诉你"不一样了"。
+  {
+    await goto(BASE + '/admin/overview');
+    await wait(600);
+    await evalJs(`switchTab('models'); return 1`);
+    await wait(500);
+    noteErrors();
+    const m = await evalJs(`
+      const rows = document.querySelectorAll('#catalogRows tr');
+      if (!rows.length) return { rows: 0 };
+      const tr = rows[0];
+      const tds = [...tr.querySelectorAll('td')];
+      const top = (n) => Math.round(tds[n].getBoundingClientRect().top);
+      return {
+        rows: rows.length,
+        层级列已隐藏: getComputedStyle(tds[1]).display === 'none',
+        标题上有层级徽章: !!tr.querySelector('.tier-badge') &&
+          getComputedStyle(tr.querySelector('.tier-badge')).display !== 'none',
+        三项同一行: top(2) === top(3) && top(3) === top(4),
+        卡片高度: Math.round(tr.getBoundingClientRect().height),
+        横向溢出: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    `);
+    ok('模型目录有内容', m.rows > 0, JSON.stringify(m));
+    ok('手机上层级并进了标题徽章', m.层级列已隐藏 === true && m.标题上有层级徽章 === true, JSON.stringify(m));
+    ok('temperature/thinking/effort 压在同一行', m.三项同一行 === true, JSON.stringify(m));
+    ok('单张模型卡不再高得离谱(<260px)', m.卡片高度 > 0 && m.卡片高度 < 260, JSON.stringify(m));
+    ok('模型目录没把页面撑出横向滚动', m.横向溢出 === false, JSON.stringify(m));
+
+    // 桌面视口下这张表必须还是【表格】—— 别为了手机把桌面改坏
+    await client.send('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
+    await wait(400);
+    const d = await evalJs(`
+      const tr = document.querySelector('#catalogRows tr');
+      const tds = [...tr.querySelectorAll('td')];
+      return {
+        还是表格行: getComputedStyle(tr).display === 'table-row',
+        层级列可见: getComputedStyle(tds[1]).display !== 'none',
+        徽章在桌面隐藏: getComputedStyle(tr.querySelector('.tier-badge')).display === 'none',
+      };
+    `);
+    ok('桌面上仍是标准表格', d.还是表格行 === true && d.层级列可见 === true, JSON.stringify(d));
+    ok('层级徽章只在手机出现', d.徽章在桌面隐藏 === true, JSON.stringify(d));
+    noteErrors();
+    ok('模型目录响应式改动无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
+  }
 } catch (err) {
   fail++;
   console.log('FAIL  测试异常:', err.stack || err.message);

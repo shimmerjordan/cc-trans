@@ -93,6 +93,16 @@ async function main() {
     const login = await (await fetch(base + '/admin/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'secret123' }) })).json();
     const H = { authorization: 'Bearer ' + login.session, 'content-type': 'application/json' };
 
+    // 管理员在网页聊天里必须拥有【全部】权限。
+    // 这条盯的是"漂移":perms 清单一旦写死,每加一个新权限管理员就少一项 ——
+    // refreshModels 加进来时就这么漏过(管理台自己反而刷不了模型列表)。
+    {
+      const { PERMS } = await import('../src/users.js');
+      const meta = await (await fetch(base + '/admin/api/chat/meta', { headers: H })).json();
+      ck('管理员在聊天里拥有刷新模型权限', meta.canRefreshModels === true, JSON.stringify(meta.canRefreshModels));
+      ck('权限清单已含 refreshModels(哨兵)', 'refreshModels' in PERMS, Object.keys(PERMS).join(','));
+    }
+
     // ── 4 本地 AI 订阅配置 ──
     let ups = await (await fetch(base + '/admin/api/upstream', { headers: H })).json();
     ck('4 读上游状态: 订阅模式 + 凭证正常', ups.upstreamAuth === 'oauth' && ups.credentials.ok && ups.credentials.subscriptionType === 'team', JSON.stringify(ups.credentials));
