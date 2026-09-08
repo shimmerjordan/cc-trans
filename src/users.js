@@ -55,8 +55,12 @@ export const PERMS = Object.freeze({
   logs: '查看自己的请求日志',
   cost: '查看成本金额',
   revealToken: '取回令牌明文',
+  refreshModels: '刷新模型列表(影响所有人)',
 });
-export const DEFAULT_PERMS = Object.freeze({ chat: true, logs: true, cost: true, revealToken: true });
+// refreshModels 是这里唯一默认【关】的权限:别的几个都只是"看自己的东西",
+// 而刷新模型列表会改写全局共享的模型库 —— 所有人下次拿到的列表都跟着变。
+// 这种全局写操作该由管理员显式授予,不该跟着"新建用户"默认带上。
+export const DEFAULT_PERMS = Object.freeze({ chat: true, logs: true, cost: true, revealToken: true, refreshModels: false });
 
 // 用户级配额:与该用户【名下所有令牌】共享一份额度,而不是每个令牌各一份。
 // 口径是 token 数与花费金额(不是请求次数 —— 一次长对话和一次 hello 差几个数量级)。
@@ -254,12 +258,15 @@ export function createUserStore({ config, persist, reservedName = null, log = ()
     const u = find(name);
     if (!u) return { ok: false, error: '用户不存在' };
     const np = normalizePerms(perms);
-    // 显式传入才改;全默认时删掉字段,配置文件保持干净
-    if (np && Object.keys(np).length === Object.keys(DEFAULT_PERMS).length &&
-        Object.keys(DEFAULT_PERMS).every((k) => np[k] === DEFAULT_PERMS[k])) {
-      delete u.perms;
-    } else if (np) {
-      u.perms = np;
+    // 显式传入才改;【生效后】等同全默认就删掉字段,配置文件保持干净。
+    //
+    // 比的是"合并到默认之上的结果",不是"传了几个键"。按键数比的话,
+    // DEFAULT_PERMS 每加一个新权限,老调用方(只传旧的那几个键)就再也清不干净了 ——
+    // 加 refreshModels 时就这么坏过一次。
+    if (np) {
+      const eff = { ...DEFAULT_PERMS, ...np };
+      if (Object.keys(DEFAULT_PERMS).every((k) => eff[k] === DEFAULT_PERMS[k])) delete u.perms;
+      else u.perms = np;
     }
     save();
     log(`用户 ${name} 的权限已更新: ${JSON.stringify(effectivePerms(u))}`);

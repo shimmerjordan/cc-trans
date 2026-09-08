@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { CATALOG, CATALOG_VERSION, DEFAULT_OVERRIDES } from './models.js';
 import { applyHops } from './hops.js';
+import { createModelRefresher } from './model_refresh.js';
 import { PERMS, DEFAULT_PERMS, QUOTA_WINDOWS, effectiveQuota, MIN_PASSWORD_LEN } from './users.js';
 import { loginKeys } from './login_guard.js';
 
@@ -77,6 +78,7 @@ export function createAdmin({
   // upstreamNow(),它对三种鉴权模式一视同仁。
   const oauthNow = () => (typeof getOauth === 'function' ? getOauth() : null);
   const upstreamNow = () => (typeof getUpstreamAuth === 'function' ? getUpstreamAuth() : null);
+  const modelRefresher = createModelRefresher({ getUpstreamAuth, modelStore, log });
   const sessions = new Map(); // sessionToken -> expiresAt
   let ui = '';
   try {
@@ -273,7 +275,9 @@ export function createAdmin({
       const me = {
         name: '__admin__',
         tokenIds: tokenAdmin.list().map((t) => idOf(t.token)),
-        perms: { chat: true, logs: true, cost: true, revealToken: true },
+        // 从 PERMS 派生,不要写死清单 —— 写死的话每加一个新权限,管理员就会
+        // 悄悄少一项(加 refreshModels 时就这么漏过一次:管理台自己反而没权限)
+        perms: Object.fromEntries(Object.keys(PERMS).map((k) => [k, true])),
         isAdmin: true,
       };
       return chat.handle(sub.slice('/api/chat'.length) || '/', req, res, me);
@@ -552,24 +556,9 @@ export function createAdmin({
 
     // 从上游拉取实际可用模型列表 → 替换并持久化(手动"更新列表")
     if (sub === '/api/models/refresh' && req.method === 'POST') {
-      try {
-        const headers = { 'anthropic-version': '2023-06-01' };
-        const up = upstreamNow();
-        if (!up) throw new Error('上游鉴权未就绪');
-        applyHops(headers, 0, up.baseUrl()); // 管理台自己发起,从 0 跳起算
-        await up.apply(headers); // 三种模式统一(inherit 也能拉列表 —— 上游那台会自己去问官方)
-        const r = await fetch(up.baseUrl() + '/v1/models?limit=100', { headers });
-        const text = await r.text();
-        if (!r.ok) throw new Error(`HTTP ${r.status}: ${text.slice(0, 160)}`);
-        const j = JSON.parse(text);
-        const entries = (j.data || []).map((m) => ({ id: m.id, displayName: m.display_name || m.id }));
-        if (!entries.length) throw new Error('上游返回空列表');
-        const { models, added, removed } = modelStore.replaceFromUpstream(entries);
-        log(`模型列表已从上游更新: 共 ${models.length} 个${added.length ? `,新增 ${added.join(', ')}` : ''}${removed.length ? `,移除 ${removed.join(', ')}` : ''}`);
-        return sendJson(res, 200, { ok: true, fetchedAt: Date.now(), models, added, removed });
-      } catch (err) {
-        return sendJson(res, 200, { ok: false, error: err.message });
-      }
+      // 逻辑在 model_refresh.js —— 用户端那个入口走的是同一段
+      const r = await modelRefresher.refresh('管理台');
+      return sendJson(res, 200, r);
     }
 
     // 手动补一个模型(上游 /v1/models 不可用时的兜底)

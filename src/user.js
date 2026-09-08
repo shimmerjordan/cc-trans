@@ -58,6 +58,7 @@ function sendJson(res, code, obj) {
 export function createUserPortal({
   prefix = '/u',
   users,
+  modelRefresher = null,
   metrics,
   logStore,
   tokenAdmin,
@@ -439,6 +440,17 @@ export function createUserPortal({
       if (!chat) return sendJson(res, 404, { error: '聊天未启用' });
       if (!me.perms.chat) return sendJson(res, 403, { error: '管理员已关闭你的「网页聊天」权限' });
       return chat.handle(sub.slice('/api/chat'.length) || '/', req, res, me);
+    }
+
+    // 从上游刷新模型列表。默认没有这个权限(见 users.js 的 DEFAULT_PERMS)——
+    // 它改写的是全局共享的模型库,不是这个用户自己的东西。
+    if (sub === '/api/models/refresh' && req.method === 'POST') {
+      if (!me.perms.refreshModels) {
+        return sendJson(res, 403, { error: '管理员没有给你「刷新模型列表」的权限' });
+      }
+      if (!modelRefresher) return sendJson(res, 404, { error: '模型库未启用' });
+      const r = await modelRefresher.refresh(`用户 ${me.name}`);
+      return sendJson(res, 200, r);
     }
 
     // 自助改密(要验旧密码)。改完 passVersion 变了 —— 别处登着的同一个账号

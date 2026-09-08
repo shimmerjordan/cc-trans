@@ -53,8 +53,22 @@ function sortModels(models) {
 function build(entries, source) {
   return entries.map((e) => {
     const id = typeof e === 'string' ? e : e.id;
-    const displayName = (typeof e === 'object' && (e.displayName || e.display_name)) || id;
-    return { id, displayName, source, ...inferModelMeta(id) };
+    const o = typeof e === 'object' && e ? e : {};
+    const displayName = o.displayName || o.display_name || id;
+    const meta = inferModelMeta(id);
+    // 上游 /v1/models 给的 max_input_tokens 才是真值;inferModelMeta 里那个
+    // contextWindow 只是按 id 猜的(带 [1m] 就 1M,否则一律 200k)。
+    // ...meta 必须在前,contextWindow 显式写在后面覆盖它。
+    const upIn = Number(o.maxInputTokens ?? o.max_input_tokens) || 0;
+    const upOut = Number(o.maxOutputTokens ?? o.max_tokens) || 0;
+    return {
+      id, displayName, source,
+      ...meta,
+      maxInputTokens: upIn || null,
+      maxOutputTokens: upOut || null,
+      contextWindow: upIn || meta.contextWindow,
+      contextSource: upIn ? 'upstream' : 'inferred',
+    };
   });
 }
 
@@ -86,9 +100,15 @@ export function createModelStore({ persistFile = null, log = () => {} } = {}) {
       fs.writeFileSync(
         tmp,
         JSON.stringify({
-          version: 1,
+          version: 2,
           fetchedAt: state.fetchedAt,
-          models: state.models.map((m) => ({ id: m.id, displayName: m.displayName })),
+          // 真值必须落盘 —— 这个投影漏字段的话,重启后 contextWindow 又退回按 id 推断
+          models: state.models.map((m) => ({
+            id: m.id,
+            displayName: m.displayName,
+            maxInputTokens: m.maxInputTokens || undefined,
+            maxOutputTokens: m.maxOutputTokens || undefined,
+          })),
         }, null, 2),
         { mode: 0o600 },
       );
@@ -137,5 +157,13 @@ export function createModelStore({ persistFile = null, log = () => {} } = {}) {
     return { models: state.models };
   }
 
-  return { list, replaceFromUpstream, addManual, remove };
+  // 按 id 查上下文窗口。查不到回 0,让调用方自己退回推断值 ——
+  // 这里不做兜底,免得"猜的值"和"真值"在两层里各兜一次、谁也说不清用了哪个。
+  function contextWindowFor(id) {
+    const cur = state ? state.models : null;
+    const m = cur && cur.find((x) => x.id === id);
+    return (m && Number(m.contextWindow)) || 0;
+  }
+
+  return { list, replaceFromUpstream, addManual, remove, contextWindowFor };
 }
